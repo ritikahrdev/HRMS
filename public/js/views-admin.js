@@ -1805,6 +1805,7 @@ const AdminViews = {
     const isEmployee = !!App.user.employeeId;
     const mine = isEmployee ? (await api.get('/tickets/mine')).tickets : [];
     const all = isAdmin ? (await api.get('/tickets')).tickets : [];
+    // Always show raise ticket UI to everyone (backend enforces employee-only on submit)
 
     // Reusable function to open the raise ticket modal
     const openRaiseModal = (preselectedCategory) => {
@@ -1874,32 +1875,35 @@ const AdminViews = {
     // ---- Build page HTML ----
     let html = `<div class="section-title">🎧 Help Desk — HR Support</div>`;
 
+    // ---- Raise Ticket section — always visible ----
+    html += `
+      <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-radius:12px;padding:24px 28px;margin:16px 0;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:18px;font-weight:700;margin-bottom:4px">Need help from HR?</div>
+          <div style="opacity:.85;font-size:14px">Pick a category below and raise a support ticket — HR will respond shortly.</div>
+        </div>
+        <button id="raise-main" style="background:#fff;color:#4f46e5;border:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">
+          📝 Raise a Ticket
+        </button>
+      </div>
+
+      <div style="margin-bottom:24px">
+        <div style="font-size:13px;color:#6b7280;margin-bottom:10px;font-weight:500">Select a category to raise a ticket:</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+          ${this.HR_TICKET_CATEGORIES.map(cat => `
+            <button class="cat-quick-btn" data-cat="${cat.key}"
+              style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;border:1.5px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+              <span style="font-size:26px">${cat.icon}</span>
+              <span style="font-size:12px;font-weight:600;color:#374151;line-height:1.3">${cat.name}</span>
+              <span style="font-size:11px;color:#9ca3af;line-height:1.3">${cat.desc}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+
+    // ---- My Tickets section (only for employees) ----
     if (isEmployee) {
-      // Big prominent "Raise Ticket" section
       html += `
-        <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-radius:12px;padding:24px 28px;margin:16px 0;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-          <div>
-            <div style="font-size:18px;font-weight:700;margin-bottom:4px">Need help from HR?</div>
-            <div style="opacity:.85;font-size:14px">Raise a ticket and our HR team will get back to you.</div>
-          </div>
-          <button id="raise-main" style="background:#fff;color:#4f46e5;border:none;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;white-space:nowrap">
-            📝 Raise a Ticket
-          </button>
-        </div>
-
-        <div style="margin-bottom:24px">
-          <div style="font-size:13px;color:#6b7280;margin-bottom:12px">Or pick a category to get started quickly:</div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
-            ${this.HR_TICKET_CATEGORIES.map(cat => `
-              <button class="cat-quick-btn" data-cat="${cat.key}"
-                style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 10px;border:1.5px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;transition:all .15s;text-align:center">
-                <span style="font-size:22px">${cat.icon}</span>
-                <span style="font-size:12px;font-weight:600;color:#374151;line-height:1.3">${cat.name}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
-
         <div style="margin-top:24px">
           <div class="section-title" style="margin-bottom:12px">My Tickets</div>
           ${buildTabs('my-tickets-container', 'my')}
@@ -1908,7 +1912,7 @@ const AdminViews = {
               ? `<div style="text-align:center;padding:40px 20px;color:#9ca3af;border:2px dashed #e5e7eb;border-radius:10px">
                   <div style="font-size:36px;margin-bottom:8px">📭</div>
                   <div style="font-weight:600;margin-bottom:4px">No tickets yet</div>
-                  <div style="font-size:13px">Raise your first ticket using the button above.</div>
+                  <div style="font-size:13px">Use the category cards above to raise your first ticket.</div>
                 </div>`
               : this.ticketTable(mine, false)}
           </div>
@@ -2265,5 +2269,238 @@ const AdminViews = {
         m.close(); UI.toast('Interview scheduled — opening Google Calendar.', 'success'); this.jobBoard(c, jobId);
       } catch (e) { UI.toast(e.message, 'error'); }
     };
+  },
+
+  // ============================================================
+  // HR OPERATIONS INVENTORY
+  // ============================================================
+  INVENTORY_CATEGORIES: [
+    { key: 'electronics', icon: '💻', name: 'Electronics',      color: '#3b82f6' },
+    { key: 'furniture',   icon: '🪑', name: 'Furniture',        color: '#8b5cf6' },
+    { key: 'equipment',   icon: '🖨️', name: 'Office Equipment', color: '#f59e0b' },
+    { key: 'network',     icon: '🌐', name: 'Network',          color: '#10b981' },
+    { key: 'stationery',  icon: '📦', name: 'Stationery',       color: '#6b7280' },
+    { key: 'software',    icon: '📋', name: 'Software / Licenses', color: '#ec4899' },
+    { key: 'access',      icon: '🔑', name: 'Access & Security', color: '#f97316' },
+    { key: 'other',       icon: '📁', name: 'Other',            color: '#64748b' },
+  ],
+
+  async inventory(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    const [{ items }, { stats, totals }] = await Promise.all([
+      api.get('/inventory'),
+      api.get('/inventory/stats'),
+    ]);
+    const { employees } = await api.get('/employees').catch(() => ({ employees: [] }));
+
+    const catMeta = (key) => this.INVENTORY_CATEGORIES.find(x => x.key === key) || { icon: '📁', name: key, color: '#64748b' };
+    const condBadge = (c) => {
+      const map = { good: ['#d1fae5','#065f46','Good'], fair: ['#fef9c3','#854d0e','Fair'], damaged: ['#fee2e2','#991b1b','Damaged'] };
+      const [bg, fg, label] = map[c] || ['#f3f4f6','#374151', c];
+      return `<span style="background:${bg};color:${fg};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${label}</span>`;
+    };
+
+    // Summary stat cards
+    const statCards = this.INVENTORY_CATEGORIES.map(cat => {
+      const s = stats.find(x => x.category === cat.key);
+      if (!s) return '';
+      return `
+        <div class="inv-cat-card" data-filter="${cat.key}" style="background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;padding:14px 16px;cursor:pointer;transition:all .15s;min-width:130px">
+          <div style="font-size:22px;margin-bottom:4px">${cat.icon}</div>
+          <div style="font-weight:700;font-size:14px;color:#111">${cat.name}</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:2px">${s.total_items} items · ${s.available_qty}/${s.total_qty} available</div>
+        </div>`;
+    }).join('');
+
+    c.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <div class="section-title" style="margin:0">📦 HR Operations Inventory</div>
+        <button class="btn" id="inv-add">+ Add Item</button>
+      </div>
+
+      <!-- Summary cards -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding:16px;background:#f8fafc;border-radius:10px;align-items:flex-start">
+        <div style="min-width:130px;border-right:2px solid #e5e7eb;padding-right:16px;margin-right:6px">
+          <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Total Items</div>
+          <div style="font-size:28px;font-weight:800;color:#111">${totals.total_items || 0}</div>
+          <div style="font-size:12px;color:#6b7280">${totals.available_qty || 0} available</div>
+          <div style="font-size:12px;color:#6b7280">₹${((totals.total_value || 0)/1000).toFixed(0)}k total value</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">${statCards}</div>
+      </div>
+
+      <!-- Filter tabs -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+        <button class="inv-tab" data-filter="all" style="padding:6px 14px;border:none;background:#4f46e5;color:#fff;border-radius:20px;cursor:pointer;font-size:13px;font-weight:600">📋 All</button>
+        ${this.INVENTORY_CATEGORIES.map(cat => `
+          <button class="inv-tab" data-filter="${cat.key}" style="padding:6px 14px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:20px;cursor:pointer;font-size:13px">
+            ${cat.icon} ${cat.name}
+          </button>
+        `).join('')}
+      </div>
+
+      <!-- Items table -->
+      <div id="inv-table-container">
+        ${this._invTable(items, catMeta, condBadge)}
+      </div>`;
+
+    // Tab filter logic
+    const filterTable = (filterKey) => {
+      document.querySelectorAll('.inv-tab').forEach(b => {
+        const active = b.dataset.filter === filterKey;
+        b.style.background = active ? '#4f46e5' : '#fff';
+        b.style.color = active ? '#fff' : '#374151';
+        b.style.border = active ? '1px solid #4f46e5' : '1px solid #e5e7eb';
+      });
+      const filtered = filterKey === 'all' ? items : items.filter(x => x.category === filterKey);
+      document.getElementById('inv-table-container').innerHTML = this._invTable(filtered, catMeta, condBadge);
+      bindRowButtons();
+    };
+
+    document.querySelectorAll('.inv-tab').forEach(b => b.onclick = () => filterTable(b.dataset.filter));
+    document.querySelectorAll('.inv-cat-card').forEach(card => {
+      card.onmouseenter = () => { card.style.borderColor = '#4f46e5'; card.style.background = '#f5f3ff'; };
+      card.onmouseleave = () => { card.style.borderColor = '#e5e7eb'; card.style.background = '#fff'; };
+      card.onclick = () => filterTable(card.dataset.filter);
+    });
+
+    // Open add/edit modal
+    const openModal = (item) => {
+      const isEdit = !!item;
+      const empOptions = employees.map(e => `<option value="${e.id}" ${item && item.assigned_to == e.id ? 'selected' : ''}>${UI.esc(e.name)}</option>`).join('');
+      const catOptions = this.INVENTORY_CATEGORIES.map(cat =>
+        `<option value="${cat.key}" ${(item ? item.category : '') === cat.key ? 'selected' : ''}>${cat.icon} ${cat.name}</option>`
+      ).join('');
+
+      const m = UI.modal({
+        title: isEdit ? `✏️ Edit — ${UI.esc(item.name)}` : '+ Add Inventory Item',
+        bodyHtml: `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="field" style="grid-column:1/-1">
+              <label><strong>Item Name *</strong></label>
+              <input id="inv-name" value="${isEdit ? UI.esc(item.name) : ''}" placeholder="e.g. MacBook Pro 14-inch" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Category *</strong></label>
+              <select id="inv-cat" style="width:100%">
+                <option value="">— Select —</option>${catOptions}
+              </select>
+            </div>
+            <div class="field">
+              <label><strong>Condition</strong></label>
+              <select id="inv-cond" style="width:100%">
+                <option value="good" ${!item || item.condition === 'good' ? 'selected' : ''}>✅ Good</option>
+                <option value="fair" ${item && item.condition === 'fair' ? 'selected' : ''}>⚠️ Fair</option>
+                <option value="damaged" ${item && item.condition === 'damaged' ? 'selected' : ''}>❌ Damaged</option>
+              </select>
+            </div>
+            <div class="field">
+              <label><strong>Total Quantity</strong></label>
+              <input id="inv-qty" type="number" min="0" value="${isEdit ? item.quantity : 1}" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Available</strong></label>
+              <input id="inv-avail" type="number" min="0" value="${isEdit ? item.available : 1}" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Purchase Price (₹)</strong></label>
+              <input id="inv-price" type="number" min="0" value="${isEdit ? item.purchase_price : ''}" placeholder="0" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Purchase Date</strong></label>
+              <input id="inv-date" type="date" value="${isEdit && item.purchase_date ? item.purchase_date : ''}" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Serial / Asset No.</strong></label>
+              <input id="inv-serial" value="${isEdit && item.serial_number ? UI.esc(item.serial_number) : ''}" placeholder="Optional" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Assigned To</strong></label>
+              <select id="inv-emp" style="width:100%">
+                <option value="">— Unassigned —</option>${empOptions}
+              </select>
+            </div>
+            <div class="field" style="grid-column:1/-1">
+              <label><strong>Notes</strong></label>
+              <textarea id="inv-notes" rows="2" style="width:100%">${isEdit && item.notes ? UI.esc(item.notes) : ''}</textarea>
+            </div>
+          </div>`,
+        footHtml: `
+          ${isEdit ? `<button class="btn secondary" id="inv-del" style="margin-right:auto;background:#fee2e2;color:#dc2626;border:none">🗑 Delete</button>` : ''}
+          <button class="btn secondary" data-close-btn>Cancel</button>
+          <button class="btn" id="inv-save">${isEdit ? 'Save Changes' : 'Add Item'}</button>`,
+      });
+
+      m.root.querySelector('[data-close-btn]').onclick = m.close;
+
+      if (isEdit) {
+        m.root.querySelector('#inv-del').onclick = async () => {
+          if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+          try { await api.request('DELETE', '/inventory/' + item.id); m.close(); UI.toast('Item deleted.', 'success'); this.inventory(c); }
+          catch (e) { UI.toast(e.message, 'error'); }
+        };
+      }
+
+      m.root.querySelector('#inv-save').onclick = async () => {
+        const name = m.root.querySelector('#inv-name').value.trim();
+        const category = m.root.querySelector('#inv-cat').value;
+        if (!name) { UI.toast('Item name is required.', 'error'); return; }
+        if (!category) { UI.toast('Please select a category.', 'error'); return; }
+        const payload = {
+          name, category,
+          condition: m.root.querySelector('#inv-cond').value,
+          quantity: m.root.querySelector('#inv-qty').value,
+          available: m.root.querySelector('#inv-avail').value,
+          purchase_price: m.root.querySelector('#inv-price').value,
+          purchase_date: m.root.querySelector('#inv-date').value || null,
+          serial_number: m.root.querySelector('#inv-serial').value.trim() || null,
+          assigned_to: m.root.querySelector('#inv-emp').value || null,
+          notes: m.root.querySelector('#inv-notes').value.trim() || null,
+        };
+        try {
+          if (isEdit) await api.put('/inventory/' + item.id, payload);
+          else await api.post('/inventory', payload);
+          m.close();
+          UI.toast(isEdit ? '✅ Item updated.' : '✅ Item added.', 'success');
+          this.inventory(c);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    };
+
+    document.getElementById('inv-add').onclick = () => openModal(null);
+
+    const bindRowButtons = () => {
+      document.querySelectorAll('[data-inv-edit]').forEach(btn => {
+        btn.onclick = () => {
+          const it = items.find(x => x.id == btn.dataset.invEdit);
+          if (it) openModal(it);
+        };
+      });
+    };
+    bindRowButtons();
+  },
+
+  _invTable(items, catMeta, condBadge) {
+    if (!items.length) return `
+      <div style="text-align:center;padding:40px 20px;color:#9ca3af;border:2px dashed #e5e7eb;border-radius:10px">
+        <div style="font-size:36px;margin-bottom:8px">📦</div>
+        <div style="font-weight:600">No items in this category</div>
+      </div>`;
+    return UI.table([
+      { key: 'name', label: 'Item', render: r => {
+        const cat = catMeta(r.category);
+        return `<div style="font-weight:600">${cat.icon} ${UI.esc(r.name)}</div>
+                <div style="font-size:11px;color:#6b7280">${cat.name}${r.serial_number ? ' · #' + UI.esc(r.serial_number) : ''}</div>`;
+      }},
+      { key: 'quantity', label: 'Qty', render: r => `
+        <span style="font-weight:700">${r.available}</span><span style="color:#9ca3af"> / ${r.quantity}</span>
+        <div style="font-size:11px;color:#6b7280">available</div>` },
+      { key: 'condition', label: 'Condition', render: r => condBadge(r.condition) },
+      { key: 'assigned_name', label: 'Assigned To', render: r => r.assigned_name
+        ? `<span style="color:#4f46e5;font-weight:500">${UI.esc(r.assigned_name)}</span>`
+        : '<span style="color:#9ca3af">—</span>' },
+      { key: 'purchase_price', label: 'Value', render: r => r.purchase_price ? `₹${r.purchase_price.toLocaleString('en-IN')}` : '<span class="muted">—</span>' },
+      { key: 'act', label: '', render: r => `<button class="btn sm secondary" data-inv-edit="${r.id}">Edit</button>` },
+    ], items, '');
   },
 };

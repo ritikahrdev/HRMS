@@ -78,6 +78,7 @@ app.use('/api/goals', require('./routes/goals'));
 app.use('/api/reviews', require('./routes/reviews'));
 app.use('/api/surveys', require('./routes/surveys'));
 app.use('/api/tickets', require('./routes/tickets'));
+app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/onboarding', require('./routes/onboarding'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/recruitment', require('./routes/recruitment'));

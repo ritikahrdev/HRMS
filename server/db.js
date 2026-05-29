@@ -374,6 +374,76 @@ if (!hasColumn('surveys', 'target_department')) db.exec('ALTER TABLE surveys ADD
 if (!hasColumn('surveys', 'target_manager_id')) db.exec('ALTER TABLE surveys ADD COLUMN target_manager_id INTEGER'); // null = all, or manager's team
 if (!hasColumn('surveys', 'response_required')) db.exec('ALTER TABLE surveys ADD COLUMN response_required INTEGER DEFAULT 0'); // is it mandatory
 if (!hasColumn('surveys', 'show_results')) db.exec('ALTER TABLE surveys ADD COLUMN show_results INTEGER DEFAULT 1'); // can employees see results
+// HR Operations Inventory table
+db.exec(`
+CREATE TABLE IF NOT EXISTS inventory (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL,
+  category       TEXT NOT NULL DEFAULT 'other',
+  quantity       INTEGER NOT NULL DEFAULT 1,
+  available      INTEGER NOT NULL DEFAULT 1,
+  assigned_to    INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+  condition      TEXT NOT NULL DEFAULT 'good',
+  serial_number  TEXT,
+  purchase_date  TEXT,
+  purchase_price REAL DEFAULT 0,
+  notes          TEXT,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
+// Seed starter inventory items if table is empty
+const invCount = db.prepare('SELECT COUNT(*) AS n FROM inventory').get().n;
+if (invCount === 0) {
+  const addItem = db.prepare(`INSERT INTO inventory (name,category,quantity,available,condition,purchase_price,notes) VALUES (?,?,?,?,?,?,?)`);
+  const items = [
+    // Electronics
+    ['Laptop (14" Business)', 'electronics', 5, 5, 'good', 55000, 'Standard dev laptops'],
+    ['External Monitor (24")', 'electronics', 5, 5, 'good', 12000, '1080p IPS monitors'],
+    ['Keyboard (Wired USB)', 'electronics', 6, 6, 'good', 800, 'Standard keyboards'],
+    ['Mouse (Wired USB)', 'electronics', 6, 6, 'good', 600, 'Standard mice'],
+    ['USB Hub (4-port)', 'electronics', 4, 4, 'good', 600, ''],
+    ['Headset with Mic', 'electronics', 5, 5, 'good', 1500, 'For calls and meetings'],
+    ['Webcam (1080p)', 'electronics', 3, 3, 'good', 2500, 'For video conferencing'],
+    ['Phone (IP Desk)', 'electronics', 3, 3, 'good', 4000, 'Reception and HR desk'],
+    // Furniture
+    ['Work Desk', 'furniture', 6, 6, 'good', 8000, 'Standard 4x2 work desks'],
+    ['Ergonomic Chair', 'furniture', 6, 6, 'good', 6000, 'Lumbar-support chairs'],
+    ['Whiteboard (4x3)', 'furniture', 2, 2, 'good', 3500, 'Meeting room whiteboards'],
+    ['Bookshelf / Storage Rack', 'furniture', 2, 2, 'good', 3000, ''],
+    ['Filing Cabinet (3-drawer)', 'furniture', 2, 2, 'good', 5000, 'HR document storage'],
+    ['Conference Table', 'furniture', 1, 1, 'good', 15000, '6-seater meeting table'],
+    // Office Equipment
+    ['Laser Printer', 'equipment', 1, 1, 'good', 18000, 'HP LaserJet — shared'],
+    ['Flatbed Scanner', 'equipment', 1, 1, 'good', 8000, 'Document scanner'],
+    ['Projector (HDMI)', 'equipment', 1, 1, 'good', 22000, 'Meeting room projector'],
+    ['UPS / Power Backup', 'equipment', 3, 3, 'good', 4500, '650VA units'],
+    ['Extension Board (6-socket)', 'equipment', 8, 8, 'good', 400, ''],
+    // Network
+    ['WiFi Router (Dual-band)', 'network', 2, 2, 'good', 3500, 'Office WiFi access'],
+    ['Network Switch (8-port)', 'network', 1, 1, 'good', 2000, 'Wired LAN switch'],
+    ['Ethernet Cable (Cat6, 5m)', 'network', 10, 10, 'good', 150, ''],
+    // Stationery
+    ['A4 Printer Paper (Ream)', 'stationery', 10, 10, 'good', 300, '500 sheets per ream'],
+    ['Notebook / Legal Pad', 'stationery', 20, 20, 'good', 60, ''],
+    ['Ballpoint Pens (Box)', 'stationery', 5, 5, 'good', 120, 'Pack of 10'],
+    ['Sticky Notes Pack', 'stationery', 10, 10, 'good', 80, '3x3 inch pads'],
+    ['Folders / Document Files', 'stationery', 15, 15, 'good', 40, ''],
+    ['Stapler + Staple Pins', 'stationery', 4, 4, 'good', 150, ''],
+    ['Scissors & Tape', 'stationery', 4, 4, 'good', 80, ''],
+    // Software / Licenses
+    ['MS Office 365 License', 'software', 5, 5, 'good', 5000, 'Annual per-user license'],
+    ['Antivirus License', 'software', 5, 5, 'good', 1200, 'Annual per-device'],
+    ['Zoom Pro License', 'software', 2, 2, 'good', 13200, 'Annual team plan'],
+    // Access & Security
+    ['Access / ID Card', 'access', 10, 10, 'good', 150, 'Employee access cards'],
+    ['Door Key / Locker Key', 'access', 6, 6, 'good', 50, ''],
+    ['Visitor Log Book', 'access', 2, 2, 'good', 100, 'Reception visitor register'],
+  ];
+  for (const it of items) addItem.run(...it);
+}
+
 // Migrate the old two-role scheme to the new five-role scheme.
 db.exec("UPDATE users SET role='SUPER_ADMIN' WHERE role='admin'");
 db.exec("UPDATE users SET role='EMPLOYEE' WHERE role='employee'");

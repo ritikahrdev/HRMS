@@ -54,6 +54,7 @@ const App = {
     if (this.has('payroll:view')) push('Admin', '#/payroll', 'Payroll', () => AdminViews.payroll(c()));
     if (this.has('payroll:manage') && this.modOn('loans')) push('Admin', '#/loans', 'Loans & Advances', () => AdminViews.loans(c()));
     if (this.has('employees:write') && this.modOn('assets')) push('Admin', '#/assets', 'Assets', () => AdminViews.assets(c()));
+    if (this.has('settings:manage')) push('Admin', '#/inventory', 'Inventory', () => AdminViews.inventory(c()));
     if (this.has('reports:view')) push('Admin', '#/reports', 'Reports', () => AdminViews.reports(c()));
     if (this.has('settings:manage')) push('Admin', '#/settings', 'Settings', () => AdminViews.settings(c()));
 
@@ -77,7 +78,7 @@ const App = {
     '#/employees': '👥', '#/team': '🧑‍🤝‍🧑', '#/import': '📥', '#/attendance': '🕒',
     '#/corrections': '✏️', '#/leave-approvals': '✅', '#/leave-calendar': '📆',
     '#/reimb-approvals': '💳', '#/payroll': '💰', '#/loans': '🏦', '#/assets': '💻',
-    '#/reports': '📊', '#/settings': '⚙️',
+    '#/inventory': '📦', '#/reports': '📊', '#/settings': '⚙️',
   },
 
   // Product branding (the software's own name; the company is separate).
