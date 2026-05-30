@@ -9,7 +9,6 @@ const { getSettings } = require('../services/settings');
 
 const router = express.Router();
 
-// Maps many possible spreadsheet header names to our internal fields.
 const HEADER_MAP = {
   name: 'name', 'full name': 'name', employee: 'name', 'employee name': 'name',
   email: 'email', 'email id': 'email', 'e-mail': 'email',
@@ -26,100 +25,73 @@ const HEADER_MAP = {
   address: 'address',
 };
 
-function normaliseHeader(h) {
-  return String(h || '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
+function normaliseHeader(h) { return String(h || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
-function validateRow(row, seenCodes, seenEmails) {
+async function validateRow(row, seenCodes, seenEmails) {
   const issues = [];
   if (!row.name || !String(row.name).trim()) issues.push('Name is missing');
-
   if (row.email) {
     const email = String(row.email).trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push('Email looks invalid');
     else {
-      const dup = db.prepare('SELECT 1 FROM users WHERE lower(email)=lower(?)').get(email);
+      const dup = await db.prepare('SELECT 1 FROM users WHERE lower(email)=lower(?)').get(email);
       if (dup) issues.push('Email already exists in system');
       if (seenEmails.has(email.toLowerCase())) issues.push('Duplicate email in file');
       seenEmails.add(email.toLowerCase());
     }
-  } else {
-    issues.push('Email is missing (no login will be created)');
-  }
-
+  } else { issues.push('Email is missing (no login will be created)'); }
   if (row.emp_code) {
     const code = String(row.emp_code).trim();
-    const dup = db.prepare('SELECT 1 FROM employees WHERE emp_code=?').get(code);
+    const dup = await db.prepare('SELECT 1 FROM employees WHERE emp_code=?').get(code);
     if (dup) issues.push('Employee code already exists');
     if (seenCodes.has(code)) issues.push('Duplicate employee code in file');
     seenCodes.add(code);
   }
-
-  if (row.monthly_salary === '' || row.monthly_salary == null) {
-    issues.push('Salary is missing');
-  } else if (isNaN(Number(row.monthly_salary))) {
-    issues.push('Salary is not a number');
-  }
-
+  if (row.monthly_salary === '' || row.monthly_salary == null) issues.push('Salary is missing');
+  else if (isNaN(Number(row.monthly_salary))) issues.push('Salary is not a number');
   return issues;
 }
 
-// Severity: rows with only "missing email" warning are still importable.
-function isBlocking(issues) {
-  return issues.some((i) => !i.includes('no login will be created'));
-}
+function isBlocking(issues) { return issues.some((i) => !i.includes('no login will be created')); }
 
-// Parse + validate, but do not save.
-router.post('/preview', requirePerm('employees:write'), memoryUpload.single('file'), (req, res) => {
+router.post('/preview', requirePerm('employees:write'), memoryUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   let rows;
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-  } catch (e) {
-    return res.status(400).json({ error: 'Could not read the file. Use an .xlsx or .csv file.' });
-  }
-
+  } catch (e) { return res.status(400).json({ error: 'Could not read the file. Use an .xlsx or .csv file.' }); }
   const seenCodes = new Set();
   const seenEmails = new Set();
-  const out = rows.map((raw, idx) => {
+  const out = [];
+  for (let idx = 0; idx < rows.length; idx++) {
+    const raw = rows[idx];
     const mapped = {};
     for (const key of Object.keys(raw)) {
       const field = HEADER_MAP[normaliseHeader(key)];
       if (field) mapped[field] = typeof raw[key] === 'string' ? raw[key].trim() : raw[key];
     }
-    const issues = validateRow(mapped, seenCodes, seenEmails);
-    return { rowNumber: idx + 2, data: mapped, issues, blocking: isBlocking(issues) };
-  });
-
-  res.json({
-    total: out.length,
-    rows: out,
-    okCount: out.filter((r) => !r.blocking).length,
-    problemCount: out.filter((r) => r.blocking).length,
-  });
+    const issues = await validateRow(mapped, seenCodes, seenEmails);
+    out.push({ rowNumber: idx + 2, data: mapped, issues, blocking: isBlocking(issues) });
+  }
+  res.json({ total: out.length, rows: out, okCount: out.filter((r) => !r.blocking).length, problemCount: out.filter((r) => r.blocking).length });
 });
 
-// Commit corrected rows.
 router.post('/commit', requirePerm('employees:write'), async (req, res) => {
   const rows = (req.body && req.body.rows) || [];
-  if (!Array.isArray(rows) || rows.length === 0)
-    return res.status(400).json({ error: 'No rows to import' });
-
-  const s = getSettings();
+  if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows to import' });
+  const s = await getSettings();
   const results = { created: 0, skipped: 0, errors: [] };
-
   for (const r of rows) {
     try {
-      const { employee, tempPassword } = createEmployee(r);
+      const { employee, tempPassword } = await createEmployee(r);
       results.created++;
       if (tempPassword && employee.email) {
         await sendMail({
           to: employee.email,
           subject: `Welcome to ${s.companyName || 'the company'}`,
-          html: `<p>Hi ${employee.name},</p><p>Your HR account is ready.</p>
-            <p><b>Login:</b> ${employee.email}<br/><b>Temporary password:</b> ${tempPassword}</p>`,
+          html: `<p>Hi ${employee.name},</p><p>Your HR account is ready.</p><p><b>Login:</b> ${employee.email}<br/><b>Temporary password:</b> ${tempPassword}</p>`,
         });
       }
     } catch (e) {
@@ -130,20 +102,9 @@ router.post('/commit', requirePerm('employees:write'), async (req, res) => {
   res.json(results);
 });
 
-// Download a ready-to-fill template.
 router.get('/template', requirePerm('employees:write'), (req, res) => {
-  const headers = [
-    'Name', 'Email', 'Phone', 'Emp Code', 'Department', 'Designation',
-    'Date Of Joining', 'Monthly Salary', 'Manager', 'Bank Account', 'IFSC', 'PAN', 'Address',
-  ];
-  const sample = [
-    {
-      Name: 'Asha Verma', Email: 'asha@example.com', Phone: '9876543210',
-      'Emp Code': 'EMP0001', Department: 'Engineering', Designation: 'Developer',
-      'Date Of Joining': '2024-01-15', 'Monthly Salary': 60000, Manager: 'Rahul',
-      'Bank Account': '1234567890', IFSC: 'HDFC0000123', PAN: 'ABCDE1234F', Address: 'Pune',
-    },
-  ];
+  const headers = ['Name', 'Email', 'Phone', 'Emp Code', 'Department', 'Designation', 'Date Of Joining', 'Monthly Salary', 'Manager', 'Bank Account', 'IFSC', 'PAN', 'Address'];
+  const sample = [{ Name: 'Asha Verma', Email: 'asha@example.com', Phone: '9876543210', 'Emp Code': 'EMP0001', Department: 'Engineering', Designation: 'Developer', 'Date Of Joining': '2024-01-15', 'Monthly Salary': 60000, Manager: 'Rahul', 'Bank Account': '1234567890', IFSC: 'HDFC0000123', PAN: 'ABCDE1234F', Address: 'Pune' }];
   const ws = XLSX.utils.json_to_sheet(sample, { header: headers });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Employees');

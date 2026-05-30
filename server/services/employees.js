@@ -16,8 +16,10 @@ function normaliseRole(role) {
   return ROLES.includes(r) ? r : 'EMPLOYEE';
 }
 
-function nextEmpCode() {
-  const row = db.prepare('SELECT emp_code FROM employees WHERE emp_code LIKE ? ORDER BY id DESC').get('EMP%');
+async function nextEmpCode() {
+  const row = await db
+    .prepare('SELECT emp_code FROM employees WHERE emp_code LIKE ? ORDER BY id DESC')
+    .get('EMP%');
   let n = 1;
   if (row && row.emp_code) {
     const m = row.emp_code.match(/(\d+)$/);
@@ -30,7 +32,7 @@ function nextEmpCode() {
  * Creates an employee and (optionally) a matching login account.
  * Returns { employee, tempPassword }.
  */
-function createEmployee(data, { createLogin = true, defaultPassword } = {}) {
+async function createEmployee(data, { createLogin = true, defaultPassword } = {}) {
   const emp = {};
   for (const f of FIELDS) emp[f] = data[f] != null ? data[f] : null;
   emp.name = (emp.name || '').trim();
@@ -38,23 +40,23 @@ function createEmployee(data, { createLogin = true, defaultPassword } = {}) {
   emp.monthly_salary = Number(emp.monthly_salary) || 0;
   emp.status = emp.status || 'active';
   emp.manager_id = emp.manager_id ? Number(emp.manager_id) : null;
-  if (!emp.emp_code) emp.emp_code = nextEmpCode();
+  if (!emp.emp_code) emp.emp_code = await nextEmpCode();
 
   const role = normaliseRole(data.role);
   let userId = null;
   let tempPassword = null;
 
   if (createLogin && emp.email) {
-    const existing = db
+    const existing = await db
       .prepare('SELECT id FROM users WHERE lower(email) = lower(?)')
       .get(emp.email);
     if (existing) {
       userId = existing.id;
-      db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
+      await db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
     } else {
       tempPassword = defaultPassword || makeTempPassword();
-      const hash = bcrypt.hashSync(tempPassword, 10);
-      const r = db
+      const hash = await bcrypt.hash(tempPassword, 10);
+      const r = await db
         .prepare(
           'INSERT INTO users (email, password_hash, role, must_change) VALUES (?, ?, ?, 1)'
         )
@@ -64,13 +66,14 @@ function createEmployee(data, { createLogin = true, defaultPassword } = {}) {
   }
 
   const cols = [...FIELDS, 'user_id'];
-  const placeholders = cols.map((c) => '@' + c).join(', ');
   const row = { ...emp, user_id: userId };
-  const r = db
-    .prepare(`INSERT INTO employees (${cols.join(', ')}) VALUES (${placeholders})`)
+  const r = await db
+    .prepare(`INSERT INTO employees (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})`)
     .run(row);
 
-  const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(r.lastInsertRowid);
+  const employee = await db
+    .prepare('SELECT * FROM employees WHERE id = ?')
+    .get(r.lastInsertRowid);
   return { employee, tempPassword };
 }
 

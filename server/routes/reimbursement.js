@@ -24,13 +24,13 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
     const { title, amount, category } = req.body || {};
     if (!title || !amount) return res.status(400).json({ error: 'Title and amount are required.' });
     const billFile = req.file ? req.file.filename : null;
-    const r = db.prepare(
-      'INSERT INTO reimbursements (employee_id, title, category, amount, bill_file) VALUES (?, ?, ?, ?, ?)'
+    const r = await db.prepare(
+      'INSERT INTO reimbursements (employee_id, title, category, amount, bill_file) VALUES ($1, $2, $3, $4, $5)'
     ).run(empId, title, category || '', Number(amount) || 0, billFile);
 
     const id = r.lastInsertRowid;
-    const emp = db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
-    const to = approverEmailsFor(empId, 'reimbursement');
+    const emp = await db.prepare('SELECT name FROM employees WHERE id = $1').get(empId);
+    const to = await approverEmailsFor(empId, 'reimbursement');
     if (to.length) {
       await sendMail({
         to: to.join(','),
@@ -50,36 +50,41 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
   }
 });
 
-router.get('/my', requireLogin, (req, res) => {
+router.get('/my', requireLogin, async (req, res) => {
   const empId = myEmpId(req, res); if (!empId) return;
-  const rows = db.prepare('SELECT * FROM reimbursements WHERE employee_id = ? ORDER BY applied_at DESC').all(empId);
+  const rows = await db.prepare('SELECT * FROM reimbursements WHERE employee_id = $1 ORDER BY applied_at DESC').all(empId);
   res.json({ reimbursements: rows });
 });
 
 // For approvers (Finance/Super = all; Manager = team).
-router.get('/', requirePerm('reimbursement:approve'), (req, res) => {
+router.get('/', requirePerm('reimbursement:approve'), async (req, res) => {
   const status = req.query.status;
   const base = `SELECT r.*, e.name AS employee_name, e.emp_code
                FROM reimbursements r JOIN employees e ON e.id = r.employee_id`;
   let where = '';
   let params = [];
   if (req.session.user.role === 'MANAGER') {
-    const ids = teamEmployeeIds(req);
+    const ids = await teamEmployeeIds(req);
     if (ids.length === 0) return res.json({ reimbursements: [] });
-    where = ` WHERE r.employee_id IN (${ids.map(() => '?').join(',')})`;
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    where = ` WHERE r.employee_id IN (${placeholders})`;
     params = ids;
   }
-  if (status) { where += (where ? ' AND' : ' WHERE') + ' r.status = ?'; params.push(status); }
-  const rows = db.prepare(base + where + ' ORDER BY r.applied_at DESC').all(...params);
+  if (status) {
+    const statusParam = `$${params.length + 1}`;
+    where += (where ? ' AND' : ' WHERE') + ` r.status = ${statusParam}`;
+    params.push(status);
+  }
+  const rows = await db.prepare(base + where + ' ORDER BY r.applied_at DESC').all(...params);
   res.json({ reimbursements: rows });
 });
 
 // View / download a bill (approver, or the owner).
-router.get('/:id/bill', requireLogin, (req, res) => {
+router.get('/:id/bill', requireLogin, async (req, res) => {
   try {
-    const row = db.prepare('SELECT * FROM reimbursements WHERE id = ?').get(req.params.id);
+    const row = await db.prepare('SELECT * FROM reimbursements WHERE id = $1').get(req.params.id);
     if (!row || !row.bill_file) return res.status(404).send('No bill');
-    if (!canActOnEmployee(req, row.employee_id)) return res.status(403).send('Forbidden');
+    if (!await canActOnEmployee(req, row.employee_id)) return res.status(403).send('Forbidden');
 
     // Path traversal protection: verify resolved path is within uploads directory
     const filePath = path.resolve(path.join(config.paths.uploads, row.bill_file));
@@ -101,9 +106,9 @@ router.post('/:id/decision', requirePerm('reimbursement:approve'), async (req, r
     const { decision, comment } = req.body || {};
     if (!['approved', 'rejected'].includes(decision))
       return res.status(400).json({ error: 'decision must be approved or rejected' });
-    const row = db.prepare('SELECT * FROM reimbursements WHERE id = ?').get(req.params.id);
+    const row = await db.prepare('SELECT * FROM reimbursements WHERE id = $1').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canActOnEmployee(req, row.employee_id)) return res.status(403).json({ error: 'Not in your team.' });
+    if (!await canActOnEmployee(req, row.employee_id)) return res.status(403).json({ error: 'Not in your team.' });
 
     await applyReimbursementDecision(row.id, decision, comment, req.session.user.id);
     res.json({ ok: true });

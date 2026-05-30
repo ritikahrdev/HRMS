@@ -94,12 +94,12 @@ function parseCsv(text) {
 }
 
 /** Parses CSV text (literal) and upserts attendance. */
-function syncFromCsv(csvText) {
+async function syncFromCsv(csvText) {
   return processGrid(parseCsv(csvText));
 }
 
 /** Parses an uploaded .xlsx / .xls / .csv file (Buffer) and upserts attendance. */
-function syncFromBuffer(buffer) {
+async function syncFromBuffer(buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
@@ -109,7 +109,7 @@ function syncFromBuffer(buffer) {
 // Decides whether the sheet is a tidy list (one row per day) or a grid
 // (one row per employee, one column per date) and routes accordingly.
 // `aoa` is an array of arrays (rows of cells).
-function processGrid(aoa) {
+async function processGrid(aoa) {
   if (!aoa || !aoa.length) return { total: 0, synced: 0, unmatched: 0, errors: [], unmatchedKeys: [] };
 
   // Find the header row = the row with the most date-like cells.
@@ -132,19 +132,18 @@ function processGrid(aoa) {
   return processRows(rows);
 }
 
-function makeUpsert() {
-  return db.prepare(`
-    INSERT INTO attendance (employee_id, date, check_in, check_out, status)
-    VALUES (@employee_id, @date, @check_in, @check_out, @status)
+function getUpsertSQL() {
+  return `INSERT INTO attendance (employee_id, date, check_in, check_out, status)
+    VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT(employee_id, date) DO UPDATE SET
-      status = @status,
-      check_in = COALESCE(@check_in, attendance.check_in),
-      check_out = COALESCE(@check_out, attendance.check_out)`);
+      status = EXCLUDED.status,
+      check_in = COALESCE(EXCLUDED.check_in, attendance.check_in),
+      check_out = COALESCE(EXCLUDED.check_out, attendance.check_out)`;
 }
 
 // Builds an employee resolver that matches by code, email, or (full) name.
-function buildLookup() {
-  const employees = db.prepare('SELECT id, emp_code, email, name FROM employees').all();
+async function buildLookup() {
+  const employees = await db.prepare('SELECT id, emp_code, email, name FROM employees').all();
   const byCode = {}, byEmail = {}, byName = {};
   const clean = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
   for (const e of employees) {
@@ -163,10 +162,10 @@ function buildLookup() {
 }
 
 // Matrix layout: employee per row, date per column.
-function processMatrix(grid, headerIdx) {
+async function processMatrix(grid, headerIdx) {
   const header = grid[headerIdx];
-  const lookup = buildLookup();
-  const upsert = makeUpsert();
+  const lookup = await buildLookup();
+  const upsertSQL = getUpsertSQL();
   const result = { total: 0, synced: 0, unmatched: 0, errors: [], unmatchedKeys: [], mode: 'grid' };
 
   // Classify columns: which hold the name/code/email, which hold dates.
@@ -203,7 +202,7 @@ function processMatrix(grid, headerIdx) {
     for (const dc of dateCols) {
       const status = normaliseStatus(row[dc.idx]);
       if (!status) continue; // blank / week-off / unknown -> leave as is
-      upsert.run({ employee_id: empId, date: dc.date, check_in: null, check_out: null, status });
+      await db.prepare(upsertSQL).run(empId, dc.date, null, null, status);
       result.synced++;
     }
   }
@@ -214,10 +213,10 @@ function processMatrix(grid, headerIdx) {
  * Tidy layout: one row per employee per day.
  * Returns { total, synced, unmatched, errors:[], unmatchedKeys:[] }.
  */
-function processRows(rows) {
-  const lookup = buildLookup();
+async function processRows(rows) {
+  const lookup = await buildLookup();
   const result = { total: rows.length, synced: 0, unmatched: 0, errors: [], unmatchedKeys: [], mode: 'list' };
-  const upsert = makeUpsert();
+  const upsertSQL = getUpsertSQL();
 
   for (const raw of rows) {
     const rec = {};
@@ -242,13 +241,13 @@ function processRows(rows) {
     let status = normaliseStatus(rec.status);
     if (!status) status = tIn ? 'present' : 'absent';
 
-    upsert.run({
-      employee_id: empId,
+    await db.prepare(upsertSQL).run(
+      empId,
       date,
-      check_in: tIn ? `${date}T${tIn}:00` : null,
-      check_out: tOut ? `${date}T${tOut}:00` : null,
-      status,
-    });
+      tIn ? `${date}T${tIn}:00` : null,
+      tOut ? `${date}T${tOut}:00` : null,
+      status
+    );
     result.synced++;
   }
 

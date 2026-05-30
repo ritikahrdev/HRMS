@@ -8,15 +8,20 @@ const { getSettings } = require('../services/settings');
 const router = express.Router();
 
 // Everyone sees announcements (pinned first, then newest).
-router.get('/', requireLogin, (req, res) => {
-  const rows = db.prepare(
-    `SELECT a.*, COALESCE(e.name, u.email) AS author
-     FROM announcements a
-     LEFT JOIN users u ON u.id = a.created_by
-     LEFT JOIN employees e ON e.user_id = a.created_by
-     ORDER BY a.pinned DESC, a.created_at DESC`
-  ).all();
-  res.json({ announcements: rows });
+router.get('/', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.prepare(
+      `SELECT a.*, COALESCE(e.name, u.email) AS author
+       FROM announcements a
+       LEFT JOIN users u ON u.id = a.created_by
+       LEFT JOIN employees e ON e.user_id = a.created_by
+       ORDER BY a.pinned DESC, a.created_at DESC`
+    ).all();
+    res.json({ announcements: rows });
+  } catch (err) {
+    console.error('Get announcements error:', err);
+    res.status(500).json({ error: 'Failed to fetch announcements.' });
+  }
 });
 
 // HR / Super admin post and remove.
@@ -25,7 +30,7 @@ router.post('/', requirePerm('settings:manage'), async (req, res) => {
     const { title, body, pinned } = req.body || {};
     if (!title) return res.status(400).json({ error: 'Title is required.' });
 
-    const r = db.prepare('INSERT INTO announcements (title, body, pinned, created_by) VALUES (?, ?, ?, ?)')
+    const r = await db.prepare('INSERT INTO announcements (title, body, pinned, created_by) VALUES (?, ?, ?, ?)')
       .run(title, body || '', pinned ? 1 : 0, req.session.user.id);
 
     const id = r.lastInsertRowid;
@@ -35,9 +40,9 @@ router.post('/', requirePerm('settings:manage'), async (req, res) => {
     await postToSlack(slackMessage);
 
     // Send email notification to all active employees
-    const settings = getSettings();
+    const settings = await getSettings();
     if (settings.email && settings.email.enabled) {
-      const employees = db.prepare("SELECT email FROM employees WHERE status='active' AND email IS NOT NULL").all();
+      const employees = await db.prepare("SELECT email FROM employees WHERE status='active' AND email IS NOT NULL").all();
       const emails = employees.map((e) => e.email).filter(Boolean);
 
       if (emails.length > 0) {
@@ -64,9 +69,14 @@ router.post('/', requirePerm('settings:manage'), async (req, res) => {
   }
 });
 
-router.delete('/:id', requirePerm('settings:manage'), (req, res) => {
-  db.prepare('DELETE FROM announcements WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+router.delete('/:id', requirePerm('settings:manage'), async (req, res) => {
+  try {
+    await db.prepare('DELETE FROM announcements WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete announcement error:', err);
+    res.status(500).json({ error: 'Failed to delete announcement.' });
+  }
 });
 
 module.exports = router;

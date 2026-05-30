@@ -1,107 +1,295 @@
-// Hide the harmless "SQLite is experimental" startup warning so the console
-// stays clean for non-technical users.
-const _emit = process.emit;
-process.emit = function (name, data) {
-  if (name === 'warning' && data && data.name === 'ExperimentalWarning' && /sqlite/i.test(data.message || '')) {
-    return false;
-  }
-  return _emit.apply(process, arguments);
-};
-
-const { DatabaseSync } = require('node:sqlite');
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
-const config = require('./config');
 
-const db = new DatabaseSync(config.paths.db);
-db.exec('PRAGMA journal_mode = WAL');
-db.exec('PRAGMA foreign_keys = ON');
+const DATABASE_URL =
+  process.env.DATABASE_URL ||
+  'postgresql://neondb_owner:npg_sWp7kGNy5icD@ep-super-night-aq3o64ck-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
 
-db.exec(`
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+// ISO timestamp expression used as a column default (PostgreSQL).
+const NOW_ISO = `to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
+
+// ---------------------------------------------------------------------------
+// SQL translation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts SQLite-style SQL into PostgreSQL-compatible SQL.
+ *
+ * Transformations applied:
+ *  1. datetime('now') → PostgreSQL UTC ISO string expression
+ *  2. INSERT OR IGNORE INTO tablename → INSERT INTO tablename ... ON CONFLICT DO NOTHING
+ *     (the ON CONFLICT clause is appended before any RETURNING clause, or at end)
+ *  3. ? positional params → $1, $2, $3 …
+ *  4. @name named params are left in the SQL as markers – resolved separately in
+ *     translateNamedParams().
+ *  5. substr( → substring(
+ */
+function translateSQL(sql) {
+  let s = sql;
+
+  // 1. datetime('now')
+  s = s.replace(/datetime\s*\(\s*'now'\s*\)/gi, NOW_ISO);
+
+  // 2. INSERT OR IGNORE INTO
+  let insertOrIgnore = false;
+  s = s.replace(/INSERT\s+OR\s+IGNORE\s+INTO\b/gi, (match) => {
+    insertOrIgnore = true;
+    return 'INSERT INTO';
+  });
+
+  // 3. substr( → substring(
+  s = s.replace(/\bsubstr\s*\(/gi, 'substring(');
+
+  // 4. ? → $1, $2, …
+  let paramIndex = 0;
+  s = s.replace(/\?/g, () => `$${++paramIndex}`);
+
+  // 5. Append ON CONFLICT DO NOTHING for INSERT OR IGNORE
+  if (insertOrIgnore) {
+    // Insert before any RETURNING clause (case-insensitive), otherwise at end.
+    if (/\bRETURNING\b/i.test(s)) {
+      s = s.replace(/\bRETURNING\b/i, 'ON CONFLICT DO NOTHING RETURNING');
+    } else {
+      s = s.trimEnd();
+      if (s.endsWith(';')) {
+        s = s.slice(0, -1).trimEnd() + ' ON CONFLICT DO NOTHING;';
+      } else {
+        s += ' ON CONFLICT DO NOTHING';
+      }
+    }
+  }
+
+  return s;
+}
+
+/**
+ * Converts @name style named params into $N positional params and builds the
+ * values array from the provided object.
+ *
+ * Returns { sql, values }.
+ */
+function translateNamedParams(sql, obj) {
+  const values = [];
+  const sql2 = sql.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, (_, name) => {
+    values.push(obj[name] !== undefined ? obj[name] : null);
+    return `$${values.length}`;
+  });
+  return { sql: sql2, values };
+}
+
+/**
+ * Appends RETURNING id to an INSERT statement (before the semicolon if present).
+ * Used by db.run() so callers can read result.lastInsertRowid.
+ */
+function appendReturningId(sql) {
+  const trimmed = sql.trimEnd();
+  // If it already has a RETURNING clause, leave it alone.
+  if (/\bRETURNING\b/i.test(trimmed)) return sql;
+  if (!/^\s*INSERT\b/i.test(trimmed)) return sql;
+  if (trimmed.endsWith(';')) {
+    return trimmed.slice(0, -1).trimEnd() + ' RETURNING id;';
+  }
+  return trimmed + ' RETURNING id';
+}
+
+// ---------------------------------------------------------------------------
+// db compatibility shim
+// ---------------------------------------------------------------------------
+
+/**
+ * db.prepare(sql) returns a statement-like object with three async methods:
+ *
+ *   .all(...args)  – returns an array of rows
+ *   .get(...args)  – returns the first row or undefined
+ *   .run(...args)  – executes (with RETURNING id for INSERTs) and returns
+ *                    { lastInsertRowid, changes }
+ *
+ * args can be:
+ *   - nothing / a single array  → positional $1…$N params
+ *   - spread positional values  → positional $1…$N params
+ *   - a single plain object     → @name named params
+ */
+function prepare(originalSql) {
+  return {
+    async all(...args) {
+      const { sql, values } = resolveArgs(translateSQL(originalSql), args);
+      const result = await pool.query(sql, values);
+      return result.rows;
+    },
+
+    async get(...args) {
+      const { sql, values } = resolveArgs(translateSQL(originalSql), args);
+      const result = await pool.query(sql, values);
+      return result.rows[0];
+    },
+
+    async run(...args) {
+      const translatedSql = appendReturningId(translateSQL(originalSql));
+      const { sql, values } = resolveArgs(translatedSql, args);
+      const result = await pool.query(sql, values);
+      const lastInsertRowid =
+        result.rows && result.rows.length > 0 ? result.rows[0].id : null;
+      const changes = result.rowCount || 0;
+      return { lastInsertRowid, changes };
+    },
+  };
+}
+
+/**
+ * Resolves args into { sql, values } handling three calling conventions:
+ *   1. Single plain object arg → named @param style
+ *   2. Single array arg        → positional values (already $N in sql)
+ *   3. Spread positional args  → positional values
+ */
+function resolveArgs(sql, args) {
+  if (args.length === 0) {
+    return { sql, values: [] };
+  }
+  if (
+    args.length === 1 &&
+    args[0] !== null &&
+    typeof args[0] === 'object' &&
+    !Array.isArray(args[0])
+  ) {
+    // Named params object
+    return translateNamedParams(sql, args[0]);
+  }
+  if (args.length === 1 && Array.isArray(args[0])) {
+    return { sql, values: args[0] };
+  }
+  // Spread positional
+  return { sql, values: args };
+}
+
+/**
+ * db.exec(sql) – runs multi-statement DDL/DML sequentially.
+ * Splits on semicolons, ignoring empty statements.
+ */
+async function exec(sql) {
+  const statements = sql
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const stmt of statements) {
+    await pool.query(translateSQL(stmt));
+  }
+}
+
+/**
+ * db.run(sql, ...args) – convenience shorthand (used occasionally in legacy code).
+ */
+async function run(sql, ...args) {
+  return prepare(sql).run(...args);
+}
+
+// ---------------------------------------------------------------------------
+// Schema creation
+// ---------------------------------------------------------------------------
+
+const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  id            SERIAL PRIMARY KEY,
   email         TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL DEFAULT 'employee',  -- 'admin' or 'employee'
+  role          TEXT NOT NULL DEFAULT 'EMPLOYEE',
   must_change   INTEGER NOT NULL DEFAULT 0,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  permissions   TEXT,
+  created_at    TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS employees (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  emp_code       TEXT UNIQUE,
-  name           TEXT NOT NULL,
-  email          TEXT,
-  phone          TEXT,
-  department     TEXT,
-  designation    TEXT,
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  emp_code        TEXT UNIQUE,
+  name            TEXT NOT NULL,
+  email           TEXT,
+  phone           TEXT,
+  department      TEXT,
+  designation     TEXT,
   date_of_joining TEXT,
-  monthly_salary REAL NOT NULL DEFAULT 0,
-  manager        TEXT,
-  bank_account   TEXT,
-  ifsc           TEXT,
-  pan            TEXT,
-  address        TEXT,
-  status         TEXT NOT NULL DEFAULT 'active', -- active / inactive
-  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  monthly_salary  REAL NOT NULL DEFAULT 0,
+  manager         TEXT,
+  manager_id      INTEGER,
+  bank_account    TEXT,
+  ifsc            TEXT,
+  pan             TEXT,
+  address         TEXT,
+  status          TEXT NOT NULL DEFAULT 'active',
+  created_at      TEXT DEFAULT ${NOW_ISO},
+  dob             TEXT,
+  gender          TEXT,
+  emergency_name  TEXT,
+  emergency_phone TEXT,
+  aadhaar         TEXT,
+  education       TEXT,
+  experience      TEXT,
+  blood_group     TEXT,
+  slack_id        TEXT,
+  salary_structure TEXT
 );
 
 CREATE TABLE IF NOT EXISTS attendance (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  date        TEXT NOT NULL,           -- YYYY-MM-DD
-  check_in    TEXT,                    -- ISO timestamp
+  date        TEXT NOT NULL,
+  check_in    TEXT,
   check_out   TEXT,
   work_hours  REAL DEFAULT 0,
-  status      TEXT NOT NULL DEFAULT 'present', -- present / half / absent / leave
+  status      TEXT NOT NULL DEFAULT 'present',
+  late_minutes REAL DEFAULT 0,
+  ot_hours    REAL DEFAULT 0,
   UNIQUE (employee_id, date)
 );
 
 CREATE TABLE IF NOT EXISTS leave_requests (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  type        TEXT NOT NULL,           -- casual / sick / earned / unpaid
+  type        TEXT NOT NULL,
   from_date   TEXT NOT NULL,
   to_date     TEXT NOT NULL,
   days        REAL NOT NULL,
   reason      TEXT,
-  status      TEXT NOT NULL DEFAULT 'pending', -- pending / approved / rejected
+  status      TEXT NOT NULL DEFAULT 'pending',
   approver_id INTEGER REFERENCES users(id),
   comment     TEXT,
-  applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  decided_at  TEXT
+  applied_at  TEXT DEFAULT ${NOW_ISO},
+  decided_at  TEXT,
+  half_day    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS reimbursements (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   title       TEXT NOT NULL,
   category    TEXT,
   amount      REAL NOT NULL,
-  bill_file   TEXT,                    -- stored filename in /uploads
-  status      TEXT NOT NULL DEFAULT 'pending', -- pending / approved / rejected
+  bill_file   TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending',
   approver_id INTEGER REFERENCES users(id),
   comment     TEXT,
-  applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  applied_at  TEXT DEFAULT ${NOW_ISO},
   decided_at  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS payslips (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  employee_id   INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  month         TEXT NOT NULL,         -- YYYY-MM
-  base_salary   REAL NOT NULL,
-  working_days  REAL NOT NULL,
-  present_days  REAL NOT NULL,
-  paid_leave    REAL NOT NULL,
-  unpaid_days   REAL NOT NULL,
-  paid_days     REAL NOT NULL,
-  per_day       REAL NOT NULL,
-  gross         REAL NOT NULL,
-  deductions    REAL NOT NULL,
+  id             SERIAL PRIMARY KEY,
+  employee_id    INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  month          TEXT NOT NULL,
+  base_salary    REAL NOT NULL,
+  working_days   REAL NOT NULL,
+  present_days   REAL NOT NULL,
+  paid_leave     REAL NOT NULL,
+  unpaid_days    REAL NOT NULL,
+  paid_days      REAL NOT NULL,
+  per_day        REAL NOT NULL,
+  gross          REAL NOT NULL,
+  deductions     REAL NOT NULL,
   reimbursements REAL NOT NULL DEFAULT 0,
-  net_salary    REAL NOT NULL,
-  generated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  net_salary     REAL NOT NULL,
+  generated_at   TEXT DEFAULT ${NOW_ISO},
+  breakup        TEXT,
   UNIQUE (employee_id, month)
 );
 
@@ -111,273 +299,249 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS email_log (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  to_addr   TEXT,
-  subject   TEXT,
-  status    TEXT,           -- sent / disabled / error
-  error     TEXT,
-  body      TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  id         SERIAL PRIMARY KEY,
+  to_addr    TEXT,
+  subject    TEXT,
+  status     TEXT,
+  error      TEXT,
+  body       TEXT,
+  created_at TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS attendance_corrections (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  employee_id   INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  date          TEXT NOT NULL,
-  requested_status TEXT,        -- present / half / leave / absent
-  requested_in  TEXT,           -- HH:MM (optional)
-  requested_out TEXT,
-  reason        TEXT,
-  status        TEXT NOT NULL DEFAULT 'pending', -- pending / approved / rejected
-  approver_id   INTEGER REFERENCES users(id),
-  comment       TEXT,
-  applied_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  decided_at    TEXT
+  id               SERIAL PRIMARY KEY,
+  employee_id      INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  date             TEXT NOT NULL,
+  requested_status TEXT,
+  requested_in     TEXT,
+  requested_out    TEXT,
+  reason           TEXT,
+  status           TEXT NOT NULL DEFAULT 'pending',
+  approver_id      INTEGER REFERENCES users(id),
+  comment          TEXT,
+  applied_at       TEXT DEFAULT ${NOW_ISO},
+  decided_at       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS holidays (
-  id    INTEGER PRIMARY KEY AUTOINCREMENT,
-  date  TEXT NOT NULL UNIQUE,   -- YYYY-MM-DD
-  name  TEXT NOT NULL,
-  type  TEXT DEFAULT 'public'   -- public / restricted / company
+  id   SERIAL PRIMARY KEY,
+  date TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  type TEXT DEFAULT 'public'
 );
 
 CREATE TABLE IF NOT EXISTS announcements (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  id         SERIAL PRIMARY KEY,
   title      TEXT NOT NULL,
   body       TEXT,
   created_by INTEGER REFERENCES users(id),
   pinned     INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS assets (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  name         TEXT NOT NULL,
-  tag          TEXT,            -- serial / asset tag
-  category     TEXT,            -- laptop / phone / ...
-  employee_id  INTEGER REFERENCES employees(id) ON DELETE SET NULL,
-  status       TEXT NOT NULL DEFAULT 'available', -- available / assigned / retired
-  notes        TEXT,
-  assigned_at  TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  tag         TEXT,
+  category    TEXT,
+  employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+  status      TEXT NOT NULL DEFAULT 'available',
+  notes       TEXT,
+  assigned_at TEXT,
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS employee_documents (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  employee_id  INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  title        TEXT NOT NULL,
-  file         TEXT NOT NULL,
-  uploaded_by  INTEGER REFERENCES users(id),
-  uploaded_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id          SERIAL PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  file        TEXT NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  uploaded_at TEXT DEFAULT ${NOW_ISO},
+  doc_type    TEXT,
+  status      TEXT,
+  verify_note TEXT,
+  verified_at TEXT,
+  verified_by INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS loans (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  employee_id  INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  type         TEXT NOT NULL DEFAULT 'loan',   -- loan / advance
-  title        TEXT,
-  amount       REAL NOT NULL,                  -- total amount
-  emi          REAL NOT NULL DEFAULT 0,        -- monthly deduction
-  balance      REAL,                           -- remaining (informational)
-  status       TEXT NOT NULL DEFAULT 'active', -- active / closed
-  notes        TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  id          SERIAL PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  type        TEXT NOT NULL DEFAULT 'loan',
+  title       TEXT,
+  amount      REAL NOT NULL,
+  emi         REAL NOT NULL DEFAULT 0,
+  balance     REAL,
+  status      TEXT NOT NULL DEFAULT 'active',
+  notes       TEXT,
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS payroll_runs (
-  month       TEXT PRIMARY KEY,               -- YYYY-MM
-  status      TEXT NOT NULL DEFAULT 'draft',  -- draft / approved
+  month       TEXT PRIMARY KEY,
+  status      TEXT NOT NULL DEFAULT 'draft',
   approved_by INTEGER REFERENCES users(id),
   approved_at TEXT,
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS comp_off_credits (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   days        REAL NOT NULL DEFAULT 1,
   reason      TEXT,
   granted_by  INTEGER REFERENCES users(id),
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS kudos (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   from_user   INTEGER REFERENCES users(id),
-  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE, -- recipient
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   badge       TEXT,
   message     TEXT NOT NULL,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  cheers      INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS goals (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   title       TEXT NOT NULL,
   description TEXT,
   target_date TEXT,
-  progress    INTEGER NOT NULL DEFAULT 0, -- 0..100
-  status      TEXT NOT NULL DEFAULT 'active', -- active / done / dropped
+  progress    INTEGER NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL DEFAULT 'active',
   created_by  INTEGER REFERENCES users(id),
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  period      TEXT NOT NULL,   -- e.g. 2026-H1 / 2026-Q1
+  period      TEXT NOT NULL,
   reviewer_id INTEGER REFERENCES users(id),
-  rating      INTEGER,         -- 1..5
+  rating      INTEGER,
   strengths   TEXT,
   improvements TEXT,
   status      TEXT NOT NULL DEFAULT 'submitted',
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS surveys (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  title       TEXT NOT NULL,
-  description TEXT,
-  questions   TEXT NOT NULL,   -- JSON array of {text,type}
-  active      INTEGER NOT NULL DEFAULT 1,
-  anonymous   INTEGER NOT NULL DEFAULT 0,
-  created_by  INTEGER REFERENCES users(id),
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id                  SERIAL PRIMARY KEY,
+  title               TEXT NOT NULL,
+  description         TEXT,
+  questions           TEXT NOT NULL,
+  active              INTEGER NOT NULL DEFAULT 1,
+  anonymous           INTEGER NOT NULL DEFAULT 0,
+  created_by          INTEGER REFERENCES users(id),
+  created_at          TEXT DEFAULT ${NOW_ISO},
+  category            TEXT DEFAULT 'engagement',
+  deadline            TEXT,
+  target_department   TEXT,
+  target_manager_id   INTEGER,
+  response_required   INTEGER DEFAULT 0,
+  show_results        INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS survey_responses (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   survey_id   INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
   employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
-  answers     TEXT NOT NULL,   -- JSON array aligned to questions
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  answers     TEXT NOT NULL,
+  created_at  TEXT DEFAULT ${NOW_ISO},
   UNIQUE (survey_id, employee_id)
 );
 
 CREATE TABLE IF NOT EXISTS tickets (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   category    TEXT,
   subject     TEXT NOT NULL,
   description TEXT,
-  status      TEXT NOT NULL DEFAULT 'open', -- open / in_progress / closed
+  status      TEXT NOT NULL DEFAULT 'open',
   assigned_to INTEGER REFERENCES users(id),
   resolution  TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT DEFAULT ${NOW_ISO},
+  updated_at  TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  title       TEXT NOT NULL,
-  department  TEXT,
-  location    TEXT,
-  type        TEXT,            -- Full-time / Part-time / Contract / Intern
-  description TEXT,
-  skills      TEXT,            -- comma-separated required skills
+  id             SERIAL PRIMARY KEY,
+  title          TEXT NOT NULL,
+  department     TEXT,
+  location       TEXT,
+  type           TEXT,
+  description    TEXT,
+  skills         TEXT,
   min_experience REAL NOT NULL DEFAULT 0,
-  status      TEXT NOT NULL DEFAULT 'open', -- open / closed
-  created_by  INTEGER REFERENCES users(id),
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  status         TEXT NOT NULL DEFAULT 'open',
+  created_by     INTEGER REFERENCES users(id),
+  created_at     TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS applicants (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id      INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-  name        TEXT NOT NULL,
-  email       TEXT,
-  phone       TEXT,
+  id               SERIAL PRIMARY KEY,
+  job_id           INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  name             TEXT NOT NULL,
+  email            TEXT,
+  phone            TEXT,
   experience_years REAL NOT NULL DEFAULT 0,
-  skills      TEXT,
-  resume_file TEXT,
-  source      TEXT,            -- LinkedIn / Referral / Website / ...
-  stage       TEXT NOT NULL DEFAULT 'applied', -- applied/shortlisted/interview/offer/hired/rejected
-  score       INTEGER,         -- criteria match %
-  notes       TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  skills           TEXT,
+  resume_file      TEXT,
+  source           TEXT,
+  stage            TEXT NOT NULL DEFAULT 'applied',
+  score            INTEGER,
+  notes            TEXT,
+  created_at       TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS interviews (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  applicant_id INTEGER NOT NULL REFERENCES applicants(id) ON DELETE CASCADE,
-  round       TEXT,
-  scheduled_at TEXT,           -- ISO timestamp
-  interviewer TEXT,
+  id               SERIAL PRIMARY KEY,
+  applicant_id     INTEGER NOT NULL REFERENCES applicants(id) ON DELETE CASCADE,
+  round            TEXT,
+  scheduled_at     TEXT,
+  interviewer      TEXT,
   interviewer_email TEXT,
-  mode        TEXT,            -- Online / In-person
-  status      TEXT NOT NULL DEFAULT 'scheduled',
-  feedback    TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  mode             TEXT,
+  status           TEXT NOT NULL DEFAULT 'scheduled',
+  feedback         TEXT,
+  created_at       TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS kudos_reactions (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  id         SERIAL PRIMARY KEY,
   kudos_id   INTEGER NOT NULL REFERENCES kudos(id) ON DELETE CASCADE,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   emoji      TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT DEFAULT ${NOW_ISO},
   UNIQUE (kudos_id, user_id, emoji)
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  type        TEXT,
-  title       TEXT NOT NULL,
-  body        TEXT,
-  link        TEXT,
-  read        INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type       TEXT,
+  title      TEXT NOT NULL,
+  body       TEXT,
+  link       TEXT,
+  read       INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT ${NOW_ISO}
 );
 
 CREATE TABLE IF NOT EXISTS onboarding_tasks (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   title       TEXT NOT NULL,
   done        INTEGER NOT NULL DEFAULT 0,
   position    INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT DEFAULT ${NOW_ISO}
 );
-`);
 
-// ---- Lightweight migrations (safe to run every start) ----------------------
-function hasColumn(table, col) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
-}
-// Extended employee profile fields (Core HR pack).
-for (const col of ['dob', 'gender', 'emergency_name', 'emergency_phone', 'aadhaar', 'education', 'experience', 'blood_group']) {
-  if (!hasColumn('employees', col)) db.exec(`ALTER TABLE employees ADD COLUMN ${col} TEXT`);
-}
-// Payroll pack columns.
-if (!hasColumn('employees', 'salary_structure')) db.exec('ALTER TABLE employees ADD COLUMN salary_structure TEXT');
-if (!hasColumn('payslips', 'breakup')) db.exec('ALTER TABLE payslips ADD COLUMN breakup TEXT');
-// Leave & time pack columns.
-if (!hasColumn('leave_requests', 'half_day')) db.exec('ALTER TABLE leave_requests ADD COLUMN half_day INTEGER NOT NULL DEFAULT 0');
-if (!hasColumn('attendance', 'late_minutes')) db.exec('ALTER TABLE attendance ADD COLUMN late_minutes REAL DEFAULT 0');
-if (!hasColumn('attendance', 'ot_hours')) db.exec('ALTER TABLE attendance ADD COLUMN ot_hours REAL DEFAULT 0');
-// Engagement + Slack columns.
-if (!hasColumn('kudos', 'cheers')) db.exec('ALTER TABLE kudos ADD COLUMN cheers INTEGER NOT NULL DEFAULT 0');
-if (!hasColumn('employee_documents', 'doc_type')) db.exec('ALTER TABLE employee_documents ADD COLUMN doc_type TEXT');
-for (const col of ['status', 'verify_note', 'verified_at']) {
-  if (!hasColumn('employee_documents', col)) db.exec(`ALTER TABLE employee_documents ADD COLUMN ${col} TEXT`);
-}
-if (!hasColumn('employee_documents', 'verified_by')) db.exec('ALTER TABLE employee_documents ADD COLUMN verified_by INTEGER');
-if (!hasColumn('employees', 'slack_id')) db.exec('ALTER TABLE employees ADD COLUMN slack_id TEXT');
-if (!hasColumn('employees', 'manager_id')) {
-  db.exec('ALTER TABLE employees ADD COLUMN manager_id INTEGER');
-}
-// Survey enhancements pack - modern HRMS features
-if (!hasColumn('surveys', 'category')) db.exec('ALTER TABLE surveys ADD COLUMN category TEXT DEFAULT "engagement"'); // engagement, satisfaction, performance, feedback, pulse
-if (!hasColumn('surveys', 'deadline')) db.exec('ALTER TABLE surveys ADD COLUMN deadline TEXT'); // ISO date for survey end
-if (!hasColumn('surveys', 'target_department')) db.exec('ALTER TABLE surveys ADD COLUMN target_department TEXT'); // null = all, or specific department
-if (!hasColumn('surveys', 'target_manager_id')) db.exec('ALTER TABLE surveys ADD COLUMN target_manager_id INTEGER'); // null = all, or manager's team
-if (!hasColumn('surveys', 'response_required')) db.exec('ALTER TABLE surveys ADD COLUMN response_required INTEGER DEFAULT 0'); // is it mandatory
-if (!hasColumn('surveys', 'show_results')) db.exec('ALTER TABLE surveys ADD COLUMN show_results INTEGER DEFAULT 1'); // can employees see results
-// HR Operations Inventory table
-db.exec(`
 CREATE TABLE IF NOT EXISTS inventory (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  id             SERIAL PRIMARY KEY,
   name           TEXT NOT NULL,
   category       TEXT NOT NULL DEFAULT 'other',
   quantity       INTEGER NOT NULL DEFAULT 1,
@@ -388,69 +552,16 @@ CREATE TABLE IF NOT EXISTS inventory (
   purchase_date  TEXT,
   purchase_price REAL DEFAULT 0,
   notes          TEXT,
-  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at     TEXT DEFAULT ${NOW_ISO},
+  updated_at     TEXT DEFAULT ${NOW_ISO}
 );
-`);
+`;
 
-// Seed starter inventory items if table is empty
-const invCount = db.prepare('SELECT COUNT(*) AS n FROM inventory').get().n;
-if (invCount === 0) {
-  const addItem = db.prepare(`INSERT INTO inventory (name,category,quantity,available,condition,purchase_price,notes) VALUES (?,?,?,?,?,?,?)`);
-  const items = [
-    // Electronics
-    ['Laptop (14" Business)', 'electronics', 5, 5, 'good', 55000, 'Standard dev laptops'],
-    ['External Monitor (24")', 'electronics', 5, 5, 'good', 12000, '1080p IPS monitors'],
-    ['Keyboard (Wired USB)', 'electronics', 6, 6, 'good', 800, 'Standard keyboards'],
-    ['Mouse (Wired USB)', 'electronics', 6, 6, 'good', 600, 'Standard mice'],
-    ['USB Hub (4-port)', 'electronics', 4, 4, 'good', 600, ''],
-    ['Headset with Mic', 'electronics', 5, 5, 'good', 1500, 'For calls and meetings'],
-    ['Webcam (1080p)', 'electronics', 3, 3, 'good', 2500, 'For video conferencing'],
-    ['Phone (IP Desk)', 'electronics', 3, 3, 'good', 4000, 'Reception and HR desk'],
-    // Furniture
-    ['Work Desk', 'furniture', 6, 6, 'good', 8000, 'Standard 4x2 work desks'],
-    ['Ergonomic Chair', 'furniture', 6, 6, 'good', 6000, 'Lumbar-support chairs'],
-    ['Whiteboard (4x3)', 'furniture', 2, 2, 'good', 3500, 'Meeting room whiteboards'],
-    ['Bookshelf / Storage Rack', 'furniture', 2, 2, 'good', 3000, ''],
-    ['Filing Cabinet (3-drawer)', 'furniture', 2, 2, 'good', 5000, 'HR document storage'],
-    ['Conference Table', 'furniture', 1, 1, 'good', 15000, '6-seater meeting table'],
-    // Office Equipment
-    ['Laser Printer', 'equipment', 1, 1, 'good', 18000, 'HP LaserJet — shared'],
-    ['Flatbed Scanner', 'equipment', 1, 1, 'good', 8000, 'Document scanner'],
-    ['Projector (HDMI)', 'equipment', 1, 1, 'good', 22000, 'Meeting room projector'],
-    ['UPS / Power Backup', 'equipment', 3, 3, 'good', 4500, '650VA units'],
-    ['Extension Board (6-socket)', 'equipment', 8, 8, 'good', 400, ''],
-    // Network
-    ['WiFi Router (Dual-band)', 'network', 2, 2, 'good', 3500, 'Office WiFi access'],
-    ['Network Switch (8-port)', 'network', 1, 1, 'good', 2000, 'Wired LAN switch'],
-    ['Ethernet Cable (Cat6, 5m)', 'network', 10, 10, 'good', 150, ''],
-    // Stationery
-    ['A4 Printer Paper (Ream)', 'stationery', 10, 10, 'good', 300, '500 sheets per ream'],
-    ['Notebook / Legal Pad', 'stationery', 20, 20, 'good', 60, ''],
-    ['Ballpoint Pens (Box)', 'stationery', 5, 5, 'good', 120, 'Pack of 10'],
-    ['Sticky Notes Pack', 'stationery', 10, 10, 'good', 80, '3x3 inch pads'],
-    ['Folders / Document Files', 'stationery', 15, 15, 'good', 40, ''],
-    ['Stapler + Staple Pins', 'stationery', 4, 4, 'good', 150, ''],
-    ['Scissors & Tape', 'stationery', 4, 4, 'good', 80, ''],
-    // Software / Licenses
-    ['MS Office 365 License', 'software', 5, 5, 'good', 5000, 'Annual per-user license'],
-    ['Antivirus License', 'software', 5, 5, 'good', 1200, 'Annual per-device'],
-    ['Zoom Pro License', 'software', 2, 2, 'good', 13200, 'Annual team plan'],
-    // Access & Security
-    ['Access / ID Card', 'access', 10, 10, 'good', 150, 'Employee access cards'],
-    ['Door Key / Locker Key', 'access', 6, 6, 'good', 50, ''],
-    ['Visitor Log Book', 'access', 2, 2, 'good', 100, 'Reception visitor register'],
-  ];
-  for (const it of items) addItem.run(...it);
-}
+// ---------------------------------------------------------------------------
+// Default settings
+// ---------------------------------------------------------------------------
 
-// Migrate the old two-role scheme to the new five-role scheme.
-db.exec("UPDATE users SET role='SUPER_ADMIN' WHERE role='admin'");
-db.exec("UPDATE users SET role='EMPLOYEE' WHERE role='employee'");
-
-// ---- Seed default settings -------------------------------------------------
 const defaultSettings = {
-  // Company
   companyName: 'My Company',
   legalName: '',
   address: '',
@@ -462,92 +573,180 @@ const defaultSettings = {
   website: '',
   currency: '₹',
   logoFile: '',
-  slipFooter: 'This is a computer-generated payslip and does not require a signature.',
-  // Attendance
+  slipFooter: 'This is a computer-generated payslip.',
   workStart: '09:30',
   workEnd: '18:30',
-  workingDays: [1, 2, 3, 4, 5], // Mon-Fri (0=Sun .. 6=Sat)
-  weekendPolicy: 'sat-sun', // informational
-  attendanceSheetUrl: '', // published Google Sheet CSV link for attendance import
+  workingDays: [1, 2, 3, 4, 5],
+  weekendPolicy: 'sat-sun',
+  attendanceSheetUrl: '',
   fullDayHours: 9,
   halfDayHours: 4.5,
-  graceMinutes: 30, // minutes after start time an employee may still clock in
-  // Mandatory documents every employee should upload (editable in Settings).
+  graceMinutes: 30,
   requiredDocs: [
     'Government-issued ID (Aadhaar & PAN, or Passport)',
     'Recent passport-sized photographs',
-    'Previous employment documents (offer / experience / resignation letters)',
-    'Educational certificates and marksheets',
-    'Last 2-3 salary slips (last 2 organizations)',
+    'Previous employment documents',
+    'Educational certificates',
+    'Last 2-3 salary slips',
     'Cancelled cheque or bank account details',
-    'Two contact numbers for reference check',
+    'Two reference contacts',
     'Emergency contact number',
   ],
-  // Leave
-  leavePolicy: { casual: 7, sick: 7 }, // legacy; superseded by leaveTypes
+  leavePolicy: { casual: 7, sick: 7 },
   leaveTypes: [
     { code: 'casual', name: 'Casual Leave', quota: 7, paid: true },
     { code: 'sick', name: 'Sick Leave', quota: 7, paid: true },
+    { code: 'earned', name: 'Earned Leave', quota: 15, paid: true },
     { code: 'unpaid', name: 'Unpaid Leave', quota: 0, paid: false },
   ],
-  // Optional modules — admins can switch these on/off in Settings.
   modules: {
-    directory: true, notices: true, holidays: true, recognition: true,
-    performance: true, surveys: true, helpdesk: true, assets: true,
-    loans: true, reimbursement: true, recruitment: true,
+    reimbursement: true,
+    recruitment: true,
+    assets: true,
+    loans: true,
+    notices: true,
+    holidays: true,
+    recognition: true,
+    performance: true,
+    surveys: true,
+    helpdesk: true,
+    directory: true,
   },
-  // Slack attendance integration (off until a bot token + channel are set).
   slack: {
-    enabled: false,
     botToken: '',
     channelId: '',
-    presentKeywords: ['in', 'present', 'wfo', 'wfh', 'working', 'available', 'checking in', 'logged in'],
-    halfKeywords: ['half day', 'half-day', 'halfday'],
-    leaveKeywords: ['leave', 'off', 'ooo', 'sick', 'holiday'],
-  },
-  // Payroll
-  payrollClosingDay: 30,
-  payroll: {
-    // 'calendar' = divide salary by total days in month,
-    // 'working'  = divide by working days in month
-    perDayBasis: 'working',
-    deductAbsent: true,
-    deductUnpaidLeave: true,
-  },
-  // Statutory deductions (India defaults; toggle/edit in Settings).
-  statutory: {
-    pf: { enabled: true, percent: 12, basisCap: 15000 },   // 12% of Basic, basic capped at 15000
-    esi: { enabled: true, percent: 0.75, grossCap: 21000 }, // 0.75% of gross if gross <= 21000
-    pt: { enabled: true, amount: 200 },                     // flat professional tax
+    enabled: false,
+    leaveKeywords: ['leave', 'absent', 'wfh'],
+    halfKeywords: ['half day', 'half-day'],
   },
 };
 
-const settingsRow = db.prepare('SELECT data FROM settings WHERE id = 1').get();
-if (!settingsRow) {
-  db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(
-    JSON.stringify(defaultSettings)
-  );
-} else {
-  // Merge in any new default keys added by upgrades, without losing saved values.
-  const saved = JSON.parse(settingsRow.data);
-  let changed = false;
-  for (const k of Object.keys(defaultSettings)) {
-    if (!(k in saved)) { saved[k] = defaultSettings[k]; changed = true; }
+// ---------------------------------------------------------------------------
+// Seed helpers
+// ---------------------------------------------------------------------------
+
+async function seedInventory() {
+  const items = [
+    ['Laptop (14" Business)', 'electronics', 5, 5, 'good', 55000, 'Standard dev laptops'],
+    ['External Monitor (24")', 'electronics', 5, 5, 'good', 12000, '1080p IPS monitors'],
+    ['Keyboard (Wired USB)', 'electronics', 6, 6, 'good', 800, 'Standard keyboards'],
+    ['Mouse (Wired USB)', 'electronics', 6, 6, 'good', 600, 'Standard mice'],
+    ['USB Hub (4-port)', 'electronics', 4, 4, 'good', 600, ''],
+    ['Headset with Mic', 'electronics', 5, 5, 'good', 1500, 'For calls and meetings'],
+    ['Webcam (1080p)', 'electronics', 3, 3, 'good', 2500, 'For video conferencing'],
+    ['Phone (IP Desk)', 'electronics', 3, 3, 'good', 4000, 'Reception and HR desk'],
+    ['Work Desk', 'furniture', 6, 6, 'good', 8000, 'Standard 4x2 work desks'],
+    ['Ergonomic Chair', 'furniture', 6, 6, 'good', 6000, 'Lumbar-support chairs'],
+    ['Whiteboard (4x3)', 'furniture', 2, 2, 'good', 3500, 'Meeting room whiteboards'],
+    ['Bookshelf / Storage Rack', 'furniture', 2, 2, 'good', 3000, ''],
+    ['Filing Cabinet (3-drawer)', 'furniture', 2, 2, 'good', 5000, 'HR document storage'],
+    ['Conference Table', 'furniture', 1, 1, 'good', 15000, '6-seater meeting table'],
+    ['Laser Printer', 'equipment', 1, 1, 'good', 18000, 'HP LaserJet — shared'],
+    ['Flatbed Scanner', 'equipment', 1, 1, 'good', 8000, 'Document scanner'],
+    ['Projector (HDMI)', 'equipment', 1, 1, 'good', 22000, 'Meeting room projector'],
+    ['UPS / Power Backup', 'equipment', 3, 3, 'good', 4500, '650VA units'],
+    ['Extension Board (6-socket)', 'equipment', 8, 8, 'good', 400, ''],
+    ['WiFi Router (Dual-band)', 'network', 2, 2, 'good', 3500, 'Office WiFi access'],
+    ['Network Switch (8-port)', 'network', 1, 1, 'good', 2000, 'Wired LAN switch'],
+    ['Ethernet Cable (Cat6, 5m)', 'network', 10, 10, 'good', 150, ''],
+    ['A4 Printer Paper (Ream)', 'stationery', 10, 10, 'good', 300, '500 sheets per ream'],
+    ['Notebook / Legal Pad', 'stationery', 20, 20, 'good', 60, ''],
+    ['Ballpoint Pens (Box)', 'stationery', 5, 5, 'good', 120, 'Pack of 10'],
+    ['Sticky Notes Pack', 'stationery', 10, 10, 'good', 80, '3x3 inch pads'],
+    ['Folders / Document Files', 'stationery', 15, 15, 'good', 40, ''],
+    ['Stapler + Staple Pins', 'stationery', 4, 4, 'good', 150, ''],
+    ['Scissors & Tape', 'stationery', 4, 4, 'good', 80, ''],
+    ['MS Office 365 License', 'software', 5, 5, 'good', 5000, 'Annual per-user license'],
+    ['Antivirus License', 'software', 5, 5, 'good', 1200, 'Annual per-device'],
+    ['Zoom Pro License', 'software', 2, 2, 'good', 13200, 'Annual team plan'],
+    ['Access / ID Card', 'access', 10, 10, 'good', 150, 'Employee access cards'],
+    ['Door Key / Locker Key', 'access', 6, 6, 'good', 50, ''],
+    ['Visitor Log Book', 'access', 2, 2, 'good', 100, 'Reception visitor register'],
+  ];
+
+  // Only seed if table is empty
+  const countRes = await pool.query('SELECT COUNT(*) AS n FROM inventory');
+  if (parseInt(countRes.rows[0].n) === 0) {
+    for (const it of items) {
+      await pool.query(
+        `INSERT INTO inventory (name, category, quantity, available, condition, purchase_price, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        it
+      );
+    }
   }
-  if (changed) db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(saved));
 }
 
-// ---- Seed default admin ----------------------------------------------------
-const admin = config.defaultAdmin;
-const existingAdmin = db
-  .prepare('SELECT id FROM users WHERE email = ?')
-  .get(admin.email);
-if (!existingAdmin) {
-  const hash = bcrypt.hashSync(admin.password, 10);
-  db.prepare(
-    'INSERT INTO users (email, password_hash, role, must_change) VALUES (?, ?, ?, 0)'
-  ).run(admin.email, hash, 'SUPER_ADMIN');
-  console.log(`Default admin ready: ${admin.email}`);
+// ---------------------------------------------------------------------------
+// db.init() – create schema + seed data
+// ---------------------------------------------------------------------------
+
+async function init() {
+  // Run schema DDL statements one by one
+  const statements = SCHEMA_SQL.split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const stmt of statements) {
+    await pool.query(stmt);
+  }
+
+  // Seed inventory
+  await seedInventory();
+
+  // Seed default settings
+  const settingsRow = await pool.query('SELECT data FROM settings WHERE id = 1');
+  if (settingsRow.rows.length === 0) {
+    await pool.query(
+      'INSERT INTO settings (id, data) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+      [1, JSON.stringify(defaultSettings)]
+    );
+  } else {
+    const saved = JSON.parse(settingsRow.rows[0].data);
+    let changed = false;
+    for (const k of Object.keys(defaultSettings)) {
+      if (!(k in saved)) {
+        saved[k] = defaultSettings[k];
+        changed = true;
+      }
+    }
+    if (changed) {
+      await pool.query('UPDATE settings SET data = $1 WHERE id = 1', [
+        JSON.stringify(saved),
+      ]);
+    }
+  }
+
+  // Seed default admin
+  const adminEmail =
+    process.env.DEFAULT_ADMIN_EMAIL || 'admin@company.local';
+  const adminPassword =
+    process.env.DEFAULT_ADMIN_PASSWORD || 'ChangeMe@12345';
+
+  const existingAdmin = await pool.query(
+    'SELECT id FROM users WHERE email = $1',
+    [adminEmail]
+  );
+  if (existingAdmin.rows.length === 0) {
+    const hash = await bcrypt.hash(adminPassword, 10);
+    await pool.query(
+      'INSERT INTO users (email, password_hash, role, must_change) VALUES ($1, $2, $3, 0)',
+      [adminEmail, hash, 'SUPER_ADMIN']
+    );
+    console.log(`Default admin ready: ${adminEmail}`);
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Exported db object
+// ---------------------------------------------------------------------------
+
+const db = {
+  prepare,
+  exec,
+  run,
+  init,
+  // Expose the raw pool for callers that need it directly.
+  pool,
+};
 
 module.exports = db;
