@@ -26,13 +26,13 @@ function todayStr() {
  * Computes a salary breakdown for one employee for one month (YYYY-MM).
  * Does NOT save anything; pure calculation.
  */
-async function computePayroll(employeeId, monthStr) {
-  const settings = await getSettings();
+function computePayroll(employeeId, monthStr) {
+  const settings = getSettings();
   const [yearS, monthS] = monthStr.split('-');
   const year = parseInt(yearS, 10);
   const month = parseInt(monthS, 10);
 
-  const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(employeeId);
+  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(employeeId);
   if (!emp) throw new Error('Employee not found');
 
   const workingDaysCfg = settings.workingDays || [1, 2, 3, 4, 5];
@@ -44,7 +44,7 @@ async function computePayroll(employeeId, monthStr) {
   const workingDaysInMonth = workingDates.length;
 
   // Attendance map for the month.
-  const attRows = await db
+  const attRows = db
     .prepare(
       "SELECT date, status FROM attendance WHERE employee_id = ? AND date LIKE ?"
     )
@@ -53,7 +53,7 @@ async function computePayroll(employeeId, monthStr) {
   for (const r of attRows) attByDate[r.date] = r.status;
 
   // Approved leaves overlapping the month.
-  const leaves = await db
+  const leaves = db
     .prepare(
       `SELECT type, from_date, to_date, half_day FROM leave_requests
        WHERE employee_id = ? AND status = 'approved'
@@ -74,7 +74,7 @@ async function computePayroll(employeeId, monthStr) {
   const isPaidLeave = (code) => code !== 'unpaid' && paidByCode[code] !== false;
 
   // Company holidays in the month are paid and never counted as absent.
-  const holidayRows = await db.prepare('SELECT date FROM holidays WHERE date LIKE ?').all(`${monthStr}-%`);
+  const holidayRows = db.prepare('SELECT date FROM holidays WHERE date LIKE ?').all(`${monthStr}-%`);
   const holidaySet = new Set(holidayRows.map((h) => h.date));
 
   let present = 0;
@@ -153,21 +153,20 @@ async function computePayroll(employeeId, monthStr) {
       if (amt > 0) ded.push({ name: d.name || 'Deduction', amount: +amt.toFixed(2) });
     }
   }
-  const activeLoans = await db.prepare("SELECT emi FROM loans WHERE employee_id = ? AND status = 'active' AND emi > 0").all(employeeId);
+  const activeLoans = db.prepare("SELECT emi FROM loans WHERE employee_id = ? AND status = 'active' AND emi > 0").all(employeeId);
   const loanEmi = +activeLoans.reduce((s, l) => s + l.emi, 0).toFixed(2);
   if (loanEmi > 0) ded.push({ name: 'Loan / Advance EMI', amount: loanEmi });
 
   const totalDeductions = +ded.reduce((s, d) => s + d.amount, 0).toFixed(2);
 
   // Approved reimbursements decided within this month are added to net pay.
-  const reimbRow = await db
+  const reimb = db
     .prepare(
       `SELECT COALESCE(SUM(amount),0) AS total FROM reimbursements
        WHERE employee_id = ? AND status = 'approved'
          AND substr(COALESCE(decided_at, applied_at),1,7) = ?`
     )
-    .get(employeeId, monthStr);
-  const reimb = reimbRow.total;
+    .get(employeeId, monthStr).total;
 
   const net = +(gross - totalDeductions + reimb).toFixed(2);
   const paidDays = +(present + paidLeave + holidays).toFixed(2);
@@ -192,21 +191,20 @@ async function computePayroll(employeeId, monthStr) {
 }
 
 /** Computes and saves (upsert) a payslip row. Returns the saved row. */
-async function generatePayslip(employeeId, monthStr) {
-  const p = await computePayroll(employeeId, monthStr);
-  await db.prepare(
+function generatePayslip(employeeId, monthStr) {
+  const p = computePayroll(employeeId, monthStr);
+  db.prepare(
     `INSERT INTO payslips
        (employee_id, month, base_salary, working_days, present_days, paid_leave,
         unpaid_days, paid_days, per_day, gross, deductions, reimbursements, net_salary, breakup, generated_at)
      VALUES
        (@employee_id, @month, @base_salary, @working_days, @present_days, @paid_leave,
-        @unpaid_days, @paid_days, @per_day, @gross, @deductions, @reimbursements, @net_salary, @breakup, to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+        @unpaid_days, @paid_days, @per_day, @gross, @deductions, @reimbursements, @net_salary, @breakup, datetime('now'))
      ON CONFLICT(employee_id, month) DO UPDATE SET
-        base_salary=EXCLUDED.base_salary, working_days=EXCLUDED.working_days, present_days=EXCLUDED.present_days,
-        paid_leave=EXCLUDED.paid_leave, unpaid_days=EXCLUDED.unpaid_days, paid_days=EXCLUDED.paid_days,
-        per_day=EXCLUDED.per_day, gross=EXCLUDED.gross, deductions=EXCLUDED.deductions,
-        reimbursements=EXCLUDED.reimbursements, net_salary=EXCLUDED.net_salary, breakup=EXCLUDED.breakup,
-        generated_at=to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+        base_salary=@base_salary, working_days=@working_days, present_days=@present_days,
+        paid_leave=@paid_leave, unpaid_days=@unpaid_days, paid_days=@paid_days,
+        per_day=@per_day, gross=@gross, deductions=@deductions,
+        reimbursements=@reimbursements, net_salary=@net_salary, breakup=@breakup, generated_at=datetime('now')`
   ).run(p);
 
   return db

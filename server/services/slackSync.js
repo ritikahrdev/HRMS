@@ -5,12 +5,12 @@ const { getSettings } = require('./settings');
 // messages: [{ user, text, ts, subtype? }]
 // slackUsers: { userId: { email, real_name } }
 // Returns { total, synced, unmatched, unmatchedKeys, mode:'slack' }.
-async function processSlackMessages(messages, slackUsers, date) {
+function processSlackMessages(messages, slackUsers, date) {
   const slack = getSettings().slack || {};
   const leaveKw = (slack.leaveKeywords || []).filter(Boolean);
   const halfKw = (slack.halfKeywords || []).filter(Boolean);
 
-  const employees = await db.prepare('SELECT id, emp_code, email, name, slack_id FROM employees').all();
+  const employees = db.prepare('SELECT id, emp_code, email, name, slack_id FROM employees').all();
   const byId = {}, byEmail = {}, byName = {};
   for (const e of employees) {
     if (e.slack_id) byId[e.slack_id] = e.id;
@@ -56,14 +56,15 @@ async function processSlackMessages(messages, slackUsers, date) {
     }
   }
 
-  const upsertSQL = `INSERT INTO attendance (employee_id, date, check_in, status)
-    VALUES ($1, $2, $3, $4)
+  const upsert = db.prepare(`
+    INSERT INTO attendance (employee_id, date, check_in, status)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(employee_id, date) DO UPDATE SET
-      status = EXCLUDED.status,
-      check_in = COALESCE(EXCLUDED.check_in, attendance.check_in)`;
+      status = excluded.status,
+      check_in = COALESCE(excluded.check_in, attendance.check_in)`);
   for (const [empId, v] of Object.entries(perEmp)) {
     const ci = v.status === 'leave' ? null : (isNaN(v.time) ? null : v.time.toISOString());
-    await db.prepare(upsertSQL).run(Number(empId), date, ci, v.status);
+    upsert.run(Number(empId), date, ci, v.status);
     result.synced++;
   }
   return result;
@@ -108,7 +109,7 @@ async function syncFromSlack(date) {
       if (ud.ok && ud.user) slackUsers[uid] = { email: (ud.user.profile && ud.user.profile.email) || '', real_name: ud.user.real_name || ud.user.name || '' };
     } catch (e) { /* ignore individual failures */ }
   }
-  return await processSlackMessages(messages, slackUsers, date);
+  return processSlackMessages(messages, slackUsers, date);
 }
 
 // Post a message to Slack channel (e.g., announcements)

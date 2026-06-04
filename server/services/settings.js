@@ -1,21 +1,16 @@
 const db = require('../db');
 
-let _cache = null;
-
-async function getSettings() {
-  if (_cache) return _cache;
-  const row = await db.prepare('SELECT data FROM settings WHERE id = 1').get();
-  _cache = row ? JSON.parse(row.data) : {};
-  return _cache;
+function getSettings() {
+  const row = db.prepare('SELECT data FROM settings WHERE id = 1').get();
+  return row ? JSON.parse(row.data) : {};
 }
 
-async function saveSettings(partial) {
-  const current = await getSettings();
+function saveSettings(partial) {
+  const current = getSettings();
   const merged = { ...current, ...partial };
-  await db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(
+  db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(
     JSON.stringify(merged)
   );
-  _cache = merged;
   return merged;
 }
 
