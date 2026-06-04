@@ -255,33 +255,94 @@ router.post('/sync-file', requirePerm('attendance:viewAll'), memoryUpload.single
 
 // ---- Attendance correction requests ---------------------------------------
 
+const CORRECTION_TYPES = {
+  missed_punch:   { label: 'Missed Punch',       icon: '👊', desc: 'Forgot to clock in or clock out' },
+  regularization: { label: 'Regularization',     icon: '📋', desc: 'Working hours need to be updated' },
+  wfh:            { label: 'Work From Home',      icon: '🏠', desc: 'Was working from home that day' },
+  late_arrival:   { label: 'Late Arrival',        icon: '⏰', desc: 'Arrived late due to valid reason' },
+  early_departure:{ label: 'Early Departure',     icon: '🚪', desc: 'Left early due to valid reason' },
+  on_duty:        { label: 'On Duty / Travel',    icon: '✈️', desc: 'Was on official duty or travel' },
+  half_day:       { label: 'Half Day',            icon: '🌓', desc: 'Only worked half a day' },
+};
+
 // Employee submits a correction request.
-router.post('/correction', requireLogin, (req, res) => {
+router.post('/correction', requireLogin, async (req, res) => {
   const empId = myEmpId(req, res); if (!empId) return;
-  const { date, requested_status, requested_in, requested_out, reason } = req.body || {};
-  if (!date || !requested_status) return res.status(400).json({ error: 'Date and requested status are required.' });
+  const { date, type, requested_status, requested_in, requested_out, reason } = req.body || {};
+  if (!date) return res.status(400).json({ error: 'Date is required.' });
+  if (!requested_status) return res.status(400).json({ error: 'Please select what status to mark.' });
+  if (!reason || !reason.trim()) return res.status(400).json({ error: 'Reason is required.' });
+
+  // Don't allow duplicate pending requests for same date
+  const existing = db.prepare("SELECT id FROM attendance_corrections WHERE employee_id = ? AND date = ? AND status = 'pending'").get(empId, date);
+  if (existing) return res.status(400).json({ error: 'You already have a pending request for this date.' });
+
+  const corrType = CORRECTION_TYPES[type] ? type : 'regularization';
   const r = db.prepare(
-    'INSERT INTO attendance_corrections (employee_id, date, requested_status, requested_in, requested_out, reason) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(empId, date, requested_status, requested_in || null, requested_out || null, reason || '');
+    'INSERT INTO attendance_corrections (employee_id, date, type, requested_status, requested_in, requested_out, reason) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(empId, date, corrType, requested_status, requested_in || null, requested_out || null, reason.trim());
+
+  // Notify approver
+  const emp = db.prepare('SELECT name, email, manager_id FROM employees WHERE id = ?').get(empId);
+  const typeInfo = CORRECTION_TYPES[corrType];
+  let approverEmails = [];
+  if (emp && emp.manager_id) {
+    const mgr = db.prepare('SELECT email FROM employees WHERE id = ?').get(emp.manager_id);
+    if (mgr && mgr.email) approverEmails.push(mgr.email);
+  }
+  const hrAdmins = db.prepare("SELECT u.email FROM users u WHERE u.role IN ('SUPER_ADMIN','HR_ADMIN') AND u.email IS NOT NULL").all();
+  for (const a of hrAdmins) if (a.email && !approverEmails.includes(a.email)) approverEmails.push(a.email);
+
+  if (approverEmails.length) {
+    await sendMail({
+      to: approverEmails.join(','),
+      subject: `${typeInfo.icon} Attendance Request: ${emp ? emp.name : ''} — ${date}`,
+      html: `
+        <p><strong>${emp ? emp.name : 'An employee'}</strong> has raised an attendance request.</p>
+        <div style="background:#f0f9ff;padding:14px;border-radius:8px;border-left:4px solid #0ea5e9;margin:12px 0">
+          <p style="margin:0 0 6px"><strong>Type:</strong> ${typeInfo.icon} ${typeInfo.label}</p>
+          <p style="margin:0 0 6px"><strong>Date:</strong> ${date}</p>
+          <p style="margin:0 0 6px"><strong>Requested Status:</strong> ${requested_status}</p>
+          ${requested_in ? `<p style="margin:0 0 6px"><strong>Clock In:</strong> ${requested_in}</p>` : ''}
+          ${requested_out ? `<p style="margin:0 0 6px"><strong>Clock Out:</strong> ${requested_out}</p>` : ''}
+          <p style="margin:0"><strong>Reason:</strong> ${reason}</p>
+        </div>
+        <p>Please review and approve or reject this request in the HR portal.</p>
+      `
+    }).catch(e => console.error('Notification email failed:', e));
+  }
+
   res.json({ id: r.lastInsertRowid });
+});
+
+// Employee cancels their own PENDING request.
+router.delete('/corrections/:id', requireLogin, (req, res) => {
+  const empId = req.session.user.employeeId;
+  if (!empId) return res.status(403).json({ error: 'No employee profile.' });
+  const c = db.prepare('SELECT * FROM attendance_corrections WHERE id = ?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Not found.' });
+  if (c.employee_id !== empId) return res.status(403).json({ error: 'Not your request.' });
+  if (c.status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be cancelled.' });
+  db.prepare('DELETE FROM attendance_corrections WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // Employee's own correction requests.
 router.get('/corrections/my', requireLogin, (req, res) => {
   const empId = myEmpId(req, res); if (!empId) return;
-  res.json({ corrections: db.prepare('SELECT * FROM attendance_corrections WHERE employee_id = ? ORDER BY applied_at DESC').all(empId) });
+  res.json({ corrections: db.prepare('SELECT * FROM attendance_corrections WHERE employee_id = ? ORDER BY applied_at DESC LIMIT 30').all(empId) });
 });
 
 // Pending/all corrections for approvers (HR/Super = all; Manager = team).
 router.get('/corrections', requirePerm('attendance:correct'), (req, res) => {
   const role = req.session.user.role;
-  const base = `SELECT c.*, e.name AS employee_name, e.emp_code FROM attendance_corrections c JOIN employees e ON e.id = c.employee_id`;
+  const base = `SELECT c.*, e.name AS employee_name, e.emp_code, e.department FROM attendance_corrections c JOIN employees e ON e.id = c.employee_id`;
   let rows;
   if (role === 'MANAGER') {
     const ids = teamEmployeeIds(req);
-    rows = ids.length ? db.prepare(base + ` WHERE c.employee_id IN (${ids.map(() => '?').join(',')}) ORDER BY c.applied_at DESC`).all(...ids) : [];
+    rows = ids.length ? db.prepare(base + ` WHERE c.employee_id IN (${ids.map(() => '?').join(',')}) ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.applied_at DESC`).all(...ids) : [];
   } else {
-    rows = db.prepare(base + ' ORDER BY c.applied_at DESC').all();
+    rows = db.prepare(base + " ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.applied_at DESC").all();
   }
   res.json({ corrections: rows });
 });
@@ -306,11 +367,23 @@ router.post('/corrections/:id/decision', requirePerm('attendance:correct'), asyn
   }
 
   const emp = db.prepare('SELECT name, email FROM employees WHERE id = ?').get(c.employee_id);
+  const typeInfo = CORRECTION_TYPES[c.type] || CORRECTION_TYPES.regularization;
   if (emp && emp.email) {
+    const isApproved = decision === 'approved';
     await sendMail({
       to: emp.email,
-      subject: `Attendance correction ${decision}`,
-      html: `<p>Hi ${emp.name},</p><p>Your attendance correction for <b>${c.date}</b> was <b>${decision}</b>.</p>${comment ? `<p>Comment: ${comment}</p>` : ''}`,
+      subject: `${isApproved ? '✅' : '❌'} Attendance Request ${isApproved ? 'Approved' : 'Rejected'} — ${c.date}`,
+      html: `
+        <p>Hi <strong>${emp.name}</strong>,</p>
+        <p>Your attendance request has been <strong>${decision}</strong>.</p>
+        <div style="background:${isApproved ? '#f0fdf4' : '#fef2f2'};padding:14px;border-radius:8px;border-left:4px solid ${isApproved ? '#22c55e' : '#ef4444'};margin:12px 0">
+          <p style="margin:0 0 6px"><strong>Type:</strong> ${typeInfo.icon} ${typeInfo.label}</p>
+          <p style="margin:0 0 6px"><strong>Date:</strong> ${c.date}</p>
+          <p style="margin:0 0 6px"><strong>Status:</strong> ${isApproved ? '✅ Approved — attendance updated' : '❌ Rejected'}</p>
+          ${comment ? `<p style="margin:0"><strong>Comment:</strong> ${comment}</p>` : ''}
+        </div>
+        ${isApproved ? '<p>Your attendance record for this date has been updated accordingly.</p>' : '<p>If you have questions, please speak to your manager or HR.</p>'}
+      `,
     });
   }
   res.json({ ok: true });

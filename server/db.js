@@ -367,6 +367,8 @@ if (!hasColumn('employees', 'slack_id')) db.exec('ALTER TABLE employees ADD COLU
 if (!hasColumn('employees', 'manager_id')) {
   db.exec('ALTER TABLE employees ADD COLUMN manager_id INTEGER');
 }
+// Attendance correction enhancements
+if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
 // Survey enhancements pack - modern HRMS features
 if (!hasColumn('surveys', 'category')) db.exec('ALTER TABLE surveys ADD COLUMN category TEXT DEFAULT "engagement"'); // engagement, satisfaction, performance, feedback, pulse
 if (!hasColumn('surveys', 'deadline')) db.exec('ALTER TABLE surveys ADD COLUMN deadline TEXT'); // ISO date for survey end

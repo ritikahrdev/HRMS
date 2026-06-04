@@ -57,22 +57,109 @@ const AdminViews = {
   async corrections(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { corrections } = await api.get('/attendance/corrections');
-    c.innerHTML = `<div class="section-title">Attendance Requests (missed punches, half-days, regularizations)</div>` + UI.table([
-      { key: 'employee_name', label: 'Employee' },
-      { key: 'date', label: 'Date', render: (r) => UI.date(r.date) },
-      { key: 'requested_status', label: 'Requested', render: (r) => UI.tag(r.requested_status) },
-      { key: 'times', label: 'In/Out', render: (r) => `${UI.esc(r.requested_in || '-')} / ${UI.esc(r.requested_out || '-')}` },
-      { key: 'reason', label: 'Reason', render: (r) => UI.esc(r.reason || '-') },
-      { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
-      { key: 'act', label: '', render: (r) => r.status === 'pending' ? `<button class="btn sm green" data-ok="${r.id}">Approve</button> <button class="btn sm red" data-no="${r.id}">Reject</button>` : UI.esc(r.comment || '') },
-    ], corrections, 'No correction requests.');
-    const decide = async (id, decision) => {
-      const comment = decision === 'rejected' ? (prompt('Reason (optional):') || '') : '';
-      try { await api.post(`/attendance/corrections/${id}/decision`, { decision, comment }); UI.toast('Correction ' + decision + '.', 'success'); this.corrections(c); }
-      catch (e) { UI.toast(e.message, 'error'); }
+    const pending = corrections.filter(r => r.status === 'pending');
+    const approved = corrections.filter(r => r.status === 'approved');
+    const rejected = corrections.filter(r => r.status === 'rejected');
+
+    const renderList = (filter) => {
+      const list = filter === 'all' ? corrections : corrections.filter(r => r.status === filter);
+      return EmployeeViews.correctionsList(list, filter, true);
     };
-    document.querySelectorAll('[data-ok]').forEach((b) => b.onclick = () => decide(b.dataset.ok, 'approved'));
-    document.querySelectorAll('[data-no]').forEach((b) => b.onclick = () => decide(b.dataset.no, 'rejected'));
+
+    c.innerHTML = `
+      <div class="section-title">✏️ Attendance Requests</div>
+
+      <!-- Stats row -->
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 20px">
+        <div style="flex:1;min-width:120px;background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center">
+          <div style="font-size:26px;font-weight:800;color:#92400e">${pending.length}</div>
+          <div style="font-size:12px;color:#92400e;font-weight:600">⏳ Pending</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:#dcfce7;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;text-align:center">
+          <div style="font-size:26px;font-weight:800;color:#166534">${approved.length}</div>
+          <div style="font-size:12px;color:#166534;font-weight:600">✅ Approved</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:#fee2e2;border:1px solid #fecaca;border-radius:10px;padding:14px 18px;text-align:center">
+          <div style="font-size:26px;font-weight:800;color:#991b1b">${rejected.length}</div>
+          <div style="font-size:12px;color:#991b1b;font-weight:600">❌ Rejected</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;text-align:center">
+          <div style="font-size:26px;font-weight:800;color:#374151">${corrections.length}</div>
+          <div style="font-size:12px;color:#6b7280;font-weight:600">📋 Total</div>
+        </div>
+      </div>
+
+      ${pending.length > 0 ? `
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#92400e">
+          ⚡ <strong>${pending.length} request${pending.length > 1 ? 's' : ''} waiting for your review.</strong>
+          These employees are waiting — please review as soon as possible.
+        </div>` : ''}
+
+      <!-- Filter tabs -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
+        ${[['all','📋 All',corrections.length],['pending','⏳ Pending',pending.length],['approved','✅ Approved',approved.length],['rejected','❌ Rejected',rejected.length]].map(([f,label,count],i) => `
+          <button class="corr-tab" data-filter="${f}"
+            style="padding:7px 16px;border:1px solid ${i===0?'#4f46e5':'#e5e7eb'};background:${i===0?'#4f46e5':'#fff'};color:${i===0?'#fff':'#374151'};border-radius:20px;cursor:pointer;font-size:13px;font-weight:600">
+            ${label} <span style="opacity:.7">${count}</span>
+          </button>`).join('')}
+      </div>
+
+      <div id="corr-list">${renderList('all')}</div>`;
+
+    // Filter tab switching
+    document.querySelectorAll('.corr-tab').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.corr-tab').forEach(b => { b.style.background='#fff'; b.style.color='#374151'; b.style.borderColor='#e5e7eb'; });
+        btn.style.background='#4f46e5'; btn.style.color='#fff'; btn.style.borderColor='#4f46e5';
+        document.getElementById('corr-list').innerHTML = renderList(btn.dataset.filter);
+        this.bindCorrectionButtons(c, corrections);
+      };
+    });
+
+    this.bindCorrectionButtons(c, corrections);
+  },
+
+  bindCorrectionButtons(c, corrections) {
+    // Approve buttons
+    document.querySelectorAll('.appr-req').forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          await api.post(`/attendance/corrections/${btn.dataset.id}/decision`, { decision: 'approved', comment: '' });
+          UI.toast('✅ Request approved. Attendance updated and employee notified.', 'success');
+          this.corrections(c);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    });
+
+    // Reject buttons — show a proper modal with comment
+    document.querySelectorAll('.rej-req').forEach(btn => {
+      btn.onclick = () => {
+        const req = corrections.find(r => r.id == btn.dataset.id);
+        const m = UI.modal({
+          title: '❌ Reject Attendance Request',
+          bodyHtml: `
+            <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:14px;font-size:13px">
+              <strong>${UI.esc(req ? req.employee_name : '')}</strong> · ${req ? UI.date(req.date) : ''}
+              ${req && req.reason ? `<br><span style="color:#6b7280">Reason: ${UI.esc(req.reason)}</span>` : ''}
+            </div>
+            <div class="field">
+              <label><strong>Reason for rejection</strong> <span style="color:#9ca3af;font-weight:400">(optional — will be sent to employee)</span></label>
+              <textarea id="rej-comment" rows="3" placeholder="e.g. Insufficient reason provided, please resubmit with supporting documentation…" style="width:100%"></textarea>
+            </div>`,
+          footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" style="background:#ef4444" id="confirm-rej">Reject Request</button>`,
+        });
+        m.root.querySelector('[data-close-btn]').onclick = m.close;
+        m.root.querySelector('#confirm-rej').onclick = async () => {
+          const comment = m.root.querySelector('#rej-comment').value.trim();
+          try {
+            await api.post(`/attendance/corrections/${btn.dataset.id}/decision`, { decision: 'rejected', comment });
+            m.close();
+            UI.toast('Request rejected. Employee has been notified.', 'success');
+            this.corrections(c);
+          } catch (e) { UI.toast(e.message, 'error'); }
+        };
+      };
+    });
   },
 
   // ---------------- Employees ----------------

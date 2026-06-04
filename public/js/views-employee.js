@@ -102,17 +102,24 @@ const EmployeeViews = {
         <label class="muted">Month</label>
         <input type="month" id="m" value="${month}" />
         <div class="spacer"></div>
-        <button class="btn secondary" id="reqfix">Raise Attendance Request</button>
+        <button class="btn" id="reqfix">+ Raise Attendance Request</button>
       </div>
       <div id="att">${this.attTable(attendance)}</div>
-      <div class="section-title mt">My Attendance Requests</div>
-      ${UI.table([
-        { key: 'date', label: 'Date', render: (r) => UI.date(r.date) },
-        { key: 'requested_status', label: 'Requested', render: (r) => UI.tag(r.requested_status) },
-        { key: 'reason', label: 'Reason', render: (r) => UI.esc(r.reason || '-') },
-        { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
-        { key: 'comment', label: 'Comment', render: (r) => UI.esc(r.comment || '-') },
-      ], corrections, 'No attendance requests.')}`;
+
+      <div style="margin-top:28px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="section-title" style="margin:0">My Attendance Requests</div>
+          <div style="display:flex;gap:6px">
+            ${['all','pending','approved','rejected'].map((f,i) => `
+              <button class="req-filter" data-filter="${f}"
+                style="padding:4px 12px;border:1px solid #e5e7eb;background:${i===0?'#4f46e5':'#fff'};color:${i===0?'#fff':'#374151'};border-radius:16px;cursor:pointer;font-size:12px;font-weight:600">
+                ${f.charAt(0).toUpperCase()+f.slice(1)}
+                ${f==='pending' ? `<span id="pending-badge" style="background:#ef4444;color:#fff;border-radius:10px;padding:0 5px;font-size:10px;margin-left:3px">${corrections.filter(x=>x.status==='pending').length||''}</span>` : ''}
+              </button>`).join('')}
+          </div>
+        </div>
+        <div id="corrections-list">${this.correctionsList(corrections, 'all', false)}</div>
+      </div>`;
 
     // Live clock
     const tick = () => { const el = document.getElementById('clock'); if (el) el.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
@@ -133,36 +140,180 @@ const EmployeeViews = {
       const { attendance } = await api.get('/attendance/my?month=' + e.target.value);
       document.getElementById('att').innerHTML = this.attTable(attendance);
     };
+
+    // Filter tabs
+    document.querySelectorAll('.req-filter').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.req-filter').forEach(b => { b.style.background='#fff'; b.style.color='#374151'; b.style.borderColor='#e5e7eb'; });
+        btn.style.background='#4f46e5'; btn.style.color='#fff'; btn.style.borderColor='#4f46e5';
+        document.getElementById('corrections-list').innerHTML = this.correctionsList(corrections, btn.dataset.filter, false);
+        this.bindCancelButtons(c, corrections);
+      };
+    });
+    this.bindCancelButtons(c, corrections);
+
+    // Raise request modal
     document.getElementById('reqfix').onclick = () => {
+      const today = new Date().toISOString().split('T')[0];
+      const types = [
+        { key: 'missed_punch',    icon: '👊', label: 'Missed Punch',       desc: 'Forgot to clock in or clock out' },
+        { key: 'regularization',  icon: '📋', label: 'Regularization',     desc: 'Working hours need to be updated' },
+        { key: 'wfh',             icon: '🏠', label: 'Work From Home',     desc: 'Was working from home that day' },
+        { key: 'late_arrival',    icon: '⏰', label: 'Late Arrival',       desc: 'Arrived late due to valid reason' },
+        { key: 'early_departure', icon: '🚪', label: 'Early Departure',    desc: 'Left early due to valid reason' },
+        { key: 'on_duty',         icon: '✈️', label: 'On Duty / Travel',   desc: 'Was on official duty or travel' },
+        { key: 'half_day',        icon: '🌓', label: 'Half Day',           desc: 'Only worked half a day' },
+      ];
       const m = UI.modal({
-        title: 'Raise Attendance Request',
+        title: '📝 Raise Attendance Request',
         bodyHtml: `
-          <p class="muted" style="font-size:13px">Use this if you missed the clock-in window, forgot to mark, or need a half-day. Admin/manager will approve or reject it.</p>
-          <div class="field"><label>Date</label><input type="date" id="date" /></div>
-          <div class="field"><label>Mark as</label>
-            <select id="rstatus"><option value="present">Present (Full Day)</option><option value="half">Half Day</option><option value="leave">On Leave</option><option value="absent">Absent</option></select>
+          <p style="font-size:13px;color:#6b7280;margin-bottom:16px">Select the type of request and fill in the details. Your manager/HR will review and approve.</p>
+
+          <div class="field">
+            <label><strong>Request Type *</strong></label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px" id="type-grid">
+              ${types.map((t,i) => `
+                <button class="req-type-btn" data-type="${t.key}"
+                  style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid ${i===0?'#4f46e5':'#e5e7eb'};border-radius:8px;background:${i===0?'#f5f3ff':'#fff'};cursor:pointer;text-align:left">
+                  <span style="font-size:18px">${t.icon}</span>
+                  <div>
+                    <div style="font-size:12px;font-weight:600;color:#111">${t.label}</div>
+                    <div style="font-size:11px;color:#6b7280">${t.desc}</div>
+                  </div>
+                </button>`).join('')}
+            </div>
+            <input type="hidden" id="req-type" value="${types[0].key}" />
           </div>
-          <div class="form-grid">
-            <div class="field"><label>Clock In (optional)</label><input type="time" id="rin" /></div>
-            <div class="field"><label>Clock Out (optional)</label><input type="time" id="rout" /></div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px">
+            <div class="field">
+              <label><strong>Date *</strong></label>
+              <input type="date" id="req-date" max="${today}" style="width:100%" />
+            </div>
+            <div class="field">
+              <label><strong>Mark attendance as *</strong></label>
+              <select id="req-status" style="width:100%">
+                <option value="present">Present (Full Day)</option>
+                <option value="half">Half Day</option>
+                <option value="leave">On Leave</option>
+                <option value="absent">Absent</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Clock In <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
+              <input type="time" id="req-in" style="width:100%" />
+            </div>
+            <div class="field">
+              <label>Clock Out <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
+              <input type="time" id="req-out" style="width:100%" />
+            </div>
           </div>
-          <div class="field"><label>Reason</label><textarea id="reason" rows="2"></textarea></div>`,
-        footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="submit">Submit</button>`,
+
+          <div class="field" style="margin-top:4px">
+            <label><strong>Reason *</strong></label>
+            <textarea id="req-reason" rows="3" placeholder="Briefly explain why you need this correction…" style="width:100%"></textarea>
+            <div id="reason-count" style="font-size:11px;color:#9ca3af;text-align:right;margin-top:3px">0 / 200 characters</div>
+          </div>`,
+        footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="req-submit">Submit Request</button>`,
       });
+
+      // Type button selection
+      m.root.querySelectorAll('.req-type-btn').forEach(btn => {
+        btn.onclick = () => {
+          m.root.querySelectorAll('.req-type-btn').forEach(b => { b.style.borderColor='#e5e7eb'; b.style.background='#fff'; });
+          btn.style.borderColor='#4f46e5'; btn.style.background='#f5f3ff';
+          m.root.querySelector('#req-type').value = btn.dataset.type;
+          // Auto-set status for WFH and on_duty
+          const statusMap = { wfh:'present', on_duty:'present', half_day:'half', late_arrival:'present', early_departure:'present', missed_punch:'present', regularization:'present' };
+          if (statusMap[btn.dataset.type]) m.root.querySelector('#req-status').value = statusMap[btn.dataset.type];
+        };
+      });
+
+      // Reason character counter
+      const reasonEl = m.root.querySelector('#req-reason');
+      const countEl = m.root.querySelector('#reason-count');
+      reasonEl.oninput = () => {
+        const len = reasonEl.value.length;
+        countEl.textContent = `${len} / 200 characters`;
+        countEl.style.color = len > 180 ? '#ef4444' : '#9ca3af';
+        if (len > 200) reasonEl.value = reasonEl.value.slice(0, 200);
+      };
+
       m.root.querySelector('[data-close-btn]').onclick = m.close;
-      m.root.querySelector('#submit').onclick = async () => {
+      m.root.querySelector('#req-submit').onclick = async () => {
+        const date = m.root.querySelector('#req-date').value;
+        const status = m.root.querySelector('#req-status').value;
+        const reason = m.root.querySelector('#req-reason').value.trim();
+        if (!date) { UI.toast('Please select a date.', 'error'); return; }
+        if (!reason) { UI.toast('Please enter a reason.', 'error'); return; }
         try {
           await api.post('/attendance/correction', {
-            date: m.root.querySelector('#date').value,
-            requested_status: m.root.querySelector('#rstatus').value,
-            requested_in: m.root.querySelector('#rin').value,
-            requested_out: m.root.querySelector('#rout').value,
-            reason: m.root.querySelector('#reason').value,
+            date, type: m.root.querySelector('#req-type').value,
+            requested_status: status,
+            requested_in: m.root.querySelector('#req-in').value || null,
+            requested_out: m.root.querySelector('#req-out').value || null,
+            reason,
           });
-          m.close(); UI.toast('Correction requested.', 'success'); this.attendance(c);
+          m.close();
+          UI.toast('✅ Request submitted! Your manager/HR will review it.', 'success');
+          this.attendance(c);
         } catch (e) { UI.toast(e.message, 'error'); }
       };
     };
+  },
+
+  correctionsList(corrections, filter, isAdmin) {
+    const TYPE_ICONS = { missed_punch:'👊', regularization:'📋', wfh:'🏠', late_arrival:'⏰', early_departure:'🚪', on_duty:'✈️', half_day:'🌓' };
+    const TYPE_LABELS = { missed_punch:'Missed Punch', regularization:'Regularization', wfh:'WFH', late_arrival:'Late Arrival', early_departure:'Early Departure', on_duty:'On Duty', half_day:'Half Day' };
+    const STATUS_STYLE = { pending:['#fef9c3','#92400e','⏳'], approved:['#dcfce7','#166534','✅'], rejected:['#fee2e2','#991b1b','❌'] };
+
+    const filtered = filter === 'all' ? corrections : corrections.filter(r => r.status === filter);
+    if (!filtered.length) return `
+      <div style="text-align:center;padding:36px 20px;color:#9ca3af;border:2px dashed #e5e7eb;border-radius:10px">
+        <div style="font-size:32px;margin-bottom:8px">📭</div>
+        <div style="font-weight:600">No ${filter === 'all' ? '' : filter} requests</div>
+      </div>`;
+
+    return filtered.map(r => {
+      const typeIcon = TYPE_ICONS[r.type] || '📋';
+      const typeLabel = TYPE_LABELS[r.type] || (r.type || 'Request');
+      const [sbg, sfg, sicon] = STATUS_STYLE[r.status] || STATUS_STYLE.pending;
+      return `
+        <div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin-bottom:10px;background:#fff;display:flex;gap:12px;align-items:flex-start">
+          <div style="font-size:24px;flex-shrink:0;margin-top:2px">${typeIcon}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+              <span style="font-weight:700;font-size:14px">${typeLabel}</span>
+              <span style="background:${sbg};color:${sfg};padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600">${sicon} ${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span>
+              ${isAdmin ? `<span style="font-size:12px;color:#6b7280;font-weight:600">${UI.esc(r.employee_name || '')} ${r.department ? '· '+UI.esc(r.department) : ''}</span>` : ''}
+            </div>
+            <div style="font-size:13px;color:#374151;margin-bottom:4px">
+              📅 <strong>${UI.date(r.date)}</strong>
+              &nbsp;·&nbsp; Mark as: ${UI.tag(r.requested_status)}
+              ${r.requested_in ? ` &nbsp;·&nbsp; In: <strong>${r.requested_in}</strong>` : ''}
+              ${r.requested_out ? ` Out: <strong>${r.requested_out}</strong>` : ''}
+            </div>
+            <div style="font-size:12px;color:#6b7280">${UI.esc(r.reason || '')}</div>
+            ${r.comment ? `<div style="margin-top:6px;font-size:12px;background:#f3f4f6;padding:6px 10px;border-radius:6px;color:#374151">💬 <em>${UI.esc(r.comment)}</em></div>` : ''}
+            <div style="font-size:11px;color:#9ca3af;margin-top:6px">Submitted ${UI.date(r.applied_at)}${r.decided_at ? ' · Decided '+UI.date(r.decided_at) : ''}</div>
+          </div>
+          ${!isAdmin && r.status === 'pending' ? `<button class="btn sm secondary cancel-req" data-id="${r.id}" style="flex-shrink:0;border-color:#e5e7eb;color:#6b7280">Cancel</button>` : ''}
+          ${isAdmin && r.status === 'pending' ? `<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0"><button class="btn sm green appr-req" data-id="${r.id}">Approve</button><button class="btn sm red rej-req" data-id="${r.id}">Reject</button></div>` : ''}
+        </div>`;
+    }).join('');
+  },
+
+  bindCancelButtons(c, corrections) {
+    document.querySelectorAll('.cancel-req').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Cancel this attendance request?')) return;
+        try {
+          await api.request('DELETE', '/attendance/corrections/' + btn.dataset.id);
+          UI.toast('Request cancelled.', 'success');
+          this.attendance(c);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    });
   },
   attTable(rows) {
     return UI.table([
