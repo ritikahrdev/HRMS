@@ -655,6 +655,194 @@ const AdminViews = {
     });
   },
 
+  // ---------------- Happiness Score ----------------
+  async happiness(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    let days = 30;
+    const load = async () => {
+      c.innerHTML = '<div class="muted">Loading...</div>';
+      const d = await api.get(`/mood/dashboard?days=${days}`).catch(() => null);
+      if (!d) { c.innerHTML = '<div class="muted">Could not load happiness data.</div>'; return; }
+      const { overall, by_department, trend, per_employee, recent_notes } = d;
+
+      const MOODS = [
+        { score:1, emoji:'😞', label:'Very Unhappy', color:'#ef4444' },
+        { score:2, emoji:'😟', label:'Unhappy',      color:'#f97316' },
+        { score:3, emoji:'😐', label:'Neutral',      color:'#eab308' },
+        { score:4, emoji:'😊', label:'Happy',        color:'#22c55e' },
+        { score:5, emoji:'😄', label:'Very Happy',   color:'#10b981' },
+      ];
+      const getMood = s => MOODS.find(m => m.score === Math.round(s)) || MOODS[2];
+      const scoreColor = s => s >= 4 ? '#22c55e' : s >= 3 ? '#eab308' : '#ef4444';
+      const scorePct = s => s ? Math.round(s * 20) : 0;
+
+      const avgScore = overall.avg_score || 0;
+      const moodInfo = getMood(avgScore);
+      const happinessPct = scorePct(avgScore);
+
+      c.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
+          <div class="section-title" style="margin:0">💛 Employee Happiness Score</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="muted" style="font-size:13px">Period:</span>
+            ${[7,30,90].map(n => `<button class="btn ${n===days?'':'secondary'} sm" data-days="${n}">${n}d</button>`).join('')}
+          </div>
+        </div>
+
+        <!-- Main score hero -->
+        <div style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);border-radius:16px;padding:28px 32px;color:#fff;display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin-bottom:20px">
+          <div style="font-size:72px;line-height:1">${moodInfo.emoji}</div>
+          <div style="flex:1">
+            <div style="font-size:52px;font-weight:900;line-height:1">${happinessPct}%</div>
+            <div style="font-size:18px;opacity:.9;margin-top:4px">${moodInfo.label} · ${avgScore ? avgScore.toFixed(1) : '—'}/5</div>
+            <div style="font-size:13px;opacity:.7;margin-top:6px">Company Happiness Score · Last ${days} days</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;text-align:center">
+            <div style="background:rgba(255,255,255,.15);border-radius:10px;padding:12px 20px">
+              <div style="font-size:24px;font-weight:800">${overall.participating}</div>
+              <div style="font-size:11px;opacity:.8">Participated</div>
+            </div>
+            <div style="background:rgba(255,255,255,.15);border-radius:10px;padding:12px 20px">
+              <div style="font-size:24px;font-weight:800">${overall.participation_rate}%</div>
+              <div style="font-size:11px;opacity:.8">Participation</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats row -->
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+          <div class="card" style="flex:1;min-width:120px;text-align:center">
+            <div style="font-size:22px;font-weight:800;color:#4f46e5">${overall.total_checkins}</div>
+            <div class="muted" style="font-size:12px">Total Check-ins</div>
+          </div>
+          <div class="card" style="flex:1;min-width:120px;text-align:center">
+            <div style="font-size:22px;font-weight:800;color:#4f46e5">${overall.total_active}</div>
+            <div class="muted" style="font-size:12px">Active Employees</div>
+          </div>
+          <div class="card" style="flex:1;min-width:120px;text-align:center">
+            <div style="font-size:22px;font-weight:800;color:${overall.participation_rate >= 70 ? '#22c55e' : '#ef4444'}">${overall.participation_rate}%</div>
+            <div class="muted" style="font-size:12px">Participation Rate</div>
+          </div>
+        </div>
+
+        <!-- Trend chart -->
+        ${trend.length > 1 ? `
+        <div class="card" style="margin-bottom:20px">
+          <div style="font-weight:700;margin-bottom:14px">📈 Mood Trend</div>
+          <div style="display:flex;align-items:flex-end;gap:3px;height:80px">
+            ${trend.map(t => {
+              const pct = (t.avg_score/5)*100;
+              const m = getMood(t.avg_score);
+              return `<div title="${t.date}: ${t.avg_score?.toFixed(1)} (${t.responses} responses)"
+                style="flex:1;background:${m.color};height:${pct}%;border-radius:4px 4px 0 0;opacity:.8;cursor:default;min-width:4px"></div>`;
+            }).join('')}
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-top:4px">
+            <span>${trend[0]?.date || ''}</span><span>${trend[trend.length-1]?.date || ''}</span>
+          </div>
+        </div>` : ''}
+
+        <!-- Department breakdown -->
+        ${by_department.length ? `
+        <div class="card" style="margin-bottom:20px">
+          <div style="font-weight:700;margin-bottom:14px">🏢 By Department</div>
+          ${by_department.map(dept => {
+            const pct = scorePct(dept.avg_score);
+            const clr = scoreColor(dept.avg_score);
+            const m = getMood(dept.avg_score);
+            return `<div style="margin-bottom:14px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+                <span style="font-weight:600;font-size:14px">${m.emoji} ${UI.esc(dept.department)}</span>
+                <span style="font-size:13px;font-weight:700;color:${clr}">${pct}% · ${dept.avg_score?.toFixed(1)}/5</span>
+              </div>
+              <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:${clr};border-radius:4px;transition:width .4s"></div>
+              </div>
+              <div style="font-size:11px;color:#9ca3af;margin-top:3px">${dept.employees} employee${dept.employees!==1?'s':''} · ${dept.checkins} check-in${dept.checkins!==1?'s':''}</div>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+          <!-- Needs attention -->
+          <div class="card">
+            <div style="font-weight:700;margin-bottom:12px">🔴 Needs Attention</div>
+            ${per_employee.filter(e => e.avg_score && e.avg_score < 3).slice(0,5).map(e => {
+              const m = getMood(e.avg_score);
+              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">
+                <span style="font-size:20px">${m.emoji}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.esc(e.name)}</div>
+                  <div style="font-size:11px;color:#9ca3af">${UI.esc(e.department||'')}</div>
+                </div>
+                <span style="font-weight:700;color:#ef4444;font-size:13px">${scorePct(e.avg_score)}%</span>
+              </div>`;
+            }).join('') || '<div class="muted" style="font-size:13px">Everyone is doing well! 🎉</div>'}
+          </div>
+          <!-- Top happiness -->
+          <div class="card">
+            <div style="font-weight:700;margin-bottom:12px">🟢 Happiest Employees</div>
+            ${per_employee.filter(e => e.avg_score >= 4).slice(-5).reverse().map(e => {
+              const m = getMood(e.avg_score);
+              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">
+                <span style="font-size:20px">${m.emoji}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.esc(e.name)}</div>
+                  <div style="font-size:11px;color:#9ca3af">${UI.esc(e.department||'')}</div>
+                </div>
+                <span style="font-weight:700;color:#22c55e;font-size:13px">${scorePct(e.avg_score)}%</span>
+              </div>`;
+            }).join('') || '<div class="muted" style="font-size:13px">No data yet.</div>'}
+          </div>
+        </div>
+
+        <!-- Not checked in -->
+        ${per_employee.filter(e => !e.avg_score).length ? `
+        <div class="card" style="margin-bottom:20px">
+          <div style="font-weight:700;margin-bottom:10px">⚠️ Never Checked In (${per_employee.filter(e=>!e.avg_score).length} employees)</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            ${per_employee.filter(e=>!e.avg_score).map(e =>
+              `<span style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:20px;padding:4px 12px;font-size:12px">${UI.esc(e.name)}</span>`
+            ).join('')}
+          </div>
+        </div>` : ''}
+
+        <!-- Recent notes -->
+        ${recent_notes.length ? `
+        <div class="card">
+          <div style="font-weight:700;margin-bottom:12px">💬 Recent Employee Notes</div>
+          ${recent_notes.map(n => {
+            const m = MOODS.find(x=>x.score===n.score)||MOODS[2];
+            return `<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;align-items:flex-start">
+              <span style="font-size:22px;flex-shrink:0">${m.emoji}</span>
+              <div style="flex:1">
+                <div style="font-size:13px;color:#374151">"${UI.esc(n.note)}"</div>
+                <div style="font-size:11px;color:#9ca3af;margin-top:3px">${UI.esc(n.name)} · ${UI.esc(n.department||'')} · ${UI.date(n.date)}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+
+        <!-- Full employee table -->
+        <div class="section-title mt">All Employees</div>
+        ${UI.table([
+          { key:'name', label:'Employee' },
+          { key:'department', label:'Dept', render: r => UI.esc(r.department||'—') },
+          { key:'avg_score', label:'Score', render: r => r.avg_score ? `${getMood(r.avg_score).emoji} ${r.avg_score.toFixed(1)}/5` : '—' },
+          { key:'pct', label:'Happiness %', render: r => r.avg_score ? `<div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:6px;background:#f1f5f9;border-radius:3px"><div style="width:${scorePct(r.avg_score)}%;height:100%;background:${scoreColor(r.avg_score)};border-radius:3px"></div></div><span style="font-size:12px;font-weight:600;color:${scoreColor(r.avg_score)}">${scorePct(r.avg_score)}%</span></div>` : '<span style="color:#9ca3af">No data</span>' },
+          { key:'checkins', label:'Check-ins', render: r => r.checkins || 0 },
+          { key:'last_checkin', label:'Last Check-in', render: r => r.last_checkin ? UI.date(r.last_checkin) : '—' },
+        ], per_employee, 'No employee data.')}
+      `;
+
+      // Period buttons
+      c.querySelectorAll('[data-days]').forEach(btn => {
+        btn.onclick = () => { days = parseInt(btn.dataset.days); load(); };
+      });
+    };
+    load();
+  },
+
   // ---------------- Reports ----------------
   async reports(c) {
     const month = UI.thisMonth();

@@ -327,6 +327,126 @@ const EmployeeViews = {
     ], rows, 'No attendance records for this month.');
   },
 
+  async mood(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    const data = await api.get('/mood/my').catch(() => ({ checkins: [], today: null, average: null }));
+    const { checkins, today, average, mood } = data;
+    const MOODS = [
+      { score: 1, emoji: '😞', label: 'Very Unhappy', color: '#ef4444', bg: '#fef2f2' },
+      { score: 2, emoji: '😟', label: 'Unhappy',      color: '#f97316', bg: '#fff7ed' },
+      { score: 3, emoji: '😐', label: 'Neutral',      color: '#eab308', bg: '#fefce8' },
+      { score: 4, emoji: '😊', label: 'Happy',        color: '#22c55e', bg: '#f0fdf4' },
+      { score: 5, emoji: '😄', label: 'Very Happy',   color: '#10b981', bg: '#ecfdf5' },
+    ];
+
+    const moodColor = mood ? mood.color : '#6b7280';
+    const moodEmoji = mood ? mood.emoji : '😐';
+
+    c.innerHTML = `
+      <div class="section-title">😊 My Mood & Happiness</div>
+
+      <!-- Today's check-in card -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="font-weight:700;font-size:16px;margin-bottom:4px">How are you feeling today?</div>
+        <div class="muted" style="font-size:13px;margin-bottom:18px">${today ? `You checked in today: <strong>${MOODS.find(m=>m.score===today.score)?.emoji} ${MOODS.find(m=>m.score===today.score)?.label}</strong>${today.note ? ` — <em>${UI.esc(today.note)}</em>` : ''}` : 'You haven\'t checked in yet today. Share how you\'re feeling!'}</div>
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:16px" id="mood-btns">
+          ${MOODS.map(m => `
+            <button class="mood-pick" data-score="${m.score}"
+              style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 18px;border:2px solid ${today && today.score===m.score ? m.color : '#e5e7eb'};border-radius:12px;background:${today && today.score===m.score ? m.bg : '#fff'};cursor:pointer;transition:all .15s;min-width:70px">
+              <span style="font-size:32px">${m.emoji}</span>
+              <span style="font-size:11px;font-weight:600;color:#374151">${m.label}</span>
+            </button>`).join('')}
+        </div>
+        <div id="mood-note-area" style="display:${today ? 'block' : 'none'}">
+          <input id="mood-note" type="text" placeholder="Add a note (optional)…" value="${today && today.note ? UI.esc(today.note) : ''}"
+            style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;box-sizing:border-box;margin-bottom:10px"/>
+          <button class="btn" id="mood-save" style="width:100%">Save Today's Mood</button>
+        </div>
+      </div>
+
+      <!-- 30-day summary -->
+      ${average ? `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">
+        <div class="card" style="flex:1;min-width:140px;text-align:center">
+          <div style="font-size:42px">${moodEmoji}</div>
+          <div style="font-size:26px;font-weight:800;color:${moodColor}">${(average * 20).toFixed(0)}%</div>
+          <div class="muted" style="font-size:12px">Your 30-day happiness score</div>
+        </div>
+        <div class="card" style="flex:1;min-width:140px;text-align:center">
+          <div style="font-size:26px;font-weight:800;color:#4f46e5">${checkins.length}</div>
+          <div class="muted" style="font-size:12px">Check-ins this month</div>
+        </div>
+        <div class="card" style="flex:1;min-width:140px;text-align:center">
+          <div style="font-size:26px;font-weight:800;color:#4f46e5">${average.toFixed(1)}<span style="font-size:14px;color:#9ca3af">/5</span></div>
+          <div class="muted" style="font-size:12px">Average score</div>
+        </div>
+      </div>` : ''}
+
+      <!-- Trend chart -->
+      ${checkins.length > 1 ? `
+      <div class="card" style="margin-bottom:20px">
+        <div style="font-weight:700;margin-bottom:14px">My Mood Trend (Last 30 Days)</div>
+        <div style="display:flex;align-items:flex-end;gap:4px;height:80px;padding:0 4px">
+          ${checkins.slice(0,30).reverse().map(r => {
+            const pct = (r.score/5)*100;
+            const m = MOODS.find(x=>x.score===r.score)||MOODS[2];
+            return `<div title="${UI.date(r.date)}: ${m.label}" style="flex:1;background:${m.color};height:${pct}%;border-radius:4px 4px 0 0;opacity:.85;min-width:8px;cursor:default"></div>`;
+          }).join('')}
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-top:4px">
+          <span>${UI.date(checkins[Math.min(29, checkins.length-1)]?.date)}</span>
+          <span>Today</span>
+        </div>
+      </div>` : ''}
+
+      <!-- History list -->
+      <div class="section-title">Check-in History</div>
+      ${checkins.length === 0 ? '<div class="muted" style="text-align:center;padding:30px">No check-ins yet. Start today!</div>' :
+        checkins.slice(0, 14).map(r => {
+          const m = MOODS.find(x => x.score === r.score) || MOODS[2];
+          return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px">
+            <span style="font-size:28px">${m.emoji}</span>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px;color:${m.color}">${m.label}</div>
+              ${r.note ? `<div style="font-size:12px;color:#6b7280;margin-top:2px">${UI.esc(r.note)}</div>` : ''}
+            </div>
+            <div style="font-size:12px;color:#9ca3af">${UI.date(r.date)}</div>
+          </div>`;
+        }).join('')}
+    `;
+
+    // Mood picker interaction
+    const noteArea = c.querySelector('#mood-note-area');
+    let selectedScore = today ? today.score : null;
+    c.querySelectorAll('.mood-pick').forEach(btn => {
+      btn.onmouseenter = () => { if (btn.dataset.score != selectedScore) { btn.style.transform = 'scale(1.08)'; btn.style.boxShadow = '0 4px 12px rgba(0,0,0,.12)'; } };
+      btn.onmouseleave = () => { btn.style.transform = ''; btn.style.boxShadow = ''; };
+      btn.onclick = () => {
+        selectedScore = parseInt(btn.dataset.score);
+        c.querySelectorAll('.mood-pick').forEach(b => {
+          const m = MOODS.find(x => x.score == b.dataset.score);
+          b.style.border = `2px solid ${b.dataset.score == selectedScore ? m.color : '#e5e7eb'}`;
+          b.style.background = b.dataset.score == selectedScore ? m.bg : '#fff';
+          b.style.transform = '';
+        });
+        noteArea.style.display = 'block';
+      };
+    });
+
+    const saveBtn = c.querySelector('#mood-save');
+    if (saveBtn) {
+      saveBtn.onclick = async () => {
+        if (!selectedScore) { UI.toast('Please select a mood first.', 'error'); return; }
+        const note = c.querySelector('#mood-note').value.trim();
+        try {
+          const r = await api.post('/mood/checkin', { score: selectedScore, note });
+          UI.toast(`${r.emoji} Mood saved: ${r.label}`, 'success');
+          this.mood(c);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    }
+  },
+
   async leave(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const [{ leaves }, balRes, { types }] = await Promise.all([api.get('/leave/my'), api.get('/leave/balance'), api.get('/leave/types')]);

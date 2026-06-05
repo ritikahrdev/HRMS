@@ -369,6 +369,19 @@ if (!hasColumn('employees', 'manager_id')) {
 }
 // Attendance correction enhancements
 if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
+// Employee Happiness / Mood check-ins
+db.exec(`
+CREATE TABLE IF NOT EXISTS mood_checkins (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  score       INTEGER NOT NULL CHECK(score BETWEEN 1 AND 5),
+  note        TEXT,
+  date        TEXT NOT NULL DEFAULT (date('now')),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+// One check-in per employee per day
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS mood_checkins_emp_date ON mood_checkins(employee_id, date);`);
 // Survey enhancements pack - modern HRMS features
 if (!hasColumn('surveys', 'category')) db.exec('ALTER TABLE surveys ADD COLUMN category TEXT DEFAULT "engagement"'); // engagement, satisfaction, performance, feedback, pulse
 if (!hasColumn('surveys', 'deadline')) db.exec('ALTER TABLE surveys ADD COLUMN deadline TEXT'); // ISO date for survey end

@@ -82,6 +82,7 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/onboarding', require('./routes/onboarding'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/recruitment', require('./routes/recruitment'));
+app.use('/api/mood', require('./routes/mood'));
 
 // Serve uploaded logo (read-only) for branding.
 // Includes path traversal protection.
