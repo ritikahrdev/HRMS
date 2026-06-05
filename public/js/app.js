@@ -153,7 +153,6 @@ const App = {
             return `<div class="nav-section">${sec === 'Me' ? 'My Space' : sec === 'Company' ? 'Company' : 'Admin'}</div>`
               + its.map((i) => `<div class="nav-item" data-hash="${i.hash}"><span class="nav-ico">${App.NAV_ICONS[i.hash] || '•'}</span><span class="label">${UI.esc(i.label)}</span></div>`).join('');
           }).join('')}</nav>
-          <div style="flex:1"></div>
           <div class="nav-item" id="logout"><span class="nav-ico">↩</span><span class="label">Logout</span></div>
         </aside>
         <div class="main">
@@ -164,15 +163,55 @@ const App = {
               <button class="notif-btn" id="notifBell" title="Notifications">🔔<span class="notif-badge" id="notifBadge" style="display:none">0</span></button>
               <div class="notif-panel" id="notifPanel" style="display:none"></div>
             </div>
-            <div class="userbox">
+            <div class="userbox" id="userbox" tabindex="0">
               <div class="meta"><div class="nm">${UI.esc(this.user.name)}</div><div class="rl">${UI.esc(this.user.roleLabel || this.user.role)}</div></div>
               <div class="avatar">${UI.esc(App.initials(this.user.name))}</div>
+              <div class="user-menu" id="userMenu">
+                <div class="user-menu-item" id="menuProfile">👤 My Profile</div>
+                <div class="user-menu-item" id="menuChangePw">🔑 Change Password</div>
+                <div class="user-menu-item danger" id="menuLogout">↩ Logout</div>
+              </div>
             </div>
           </div>
           <div class="content" id="view"></div>
         </div>
       </div>`;
-    document.getElementById('logout').onclick = async () => { await api.post('/auth/logout'); location.hash = '#/'; location.reload(); };
+    // Sidebar logout
+    const doLogout = async () => { await api.post('/auth/logout'); location.hash = '#/'; location.reload(); };
+    document.getElementById('logout').onclick = doLogout;
+
+    // Topbar user menu dropdown
+    const userbox = document.getElementById('userbox');
+    const userMenu = document.getElementById('userMenu');
+    userbox.onclick = (e) => { e.stopPropagation(); userMenu.classList.toggle('open'); };
+    document.addEventListener('click', () => userMenu.classList.remove('open'), { once: false });
+    document.getElementById('menuLogout').onclick = (e) => { e.stopPropagation(); doLogout(); };
+    document.getElementById('menuProfile').onclick = (e) => { e.stopPropagation(); userMenu.classList.remove('open'); location.hash = '#/profile'; };
+    document.getElementById('menuChangePw').onclick = (e) => {
+      e.stopPropagation(); userMenu.classList.remove('open');
+      const m = UI.modal({
+        title: '🔑 Change Password',
+        bodyHtml: `
+          <div class="field"><label>Current Password</label><input type="password" id="cp-old" style="width:100%" /></div>
+          <div class="field"><label>New Password</label><input type="password" id="cp-new" style="width:100%" /></div>
+          <div class="field"><label>Confirm New Password</label><input type="password" id="cp-confirm" style="width:100%" /></div>`,
+        footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="cp-save">Change Password</button>`,
+      });
+      m.root.querySelector('[data-close-btn]').onclick = m.close;
+      m.root.querySelector('#cp-save').onclick = async () => {
+        const oldPw = m.root.querySelector('#cp-old').value;
+        const newPw = m.root.querySelector('#cp-new').value;
+        const confirm = m.root.querySelector('#cp-confirm').value;
+        if (!oldPw || !newPw) return UI.toast('Please fill in all fields.', 'error');
+        if (newPw !== confirm) return UI.toast('New passwords do not match.', 'error');
+        if (newPw.length < 6) return UI.toast('Password must be at least 6 characters.', 'error');
+        try {
+          await api.post('/auth/change-password', { currentPassword: oldPw, newPassword: newPw });
+          m.close(); UI.toast('✅ Password changed successfully!', 'success');
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    };
+
     document.querySelectorAll('.nav-item[data-hash]').forEach((n) => n.onclick = () => { location.hash = n.dataset.hash; });
     window.onhashchange = () => this.route();
     if (!location.hash) location.hash = '#/';

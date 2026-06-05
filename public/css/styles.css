@@ -55,12 +55,14 @@ button { font-family: inherit; cursor: pointer; }
 .layout { display: flex; height: 100vh; overflow: hidden; }
 .sidebar {
   width: 244px; background: linear-gradient(180deg, var(--sidebar), var(--sidebar-2));
-  color: #cbd5e1; flex-shrink: 0; display: flex; flex-direction: column; padding: 14px 0 8px;
-  position: sticky; top: 0; align-self: flex-start; height: 100vh; overflow-y: auto;
+  color: #cbd5e1; flex-shrink: 0; display: flex; flex-direction: column;
+  padding: 14px 0 0; position: sticky; top: 0; height: 100vh; overflow: hidden; /* sidebar never scrolls as a whole */
 }
-.sidebar::-webkit-scrollbar { width: 8px; }
-.sidebar::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
-.sidebar .brand { padding: 8px 18px 16px; display: flex; align-items: center; gap: 11px; color: #fff; }
+/* Only the nav items area scrolls — logout stays pinned at bottom */
+#nav { flex: 1; overflow-y: auto; padding-bottom: 4px; }
+#nav::-webkit-scrollbar { width: 5px; }
+#nav::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+.sidebar .brand { padding: 8px 18px 16px; display: flex; align-items: center; gap: 11px; color: #fff; flex-shrink: 0; }
 .sidebar .brand img { max-height: 38px; max-width: 38px; border-radius: 9px; background: #fff; padding: 2px; }
 .sidebar .brand b { font-size: 16px; line-height: 1.15; letter-spacing: -.01em; }
 .nav-section {
@@ -75,7 +77,30 @@ button { font-family: inherit; cursor: pointer; }
 .nav-item.active { background: var(--primary); color: #fff; box-shadow: 0 6px 16px rgba(99,102,241,.4); }
 .nav-item .nav-ico { width: 18px; text-align: center; font-size: 15px; flex-shrink: 0; }
 .nav-item .badge { margin-left: auto; background: var(--red); color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 11px; }
-#logout { margin-top: 6px; color: #94a3b8; }
+/* Logout — always visible at the very bottom of sidebar */
+#logout {
+  flex-shrink: 0; margin: 0; border-top: 1px solid rgba(255,255,255,.07);
+  padding: 12px 22px; color: #94a3b8; border-radius: 0;
+  font-size: 13px; display: flex; align-items: center; gap: 10px;
+}
+#logout:hover { background: rgba(239,68,68,.15); color: #fca5a5; }
+/* Topbar user dropdown */
+.userbox { position: relative; cursor: pointer; }
+.user-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); min-width: 180px;
+  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-lg); z-index: 100; overflow: hidden;
+  display: none;
+}
+.userbox:focus-within .user-menu,
+.user-menu.open { display: block; }
+.user-menu-item {
+  display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+  font-size: 13px; color: #374151; cursor: pointer; transition: background .12s;
+}
+.user-menu-item:hover { background: #f8fafc; }
+.user-menu-item.danger { color: #ef4444; }
+.user-menu-item.danger:hover { background: #fef2f2; }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar {
