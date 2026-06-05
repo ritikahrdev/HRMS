@@ -405,8 +405,33 @@ const AdminViews = {
 
   // ---------------- Attendance ----------------
   async attendance(c) {
+    c.innerHTML = `
+      <div style="display:flex;gap:6px;margin-bottom:16px">
+        <button class="att-tab" data-tab="daily" style="padding:8px 18px;border:1px solid #4f46e5;background:#4f46e5;color:#fff;border-radius:20px;cursor:pointer;font-size:13px;font-weight:600">📋 Daily View</button>
+        <button class="att-tab" data-tab="insights" style="padding:8px 18px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:20px;cursor:pointer;font-size:13px;font-weight:600">📅 Monthly Insights</button>
+      </div>
+      <div id="att-tab-body"></div>`;
+    const body = c.querySelector('#att-tab-body');
+    const tabs = c.querySelectorAll('.att-tab');
+    const setTab = (name) => {
+      tabs.forEach((t) => {
+        const on = t.dataset.tab === name;
+        t.style.background = on ? '#4f46e5' : '#fff';
+        t.style.color = on ? '#fff' : '#374151';
+        t.style.borderColor = on ? '#4f46e5' : '#e5e7eb';
+      });
+      if (name === 'daily') this.attendanceDaily(body);
+      else this.attendanceInsights(body);
+    };
+    tabs.forEach((t) => t.onclick = () => setTab(t.dataset.tab));
+    setTab('daily');
+  },
+
+  async attendanceDaily(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
-    const today = new Date().toISOString().slice(0, 10);
+    // If the user clicked a day in the calendar, open that date instead of today.
+    const today = this._pendingAttDate || new Date().toISOString().slice(0, 10);
+    this._pendingAttDate = null;
     const canSync = App.has('attendance:viewAll');
     const data = await api.get('/attendance/day?date=' + today);
     c.innerHTML = `
@@ -434,6 +459,143 @@ const AdminViews = {
     const syncBtn = document.getElementById('sync');
     if (syncBtn) syncBtn.onclick = () => this.syncAttendance(c, reload);
     this.bindAttRows(c, today, reload);
+  },
+
+  async attendanceInsights(c) {
+    c.innerHTML = '<div class="muted">Loading insights...</div>';
+    const thisMonth = new Date().toISOString().slice(0, 7);
+
+    const rateColor = (rate) => {
+      if (rate == null) return '#f1f5f9';
+      if (rate >= 90) return '#16a34a';
+      if (rate >= 75) return '#65a30d';
+      if (rate >= 60) return '#eab308';
+      if (rate >= 40) return '#f97316';
+      return '#ef4444';
+    };
+
+    const load = async (month) => {
+      c.innerHTML = '<div class="muted">Loading insights...</div>';
+      const d = await api.get('/attendance/insights?month=' + month).catch(() => null);
+      if (!d) { c.innerHTML = '<div class="muted">Could not load insights.</div>'; return; }
+      const { days, stats, byWeekday, topAbsentees, firstDow, activeCount } = d;
+      const dayByDate = {}; days.forEach((x) => dayByDate[x.date] = x);
+
+      // Build calendar grid (weeks). Pad leading blanks for the first weekday.
+      const cells = [];
+      for (let i = 0; i < firstDow; i++) cells.push(null);
+      days.forEach((x) => cells.push(x));
+      const weekRows = [];
+      for (let i = 0; i < cells.length; i += 7) weekRows.push(cells.slice(i, i + 7));
+
+      const cellHtml = (x) => {
+        if (!x) return '<div style="aspect-ratio:1"></div>';
+        if (x.isFuture) return `<div style="aspect-ratio:1;border:1px solid #f1f5f9;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px">${x.day}</div>`;
+        if (x.type === 'holiday') return `<div title="🎉 ${UI.esc(x.holiday)}" style="aspect-ratio:1;border:1px solid #ede9fe;background:#f5f3ff;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:default"><div style="font-size:13px;font-weight:600;color:#5b21b6">${x.day}</div><div style="font-size:14px">🎉</div></div>`;
+        if (x.type === 'off') return `<div title="Weekend / non-working" style="aspect-ratio:1;border:1px solid #f1f5f9;background:#fafafa;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:13px">${x.day}</div>`;
+        const clr = rateColor(x.rate);
+        return `<div class="ins-day" data-date="${x.date}" title="${x.date}: ${x.rate}% present (${x.present} present, ${x.half} half, ${x.leave} leave, ${x.absent} absent)"
+          style="aspect-ratio:1;border-radius:8px;background:${clr};cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;position:relative">
+          <div style="font-size:13px;font-weight:700">${x.day}</div>
+          <div style="font-size:10px;opacity:.95">${Math.round(x.rate)}%</div>
+        </div>`;
+      };
+
+      c.innerHTML = `
+        <div class="toolbar">
+          <label class="muted">Month</label>
+          <input type="month" id="ins-month" value="${month}" />
+          <div class="spacer"></div>
+          <span class="muted" style="font-size:12px">${activeCount} active employees</span>
+        </div>
+
+        <!-- Stat cards -->
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px">
+          <div class="card" style="flex:1;min-width:130px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:${rateColor(stats.avgRate)}">${stats.avgRate != null ? stats.avgRate + '%' : '—'}</div>
+            <div class="muted" style="font-size:12px">Avg Attendance</div>
+          </div>
+          <div class="card" style="flex:1;min-width:110px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:#16a34a">${stats.totalPresent}</div>
+            <div class="muted" style="font-size:12px">Present (total)</div>
+          </div>
+          <div class="card" style="flex:1;min-width:110px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:#2563eb">${stats.totalLeave}</div>
+            <div class="muted" style="font-size:12px">On Leave (total)</div>
+          </div>
+          <div class="card" style="flex:1;min-width:110px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:#ef4444">${stats.totalAbsent}</div>
+            <div class="muted" style="font-size:12px">Absent (total)</div>
+          </div>
+          <div class="card" style="flex:1;min-width:110px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:#374151">${stats.workingDays}</div>
+            <div class="muted" style="font-size:12px">Working Days</div>
+          </div>
+        </div>
+
+        <!-- Calendar heatmap -->
+        <div class="card" style="margin-bottom:18px">
+          <div style="font-weight:700;margin-bottom:12px">📅 Attendance Calendar — ${month}</div>
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">
+            ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div style="text-align:center;font-size:11px;font-weight:700;color:#9ca3af">${d}</div>`).join('')}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${weekRows.map(week => `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${week.map(cellHtml).join('')}</div>`).join('')}
+          </div>
+          <!-- Legend -->
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:11px;color:#6b7280">
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#16a34a;border-radius:3px;display:inline-block"></span>≥90%</span>
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#eab308;border-radius:3px;display:inline-block"></span>60-75%</span>
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#ef4444;border-radius:3px;display:inline-block"></span>&lt;40%</span>
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#f5f3ff;border:1px solid #ede9fe;border-radius:3px;display:inline-block"></span>🎉 Holiday</span>
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#fafafa;border:1px solid #f1f5f9;border-radius:3px;display:inline-block"></span>Weekend/off</span>
+            <span style="font-style:italic">Tip: click a day to open it in Daily View</span>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <!-- Attendance by weekday -->
+          <div class="card">
+            <div style="font-weight:700;margin-bottom:12px">📊 Attendance by Weekday</div>
+            ${byWeekday.length ? byWeekday.map(w => `
+              <div style="margin-bottom:10px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+                  <span style="font-weight:600">${w.name}</span><span style="color:${rateColor(w.avgRate)};font-weight:700">${w.avgRate}%</span>
+                </div>
+                <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:${w.avgRate}%;background:${rateColor(w.avgRate)};border-radius:4px"></div>
+                </div>
+              </div>`).join('') : '<div class="muted" style="font-size:13px">No data yet.</div>'}
+          </div>
+          <!-- Most absences -->
+          <div class="card">
+            <div style="font-weight:700;margin-bottom:12px">🔴 Most Absences This Month</div>
+            ${topAbsentees.filter(a => a.absences > 0).length ? topAbsentees.filter(a => a.absences > 0).map(a => `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9">
+                <span style="font-size:13px;font-weight:600">${UI.esc(a.name)}</span>
+                <span style="background:#fef2f2;color:#991b1b;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700">${a.absences} day${a.absences !== 1 ? 's' : ''}</span>
+              </div>`).join('') : '<div class="muted" style="font-size:13px">Great — no absences recorded! 🎉</div>'}
+          </div>
+        </div>
+
+        ${stats.best ? `<div class="card" style="margin-top:16px;display:flex;gap:20px;flex-wrap:wrap;font-size:13px">
+          <span>🏆 <strong>Best day:</strong> ${UI.date(stats.best.date)} (${stats.best.rate}%)</span>
+          <span>⚠️ <strong>Lowest day:</strong> ${UI.date(stats.worst.date)} (${stats.worst.rate}%)</span>
+        </div>` : ''}
+      `;
+
+      // Click a calendar day → jump to Daily View on that date.
+      c.querySelectorAll('.ins-day').forEach((el) => el.onclick = () => {
+        AdminViews._pendingAttDate = el.dataset.date;
+        const parent = c.closest('#view') || document;
+        const tabBtn = parent.querySelector('.att-tab[data-tab="daily"]');
+        if (tabBtn) tabBtn.click();
+      });
+
+      document.getElementById('ins-month').onchange = (e) => load(e.target.value);
+    };
+
+    load(thisMonth);
   },
 
   attDayTable(list, date) {

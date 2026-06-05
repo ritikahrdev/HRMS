@@ -162,6 +162,119 @@ router.get('/day', requireLogin, (req, res) => {
   res.json({ date, summary, list, holiday: holiday ? holiday.name : null });
 });
 
+// Monthly attendance insights: per-day calendar data + summary stats.
+// ?month=YYYY-MM  (HR/Super = all; Manager = own team)
+router.get('/insights', requireLogin, (req, res) => {
+  const role = req.session.user.role;
+  const viewAll = can(role, 'attendance:viewAll');
+  const viewTeam = can(role, 'attendance:viewTeam');
+  if (!viewAll && !viewTeam) return res.status(403).json({ error: 'No access.' });
+
+  const month = req.query.month && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : todayStr().slice(0, 7);
+  const [y, mo] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, mo, 0).getDate();
+  const todayISO = todayStr();
+
+  // Which employees are in scope.
+  let employees;
+  if (viewAll) employees = db.prepare("SELECT id, name, emp_code, department FROM employees WHERE status='active'").all();
+  else {
+    const ids = teamEmployeeIds(req);
+    employees = ids.length ? db.prepare(`SELECT id, name, emp_code, department FROM employees WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) : [];
+  }
+  const activeIds = new Set(employees.map((e) => e.id));
+  const activeCount = employees.length;
+  const empName = {}; for (const e of employees) empName[e.id] = e.name;
+
+  // Pull the whole month's data once.
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-${pad(daysInMonth)}`;
+  const att = db.prepare('SELECT employee_id, date, status, check_in FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const leaves = db.prepare("SELECT employee_id, from_date, to_date FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(monthEnd, monthStart);
+  const holidays = db.prepare('SELECT date, name FROM holidays WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const holidayByDate = {}; for (const h of holidays) holidayByDate[h.date] = h.name;
+
+  // Index attendance by date.
+  const attByDate = {};
+  for (const a of att) {
+    if (!activeIds.has(a.employee_id)) continue;
+    (attByDate[a.date] = attByDate[a.date] || []).push(a);
+  }
+
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const days = [];
+  const absenceCount = {};        // employeeId -> # working days absent
+  let totalPresent = 0, totalHalf = 0, totalLeave = 0, totalAbsent = 0, workingDays = 0, rateSum = 0;
+  const dowRate = {}; const dowCount = {}; // average rate per weekday
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = `${month}-${pad(d)}`;
+    const dow = new Date(y, mo - 1, d).getDay();
+    const isFuture = date > todayISO;
+    const holidayName = holidayByDate[date] || null;
+
+    const rows = attByDate[date] || [];
+    const markedPresent = new Set(), markedHalf = new Set(), markedLeave = new Set();
+    for (const a of rows) {
+      if (a.status === 'half') markedHalf.add(a.employee_id);
+      else if (a.status === 'leave') markedLeave.add(a.employee_id);
+      else if (a.status === 'present' || a.check_in) markedPresent.add(a.employee_id);
+      else if (a.status === 'absent') { /* explicit absent, counted below */ }
+    }
+    // Approved leave spanning this date.
+    for (const l of leaves) {
+      if (date >= l.from_date && date <= l.to_date && activeIds.has(l.employee_id)) markedLeave.add(l.employee_id);
+    }
+    const present = markedPresent.size;
+    const half = markedHalf.size;
+    const leave = markedLeave.size;
+    const marked = present + half + leave;
+
+    let type, absent = 0, rate = null;
+    if (isFuture) { type = 'future'; }
+    else if (holidayName) { type = 'holiday'; }
+    else if (marked === 0) { type = 'off'; }      // weekend / no-data day
+    else {
+      type = 'working';
+      absent = Math.max(0, activeCount - marked);
+      rate = activeCount ? +(((present + 0.5 * half) / activeCount) * 100).toFixed(1) : null;
+      workingDays++;
+      totalPresent += present; totalHalf += half; totalLeave += leave; totalAbsent += absent;
+      if (rate != null) { rateSum += rate; dowRate[dow] = (dowRate[dow] || 0) + rate; dowCount[dow] = (dowCount[dow] || 0) + 1; }
+      // Track who was absent for the leaderboard.
+      for (const e of employees) {
+        if (!markedPresent.has(e.id) && !markedHalf.has(e.id) && !markedLeave.has(e.id)) absenceCount[e.id] = (absenceCount[e.id] || 0) + 1;
+      }
+    }
+    days.push({ date, day: d, dow, dowName: dows[dow], type, present, half, leave, absent, rate, holiday: holidayName, isFuture });
+  }
+
+  const avgRate = workingDays ? +(rateSum / workingDays).toFixed(1) : null;
+  const workingDaysWithRate = days.filter((x) => x.type === 'working' && x.rate != null);
+  const best = workingDaysWithRate.slice().sort((a, b) => b.rate - a.rate)[0] || null;
+  const worst = workingDaysWithRate.slice().sort((a, b) => a.rate - b.rate)[0] || null;
+
+  // Attendance by weekday (which day of the week has best/worst attendance).
+  const byWeekday = [];
+  for (let i = 0; i < 7; i++) if (dowCount[i]) byWeekday.push({ dow: i, name: dows[i], avgRate: +(dowRate[i] / dowCount[i]).toFixed(1) });
+
+  // Top absentees this month.
+  const topAbsentees = Object.entries(absenceCount)
+    .map(([id, n]) => ({ id: Number(id), name: empName[Number(id)], absences: n }))
+    .sort((a, b) => b.absences - a.absences)
+    .slice(0, 8);
+
+  res.json({
+    month, daysInMonth,
+    firstDow: new Date(y, mo - 1, 1).getDay(),
+    activeCount,
+    days,
+    stats: { avgRate, totalPresent, totalHalf, totalLeave, totalAbsent, workingDays, best, worst },
+    byWeekday,
+    topAbsentees,
+  });
+});
+
 // Create or edit an attendance record (HR/Super; Manager for own team).
 // Accepts optional check_in / check_out as "HH:MM".
 router.post('/mark', requirePerm('attendance:correct'), (req, res) => {
