@@ -101,8 +101,16 @@ app.get('/uploads/:file', (req, res) => {
   });
 });
 
-// Frontend (no build step).
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// Frontend (no build step). Disable caching so code updates always load fresh.
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  },
+}));
 
 app.use((err, req, res, next) => {
   console.error(err);
