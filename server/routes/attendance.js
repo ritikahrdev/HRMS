@@ -162,50 +162,43 @@ router.get('/day', requireLogin, (req, res) => {
   res.json({ date, summary, list, holiday: holiday ? holiday.name : null });
 });
 
-// Monthly attendance insights: per-day calendar data + summary stats.
-// ?month=YYYY-MM  (HR/Super = all; Manager = own team)
-router.get('/insights', requireLogin, (req, res) => {
-  const role = req.session.user.role;
-  const viewAll = can(role, 'attendance:viewAll');
-  const viewTeam = can(role, 'attendance:viewTeam');
-  if (!viewAll && !viewTeam) return res.status(403).json({ error: 'No access.' });
-
-  const month = req.query.month && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : todayStr().slice(0, 7);
+// Analyse one month for a fixed set of employees. Returns rich aggregates.
+function analyseMonth(month, employees) {
   const [y, mo] = month.split('-').map(Number);
   const daysInMonth = new Date(y, mo, 0).getDate();
   const todayISO = todayStr();
-
-  // Which employees are in scope.
-  let employees;
-  if (viewAll) employees = db.prepare("SELECT id, name, emp_code, department FROM employees WHERE status='active'").all();
-  else {
-    const ids = teamEmployeeIds(req);
-    employees = ids.length ? db.prepare(`SELECT id, name, emp_code, department FROM employees WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) : [];
-  }
   const activeIds = new Set(employees.map((e) => e.id));
   const activeCount = employees.length;
-  const empName = {}; for (const e of employees) empName[e.id] = e.name;
+  const byId = {}; for (const e of employees) byId[e.id] = e;
 
-  // Pull the whole month's data once.
   const monthStart = `${month}-01`;
   const monthEnd = `${month}-${pad(daysInMonth)}`;
-  const att = db.prepare('SELECT employee_id, date, status, check_in FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const att = db.prepare('SELECT employee_id, date, status, check_in, work_hours, late_minutes FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
   const leaves = db.prepare("SELECT employee_id, from_date, to_date FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(monthEnd, monthStart);
   const holidays = db.prepare('SELECT date, name FROM holidays WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
   const holidayByDate = {}; for (const h of holidays) holidayByDate[h.date] = h.name;
 
-  // Index attendance by date.
   const attByDate = {};
   for (const a of att) {
     if (!activeIds.has(a.employee_id)) continue;
     (attByDate[a.date] = attByDate[a.date] || []).push(a);
   }
 
+  // Punctuality cutoff = shift start + grace.
+  const s = getSettings();
+  const [sh, sm] = String(s.workStart || '10:00').split(':').map(Number);
+  const grace = Number(s.graceMinutes != null ? s.graceMinutes : 30);
+  const cutoffMin = (sh || 0) * 60 + (sm || 0) + grace;
+
   const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const days = [];
-  const absenceCount = {};        // employeeId -> # working days absent
+  // Per-employee tallies.
+  const per = {};
+  for (const e of employees) per[e.id] = { id: e.id, name: e.name, department: e.department || '', present: 0, half: 0, leave: 0, absent: 0, late: 0 };
+
   let totalPresent = 0, totalHalf = 0, totalLeave = 0, totalAbsent = 0, workingDays = 0, rateSum = 0;
-  const dowRate = {}; const dowCount = {}; // average rate per weekday
+  const dowRate = {}; const dowCount = {};
+  let lateCount = 0, onTimeCount = 0, lateMinSum = 0, workHoursSum = 0, workHoursCount = 0;
 
   for (let d = 1; d <= daysInMonth; d++) {
     const date = `${month}-${pad(d)}`;
@@ -219,21 +212,17 @@ router.get('/insights', requireLogin, (req, res) => {
       if (a.status === 'half') markedHalf.add(a.employee_id);
       else if (a.status === 'leave') markedLeave.add(a.employee_id);
       else if (a.status === 'present' || a.check_in) markedPresent.add(a.employee_id);
-      else if (a.status === 'absent') { /* explicit absent, counted below */ }
     }
-    // Approved leave spanning this date.
     for (const l of leaves) {
       if (date >= l.from_date && date <= l.to_date && activeIds.has(l.employee_id)) markedLeave.add(l.employee_id);
     }
-    const present = markedPresent.size;
-    const half = markedHalf.size;
-    const leave = markedLeave.size;
+    const present = markedPresent.size, half = markedHalf.size, leave = markedLeave.size;
     const marked = present + half + leave;
 
     let type, absent = 0, rate = null;
     if (isFuture) { type = 'future'; }
     else if (holidayName) { type = 'holiday'; }
-    else if (marked === 0) { type = 'off'; }      // weekend / no-data day
+    else if (marked === 0) { type = 'off'; }
     else {
       type = 'working';
       absent = Math.max(0, activeCount - marked);
@@ -241,36 +230,125 @@ router.get('/insights', requireLogin, (req, res) => {
       workingDays++;
       totalPresent += present; totalHalf += half; totalLeave += leave; totalAbsent += absent;
       if (rate != null) { rateSum += rate; dowRate[dow] = (dowRate[dow] || 0) + rate; dowCount[dow] = (dowCount[dow] || 0) + 1; }
-      // Track who was absent for the leaderboard.
+
+      // Per-employee + punctuality + work hours.
       for (const e of employees) {
-        if (!markedPresent.has(e.id) && !markedHalf.has(e.id) && !markedLeave.has(e.id)) absenceCount[e.id] = (absenceCount[e.id] || 0) + 1;
+        const p = per[e.id];
+        if (markedHalf.has(e.id)) p.half++;
+        else if (markedLeave.has(e.id)) p.leave++;
+        else if (markedPresent.has(e.id)) p.present++;
+        else p.absent++;
+      }
+      for (const a of rows) {
+        if (!activeIds.has(a.employee_id)) continue;
+        if (a.late_minutes != null && (a.status === 'present' || a.check_in)) {
+          if (a.late_minutes > grace) { lateCount++; lateMinSum += a.late_minutes; per[a.employee_id] && per[a.employee_id].late++; }
+          else onTimeCount++;
+        }
+        if (a.work_hours && a.work_hours > 0) { workHoursSum += a.work_hours; workHoursCount++; }
       }
     }
     days.push({ date, day: d, dow, dowName: dows[dow], type, present, half, leave, absent, rate, holiday: holidayName, isFuture });
   }
 
   const avgRate = workingDays ? +(rateSum / workingDays).toFixed(1) : null;
-  const workingDaysWithRate = days.filter((x) => x.type === 'working' && x.rate != null);
-  const best = workingDaysWithRate.slice().sort((a, b) => b.rate - a.rate)[0] || null;
-  const worst = workingDaysWithRate.slice().sort((a, b) => a.rate - b.rate)[0] || null;
+  const perList = Object.values(per).map((p) => {
+    const denom = workingDays || 1;
+    p.rate = workingDays ? +(((p.present + 0.5 * p.half) / denom) * 100).toFixed(1) : null;
+    return p;
+  });
 
-  // Attendance by weekday (which day of the week has best/worst attendance).
+  return {
+    month, daysInMonth, firstDow: new Date(y, mo - 1, 1).getDay(), activeCount, days, perList,
+    avgRate, totalPresent, totalHalf, totalLeave, totalAbsent, workingDays,
+    dowRate, dowCount, dows,
+    punctuality: {
+      late: lateCount, onTime: onTimeCount,
+      onTimeRate: (lateCount + onTimeCount) ? +((onTimeCount / (lateCount + onTimeCount)) * 100).toFixed(1) : null,
+      avgLateMin: lateCount ? Math.round(lateMinSum / lateCount) : 0,
+    },
+    avgWorkHours: workHoursCount ? +(workHoursSum / workHoursCount).toFixed(1) : null,
+  };
+}
+
+// Monthly attendance insights: calendar + rich analytics.
+// ?month=YYYY-MM  (HR/Super = all; Manager = own team)
+router.get('/insights', requireLogin, (req, res) => {
+  const role = req.session.user.role;
+  const viewAll = can(role, 'attendance:viewAll');
+  const viewTeam = can(role, 'attendance:viewTeam');
+  if (!viewAll && !viewTeam) return res.status(403).json({ error: 'No access.' });
+
+  const month = req.query.month && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : todayStr().slice(0, 7);
+
+  let employees;
+  if (viewAll) employees = db.prepare("SELECT id, name, emp_code, department FROM employees WHERE status='active'").all();
+  else {
+    const ids = teamEmployeeIds(req);
+    employees = ids.length ? db.prepare(`SELECT id, name, emp_code, department FROM employees WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) : [];
+  }
+
+  const cur = analyseMonth(month, employees);
+
+  // Previous month (for trend comparison).
+  const [py, pmo] = month.split('-').map(Number);
+  const prevD = new Date(py, pmo - 2, 1);
+  const prevMonth = `${prevD.getFullYear()}-${pad(prevD.getMonth() + 1)}`;
+  const prev = analyseMonth(prevMonth, employees);
+
+  // Best/worst day.
+  const wd = cur.days.filter((x) => x.type === 'working' && x.rate != null);
+  const best = wd.slice().sort((a, b) => b.rate - a.rate)[0] || null;
+  const worst = wd.slice().sort((a, b) => a.rate - b.rate)[0] || null;
+
+  // Attendance by weekday.
   const byWeekday = [];
-  for (let i = 0; i < 7; i++) if (dowCount[i]) byWeekday.push({ dow: i, name: dows[i], avgRate: +(dowRate[i] / dowCount[i]).toFixed(1) });
+  for (let i = 0; i < 7; i++) if (cur.dowCount[i]) byWeekday.push({ dow: i, name: cur.dows[i], avgRate: +(cur.dowRate[i] / cur.dowCount[i]).toFixed(1) });
 
-  // Top absentees this month.
-  const topAbsentees = Object.entries(absenceCount)
-    .map(([id, n]) => ({ id: Number(id), name: empName[Number(id)], absences: n }))
-    .sort((a, b) => b.absences - a.absences)
-    .slice(0, 8);
+  // Department breakdown (avg per-employee rate, grouped by dept).
+  const deptMap = {};
+  for (const p of cur.perList) {
+    if (p.rate == null) continue;
+    const key = p.department || 'No Department';
+    (deptMap[key] = deptMap[key] || []).push(p.rate);
+  }
+  const byDepartment = Object.entries(deptMap)
+    .map(([dept, rates]) => ({ department: dept, avgRate: +(rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(1), employees: rates.length }))
+    .sort((a, b) => b.avgRate - a.avgRate);
+
+  // Leaderboards.
+  const ranked = cur.perList.filter((p) => p.rate != null);
+  const topAttendees = ranked.slice().sort((a, b) => b.rate - a.rate || a.absent - b.absent).slice(0, 8);
+  const topAbsentees = ranked.filter((p) => p.absent > 0).sort((a, b) => b.absent - a.absent).slice(0, 8);
+  const perfectCount = ranked.filter((p) => p.rate >= 100).length;
+
+  // Status distribution (for a donut/share view).
+  const totalMarks = cur.totalPresent + cur.totalHalf + cur.totalLeave + cur.totalAbsent;
+  const distribution = {
+    present: cur.totalPresent, half: cur.totalHalf, leave: cur.totalLeave, absent: cur.totalAbsent,
+    presentPct: totalMarks ? Math.round((cur.totalPresent / totalMarks) * 100) : 0,
+    halfPct: totalMarks ? Math.round((cur.totalHalf / totalMarks) * 100) : 0,
+    leavePct: totalMarks ? Math.round((cur.totalLeave / totalMarks) * 100) : 0,
+    absentPct: totalMarks ? Math.round((cur.totalAbsent / totalMarks) * 100) : 0,
+  };
 
   res.json({
-    month, daysInMonth,
-    firstDow: new Date(y, mo - 1, 1).getDay(),
-    activeCount,
-    days,
-    stats: { avgRate, totalPresent, totalHalf, totalLeave, totalAbsent, workingDays, best, worst },
+    month, daysInMonth: cur.daysInMonth, firstDow: cur.firstDow, activeCount: cur.activeCount,
+    days: cur.days,
+    stats: {
+      avgRate: cur.avgRate, totalPresent: cur.totalPresent, totalHalf: cur.totalHalf,
+      totalLeave: cur.totalLeave, totalAbsent: cur.totalAbsent, workingDays: cur.workingDays,
+      best, worst,
+      prevAvgRate: prev.avgRate,
+      rateDelta: (cur.avgRate != null && prev.avgRate != null) ? +(cur.avgRate - prev.avgRate).toFixed(1) : null,
+      avgWorkHours: cur.avgWorkHours,
+      perfectCount,
+    },
+    punctuality: cur.punctuality,
+    distribution,
     byWeekday,
+    byDepartment,
+    topAttendees,
     topAbsentees,
   });
 });

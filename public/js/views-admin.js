@@ -478,8 +478,7 @@ const AdminViews = {
       c.innerHTML = '<div class="muted">Loading insights...</div>';
       const d = await api.get('/attendance/insights?month=' + month).catch(() => null);
       if (!d) { c.innerHTML = '<div class="muted">Could not load insights.</div>'; return; }
-      const { days, stats, byWeekday, topAbsentees, firstDow, activeCount } = d;
-      const dayByDate = {}; days.forEach((x) => dayByDate[x.date] = x);
+      const { days, stats, byWeekday, byDepartment, topAttendees, topAbsentees, punctuality, distribution, firstDow, activeCount } = d;
 
       // Build calendar grid (weeks). Pad leading blanks for the first weekday.
       const cells = [];
@@ -501,6 +500,16 @@ const AdminViews = {
         </div>`;
       };
 
+      // Month-over-month delta badge.
+      const delta = stats.rateDelta;
+      const deltaBadge = delta == null ? '' :
+        delta > 0 ? `<span style="color:#16a34a;font-size:13px;font-weight:700">▲ ${delta}%</span>`
+        : delta < 0 ? `<span style="color:#ef4444;font-size:13px;font-weight:700">▼ ${Math.abs(delta)}%</span>`
+        : `<span style="color:#9ca3af;font-size:13px;font-weight:700">●  0%</span>`;
+
+      // Daily trend bars (working days only).
+      const workingDays = days.filter(x => x.type === 'working' && x.rate != null);
+
       c.innerHTML = `
         <div class="toolbar">
           <label class="muted">Month</label>
@@ -509,27 +518,46 @@ const AdminViews = {
           <span class="muted" style="font-size:12px">${activeCount} active employees</span>
         </div>
 
-        <!-- Stat cards -->
+        <!-- Hero stat cards -->
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px">
-          <div class="card" style="flex:1;min-width:130px;text-align:center">
+          <div class="card" style="flex:1;min-width:140px;text-align:center">
             <div style="font-size:28px;font-weight:800;color:${rateColor(stats.avgRate)}">${stats.avgRate != null ? stats.avgRate + '%' : '—'}</div>
-            <div class="muted" style="font-size:12px">Avg Attendance</div>
+            <div class="muted" style="font-size:12px">Avg Attendance ${deltaBadge}</div>
+            ${stats.prevAvgRate != null ? `<div style="font-size:10px;color:#9ca3af;margin-top:2px">vs ${stats.prevAvgRate}% last month</div>` : ''}
           </div>
-          <div class="card" style="flex:1;min-width:110px;text-align:center">
-            <div style="font-size:28px;font-weight:800;color:#16a34a">${stats.totalPresent}</div>
-            <div class="muted" style="font-size:12px">Present (total)</div>
+          <div class="card" style="flex:1;min-width:120px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:${punctuality.onTimeRate == null ? '#9ca3af' : (punctuality.onTimeRate >= 80 ? '#16a34a' : '#f97316')}">${punctuality.onTimeRate != null ? punctuality.onTimeRate + '%' : '—'}</div>
+            <div class="muted" style="font-size:12px">⏰ On-Time Rate</div>
+            ${punctuality.late ? `<div style="font-size:10px;color:#9ca3af;margin-top:2px">${punctuality.late} late · avg ${punctuality.avgLateMin}m</div>` : ''}
           </div>
-          <div class="card" style="flex:1;min-width:110px;text-align:center">
-            <div style="font-size:28px;font-weight:800;color:#2563eb">${stats.totalLeave}</div>
-            <div class="muted" style="font-size:12px">On Leave (total)</div>
+          <div class="card" style="flex:1;min-width:120px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:#7c3aed">${stats.avgWorkHours != null ? stats.avgWorkHours + 'h' : '—'}</div>
+            <div class="muted" style="font-size:12px">⏱ Avg Work Hours</div>
           </div>
-          <div class="card" style="flex:1;min-width:110px;text-align:center">
-            <div style="font-size:28px;font-weight:800;color:#ef4444">${stats.totalAbsent}</div>
-            <div class="muted" style="font-size:12px">Absent (total)</div>
+          <div class="card" style="flex:1;min-width:120px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:#16a34a">${stats.perfectCount}</div>
+            <div class="muted" style="font-size:12px">⭐ Perfect Attendance</div>
           </div>
           <div class="card" style="flex:1;min-width:110px;text-align:center">
             <div style="font-size:28px;font-weight:800;color:#374151">${stats.workingDays}</div>
             <div class="muted" style="font-size:12px">Working Days</div>
+          </div>
+        </div>
+
+        <!-- Status distribution -->
+        <div class="card" style="margin-bottom:18px">
+          <div style="font-weight:700;margin-bottom:12px">📊 Status Distribution</div>
+          <div style="display:flex;height:26px;border-radius:6px;overflow:hidden;font-size:11px;font-weight:700;color:#fff">
+            ${distribution.presentPct ? `<div title="Present ${distribution.present}" style="width:${distribution.presentPct}%;background:#16a34a;display:flex;align-items:center;justify-content:center">${distribution.presentPct >= 8 ? distribution.presentPct + '%' : ''}</div>` : ''}
+            ${distribution.halfPct ? `<div title="Half ${distribution.half}" style="width:${distribution.halfPct}%;background:#eab308;display:flex;align-items:center;justify-content:center">${distribution.halfPct >= 8 ? distribution.halfPct + '%' : ''}</div>` : ''}
+            ${distribution.leavePct ? `<div title="Leave ${distribution.leave}" style="width:${distribution.leavePct}%;background:#2563eb;display:flex;align-items:center;justify-content:center">${distribution.leavePct >= 8 ? distribution.leavePct + '%' : ''}</div>` : ''}
+            ${distribution.absentPct ? `<div title="Absent ${distribution.absent}" style="width:${distribution.absentPct}%;background:#ef4444;display:flex;align-items:center;justify-content:center">${distribution.absentPct >= 8 ? distribution.absentPct + '%' : ''}</div>` : ''}
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#6b7280">
+            <span>🟢 Present: <b>${distribution.present}</b></span>
+            <span>🟡 Half: <b>${distribution.half}</b></span>
+            <span>🔵 Leave: <b>${distribution.leave}</b></span>
+            <span>🔴 Absent: <b>${distribution.absent}</b></span>
           </div>
         </div>
 
@@ -542,7 +570,6 @@ const AdminViews = {
           <div style="display:flex;flex-direction:column;gap:6px">
             ${weekRows.map(week => `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${week.map(cellHtml).join('')}</div>`).join('')}
           </div>
-          <!-- Legend -->
           <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:11px;color:#6b7280">
             <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#16a34a;border-radius:3px;display:inline-block"></span>≥90%</span>
             <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#eab308;border-radius:3px;display:inline-block"></span>60-75%</span>
@@ -553,12 +580,38 @@ const AdminViews = {
           </div>
         </div>
 
+        <!-- Daily trend bar chart -->
+        ${workingDays.length > 1 ? `
+        <div class="card" style="margin-bottom:18px">
+          <div style="font-weight:700;margin-bottom:12px">📈 Daily Attendance Trend</div>
+          <div style="display:flex;align-items:flex-end;gap:3px;height:90px">
+            ${workingDays.map(x => `<div title="${x.date}: ${x.rate}%" style="flex:1;background:${rateColor(x.rate)};height:${x.rate}%;border-radius:3px 3px 0 0;min-width:5px;cursor:default"></div>`).join('')}
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-top:4px">
+            <span>${UI.date(workingDays[0].date)}</span><span>${UI.date(workingDays[workingDays.length-1].date)}</span>
+          </div>
+        </div>` : ''}
+
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <!-- Attendance by weekday -->
+          <!-- Department breakdown -->
           <div class="card">
-            <div style="font-weight:700;margin-bottom:12px">📊 Attendance by Weekday</div>
+            <div style="font-weight:700;margin-bottom:12px">🏢 By Department</div>
+            ${byDepartment.length ? byDepartment.map(dp => `
+              <div style="margin-bottom:11px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+                  <span style="font-weight:600">${UI.esc(dp.department)} <span style="color:#9ca3af;font-weight:400">(${dp.employees})</span></span>
+                  <span style="color:${rateColor(dp.avgRate)};font-weight:700">${dp.avgRate}%</span>
+                </div>
+                <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:${dp.avgRate}%;background:${rateColor(dp.avgRate)};border-radius:4px"></div>
+                </div>
+              </div>`).join('') : '<div class="muted" style="font-size:13px">No data yet.</div>'}
+          </div>
+          <!-- By weekday -->
+          <div class="card">
+            <div style="font-weight:700;margin-bottom:12px">📊 By Weekday</div>
             ${byWeekday.length ? byWeekday.map(w => `
-              <div style="margin-bottom:10px">
+              <div style="margin-bottom:11px">
                 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
                   <span style="font-weight:600">${w.name}</span><span style="color:${rateColor(w.avgRate)};font-weight:700">${w.avgRate}%</span>
                 </div>
@@ -567,13 +620,26 @@ const AdminViews = {
                 </div>
               </div>`).join('') : '<div class="muted" style="font-size:13px">No data yet.</div>'}
           </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+          <!-- Top attendees -->
+          <div class="card">
+            <div style="font-weight:700;margin-bottom:12px">⭐ Top Attendance</div>
+            ${topAttendees.length ? topAttendees.map((a, i) => `
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9">
+                <span style="font-size:13px;width:18px;color:#9ca3af">${i+1}</span>
+                <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.esc(a.name)}</div><div style="font-size:11px;color:#9ca3af">${UI.esc(a.department||'')}</div></div>
+                <span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700">${a.rate}%</span>
+              </div>`).join('') : '<div class="muted" style="font-size:13px">No data yet.</div>'}
+          </div>
           <!-- Most absences -->
           <div class="card">
-            <div style="font-weight:700;margin-bottom:12px">🔴 Most Absences This Month</div>
-            ${topAbsentees.filter(a => a.absences > 0).length ? topAbsentees.filter(a => a.absences > 0).map(a => `
+            <div style="font-weight:700;margin-bottom:12px">🔴 Most Absences</div>
+            ${topAbsentees.length ? topAbsentees.map(a => `
               <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9">
-                <span style="font-size:13px;font-weight:600">${UI.esc(a.name)}</span>
-                <span style="background:#fef2f2;color:#991b1b;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700">${a.absences} day${a.absences !== 1 ? 's' : ''}</span>
+                <div style="min-width:0"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.esc(a.name)}</div><div style="font-size:11px;color:#9ca3af">${UI.esc(a.department||'')}</div></div>
+                <span style="background:#fef2f2;color:#991b1b;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700">${a.absent} day${a.absent !== 1 ? 's' : ''}</span>
               </div>`).join('') : '<div class="muted" style="font-size:13px">Great — no absences recorded! 🎉</div>'}
           </div>
         </div>
