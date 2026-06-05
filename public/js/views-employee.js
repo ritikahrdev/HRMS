@@ -188,7 +188,8 @@ const EmployeeViews = {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px">
             <div class="field">
               <label><strong>Date *</strong></label>
-              <input type="date" id="req-date" max="${today}" style="width:100%" />
+              <input type="date" id="req-date" value="${today}" min="${today}" max="${today}" disabled style="width:100%;background:#f3f4f6;color:#6b7280" />
+              <div style="font-size:11px;color:#9ca3af;margin-top:3px">Requests can only be raised for <strong>today</strong>.</div>
             </div>
             <div class="field">
               <label><strong>Mark attendance as *</strong></label>
@@ -241,10 +242,9 @@ const EmployeeViews = {
 
       m.root.querySelector('[data-close-btn]').onclick = m.close;
       m.root.querySelector('#req-submit').onclick = async () => {
-        const date = m.root.querySelector('#req-date').value;
+        const date = today; // requests are for the present day only
         const status = m.root.querySelector('#req-status').value;
         const reason = m.root.querySelector('#req-reason').value.trim();
-        if (!date) { UI.toast('Please select a date.', 'error'); return; }
         if (!reason) { UI.toast('Please enter a reason.', 'error'); return; }
         try {
           await api.post('/attendance/correction', {

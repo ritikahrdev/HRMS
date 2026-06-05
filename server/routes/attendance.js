@@ -467,14 +467,18 @@ const CORRECTION_TYPES = {
 // Employee submits a correction request.
 router.post('/correction', requireLogin, async (req, res) => {
   const empId = myEmpId(req, res); if (!empId) return;
-  const { date, type, requested_status, requested_in, requested_out, reason } = req.body || {};
-  if (!date) return res.status(400).json({ error: 'Date is required.' });
+  const { type, requested_status, requested_in, requested_out, reason } = req.body || {};
+  // Attendance requests can only be raised for the present day.
+  const date = todayStr();
+  if (req.body && req.body.date && req.body.date !== date) {
+    return res.status(400).json({ error: 'Attendance requests can only be raised for the present day.' });
+  }
   if (!requested_status) return res.status(400).json({ error: 'Please select what status to mark.' });
   if (!reason || !reason.trim()) return res.status(400).json({ error: 'Reason is required.' });
 
-  // Don't allow duplicate pending requests for same date
+  // Don't allow duplicate pending requests for today
   const existing = db.prepare("SELECT id FROM attendance_corrections WHERE employee_id = ? AND date = ? AND status = 'pending'").get(empId, date);
-  if (existing) return res.status(400).json({ error: 'You already have a pending request for this date.' });
+  if (existing) return res.status(400).json({ error: 'You already have a pending request for today.' });
 
   const corrType = CORRECTION_TYPES[type] ? type : 'regularization';
   const r = db.prepare(
