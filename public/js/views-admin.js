@@ -193,9 +193,9 @@ const AdminViews = {
         { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
         { key: 'act', label: '', render: (r) => {
           if (r.status === 'archived') {
-            // Archived employees: restore or permanently delete (data preserved until permanent delete)
+            // Archived employees: restore (remove from archive) or permanently delete
             return `<button class="btn sm secondary" data-docs="${r.id}">Docs</button>`
-              + (isSuper ? ` <button class="btn sm green" data-restore="${r.id}">Restore</button> <button class="btn sm red" data-perm="${r.id}">Delete Forever</button>` : '');
+              + (isSuper ? ` <button class="btn sm green" data-restore="${r.id}">♻ Restore to Active</button> <button class="btn sm red" data-perm="${r.id}">Delete Forever</button>` : '');
           }
           return `<button class="btn sm secondary" data-edit="${r.id}">Edit</button>`
             + (App.has('payroll:manage') ? ` <button class="btn sm secondary" data-salary="${r.id}">Salary</button>` : '')
@@ -241,15 +241,23 @@ const AdminViews = {
 
     const applySearch = () => {
       const q = (document.getElementById('search').value || '').toLowerCase();
-      const list = q ? employees.filter((x) => [x.name, x.emp_code, x.department, x.email].join(' ').toLowerCase().includes(q)) : employees;
+      // When viewing the archive, show ONLY archived employees; otherwise show active/inactive only.
+      const base = showArchived
+        ? employees.filter((e) => e.status === 'archived')
+        : employees.filter((e) => e.status !== 'archived');
+      const list = q ? base.filter((x) => [x.name, x.emp_code, x.department, x.email].join(' ').toLowerCase().includes(q)) : base;
+      if (showArchived && base.length === 0) {
+        document.getElementById('list').innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af"><div style="font-size:36px;margin-bottom:8px">📦</div><div style="font-weight:600">No archived employees</div><div style="font-size:13px">Archived employees will appear here. Their data stays preserved.</div></div>';
+        return;
+      }
       render(list);
     };
 
     const reload = async () => {
       employees = (await api.get('/employees' + (showArchived ? '?includeArchived=1' : ''))).employees;
       const archivedCount = employees.filter((e) => e.status === 'archived').length;
-      document.getElementById('archived-note').innerHTML = showArchived && archivedCount
-        ? `<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:#6b7280">📦 Showing ${archivedCount} archived employee${archivedCount !== 1 ? 's' : ''}. Their data is preserved — restore them anytime.</div>`
+      document.getElementById('archived-note').innerHTML = showArchived
+        ? `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#9a3412">📦 <strong>Archive view</strong> — showing ${archivedCount} archived employee${archivedCount !== 1 ? 's' : ''} only. Their data is preserved. Click <strong>Restore</strong> to move someone back to active staff.</div>`
         : '';
       applySearch();
     };
