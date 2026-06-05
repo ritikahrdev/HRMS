@@ -671,7 +671,7 @@ const AdminViews = {
       { key: 'department', label: 'Dept', render: (r) => UI.esc(r.department || '-') },
       { key: 'check_in', label: 'In', render: (r) => UI.time(r.check_in) },
       { key: 'check_out', label: 'Out', render: (r) => UI.time(r.check_out) },
-      { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
+      { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) + (r.wfh ? ' <span title="Work from home" style="font-size:12px">🏠</span>' : '') + (r.source === 'slack' ? ' <span title="Marked via Slack" style="font-size:11px;color:#6b7280">💬</span>' : '') },
       { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-edit="${r.id}">Edit</button> <button class="btn sm red" data-del="${r.id}">Delete</button>` },
     ], list, 'No active employees.');
   },

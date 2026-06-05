@@ -369,6 +369,10 @@ if (!hasColumn('employees', 'manager_id')) {
 }
 // Attendance correction enhancements
 if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
+// Work-from-home flag (set when attendance comes from a Slack "WFH" message)
+if (!hasColumn('attendance', 'wfh')) db.exec('ALTER TABLE attendance ADD COLUMN wfh INTEGER DEFAULT 0');
+// Track where an attendance record came from (manual / slack / import)
+if (!hasColumn('attendance', 'source')) db.exec('ALTER TABLE attendance ADD COLUMN source TEXT');
 // Employee Happiness / Mood check-ins
 db.exec(`
 CREATE TABLE IF NOT EXISTS mood_checkins (
@@ -516,9 +520,16 @@ const defaultSettings = {
     enabled: false,
     botToken: '',
     channelId: '',
-    presentKeywords: ['in', 'present', 'wfo', 'wfh', 'working', 'available', 'checking in', 'logged in'],
+    signingSecret: '',                 // for verifying real-time event webhooks (optional)
+    presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
+    wfhKeywords: ['wfh', 'work from home', 'remote', 'working from home', 'home'],
     halfKeywords: ['half day', 'half-day', 'halfday'],
-    leaveKeywords: ['leave', 'off', 'ooo', 'sick', 'holiday'],
+    leaveKeywords: ['leave', 'off', 'ooo', 'sick', 'holiday', 'pto', 'vacation'],
+    absentKeywords: ['absent', 'not available', 'na'],
+    autoReact: true,                   // 👍 / ❌ react to attendance messages
+    validReaction: 'thumbsup',         // emoji name (no colons) for valid attendance
+    invalidReaction: 'x',              // emoji name for unrecognised messages
+    notifyOnInvalid: true,             // reply in-thread asking them to mark properly
   },
   // Payroll
   payrollClosingDay: 30,

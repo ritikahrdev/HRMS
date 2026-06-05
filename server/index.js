@@ -30,6 +30,10 @@ const apiLimiter = rateLimit({
   skip: (req) => config.nodeEnv !== 'production',
 });
 
+// Slack Events webhook needs the RAW request body for signature verification,
+// so it must be mounted BEFORE the JSON parser consumes the stream.
+app.use('/api/slack', require('./routes/slack'));
+
 // ============ Body Parser & Session ============
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));

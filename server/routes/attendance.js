@@ -5,7 +5,7 @@ const { can } = require('../services/permissions');
 const { getSettings, saveSettings } = require('../services/settings');
 const { sendMail } = require('../services/email');
 const { syncFromUrl, syncFromBuffer } = require('../services/attendanceSync');
-const { syncFromSlack } = require('../services/slackSync');
+const { syncFromSlack, classifyMessage } = require('../services/slackSync');
 const { memoryUpload } = require('../services/upload');
 
 const router = express.Router();
@@ -155,7 +155,7 @@ router.get('/day', requireLogin, (req, res) => {
     else if (a && a.check_in) status = 'present';
     else if (onLeave.has(e.id)) status = 'leave';
     else if (holiday) status = 'holiday';
-    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null };
+    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null };
   });
   const summary = { present: 0, half: 0, leave: 0, absent: 0, holiday: 0 };
   for (const l of list) summary[l.status] = (summary[l.status] || 0) + 1;
@@ -431,6 +431,14 @@ router.post('/slack-sync', requirePerm('attendance:viewAll'), async (req, res) =
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+// Preview how a Slack message would be classified (for testing keywords).
+router.get('/slack-preview', requirePerm('attendance:viewAll'), (req, res) => {
+  const text = String(req.query.text || '');
+  const slack = getSettings().slack || {};
+  const cls = classifyMessage(text, slack);
+  res.json({ text, ...cls });
 });
 
 // Sync attendance from an uploaded Excel/CSV file.

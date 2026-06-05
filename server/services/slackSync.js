@@ -1,15 +1,47 @@
 const db = require('./../db');
 const { getSettings } = require('./settings');
 
-// Maps Slack messages (for one day) to attendance and upserts.
-// messages: [{ user, text, ts, subtype? }]
-// slackUsers: { userId: { email, real_name } }
-// Returns { total, synced, unmatched, unmatchedKeys, mode:'slack' }.
-function processSlackMessages(messages, slackUsers, date) {
-  const slack = getSettings().slack || {};
-  const leaveKw = (slack.leaveKeywords || []).filter(Boolean);
-  const halfKw = (slack.halfKeywords || []).filter(Boolean);
+// ---- Defaults (used when a saved settings blob predates these keys) ----
+const DEFAULTS = {
+  presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
+  wfhKeywords: ['wfh', 'work from home', 'remote', 'working from home', 'home'],
+  halfKeywords: ['half day', 'half-day', 'halfday'],
+  leaveKeywords: ['leave', 'off', 'ooo', 'sick', 'holiday', 'pto', 'vacation'],
+  absentKeywords: ['absent', 'not available', 'na'],
+  validReaction: 'thumbsup',
+  invalidReaction: 'x',
+};
 
+function kw(slack, key) {
+  const v = slack[key];
+  return (Array.isArray(v) && v.length ? v : DEFAULTS[key]).filter(Boolean);
+}
+
+// Whole-word / whole-phrase match so the keyword "in" doesn't match "morning".
+function matchesKeyword(text, keyword) {
+  const k = String(keyword || '').toLowerCase().trim();
+  if (!k) return false;
+  const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(^|[^a-z0-9])' + esc + '([^a-z0-9]|$)', 'i').test(text);
+}
+
+// Classify a Slack message into an attendance status.
+// Returns { valid, status, wfh }. valid=false means we couldn't read it.
+function classifyMessage(rawText, slack) {
+  const text = String(rawText || '').toLowerCase().trim();
+  if (!text) return { valid: false, status: null, wfh: 0 };
+  const has = (arr) => arr.some((k) => matchesKeyword(text, k));
+  // Most specific intent first.
+  if (has(kw(slack, 'halfKeywords')))   return { valid: true, status: 'half',    wfh: 0 };
+  if (has(kw(slack, 'leaveKeywords')))  return { valid: true, status: 'leave',   wfh: 0 };
+  if (has(kw(slack, 'absentKeywords'))) return { valid: true, status: 'absent',  wfh: 0 };
+  if (has(kw(slack, 'wfhKeywords')))    return { valid: true, status: 'present', wfh: 1 };
+  if (has(kw(slack, 'presentKeywords')))return { valid: true, status: 'present', wfh: 0 };
+  return { valid: false, status: null, wfh: 0 };
+}
+
+// Build a resolver mapping a Slack user id -> employee id.
+function buildResolver(slackUsers) {
   const employees = db.prepare('SELECT id, emp_code, email, name, slack_id FROM employees').all();
   const byId = {}, byEmail = {}, byName = {};
   for (const e of employees) {
@@ -17,7 +49,7 @@ function processSlackMessages(messages, slackUsers, date) {
     if (e.email) byEmail[String(e.email).toLowerCase()] = e.id;
     if (e.name) byName[String(e.name).toLowerCase()] = e.id;
   }
-  const resolve = (uid) => {
+  return (uid) => {
     if (byId[uid]) return byId[uid];
     const u = slackUsers[uid];
     if (u) {
@@ -26,14 +58,35 @@ function processSlackMessages(messages, slackUsers, date) {
     }
     return null;
   };
+}
+
+const upsertAttendance = db.prepare(`
+  INSERT INTO attendance (employee_id, date, check_in, status, wfh, source)
+  VALUES (?, ?, ?, ?, ?, 'slack')
+  ON CONFLICT(employee_id, date) DO UPDATE SET
+    status = excluded.status,
+    wfh = excluded.wfh,
+    source = 'slack',
+    check_in = COALESCE(excluded.check_in, attendance.check_in)`);
+
+// Maps Slack messages (for one day) to attendance and upserts.
+// Returns { total, synced, unmatched, invalid, unmatchedKeys, classified, mode:'slack' }.
+// `classified` lists per-message outcomes so the caller can react/notify.
+function processSlackMessages(messages, slackUsers, date) {
+  const slack = getSettings().slack || {};
+  const resolve = buildResolver(slackUsers);
 
   const perEmp = {};
-  const result = { total: 0, synced: 0, unmatched: 0, unmatchedKeys: [], mode: 'slack' };
+  const classified = []; // { ts, user, empId, valid, status, wfh }
+  const result = { total: 0, synced: 0, unmatched: 0, invalid: 0, unmatchedKeys: [], classified, mode: 'slack' };
 
   for (const m of messages) {
     if (!m.user || m.subtype) continue; // skip joins/bots/system
     result.total++;
+    const cls = classifyMessage(m.text, slack);
     const empId = resolve(m.user);
+    classified.push({ ts: m.ts, user: m.user, empId, valid: cls.valid, status: cls.status, wfh: cls.wfh, reactions: m.reactions || [] });
+
     if (!empId) {
       result.unmatched++;
       const u = slackUsers[m.user];
@@ -41,36 +94,38 @@ function processSlackMessages(messages, slackUsers, date) {
       if (!result.unmatchedKeys.includes(key)) result.unmatchedKeys.push(String(key));
       continue;
     }
-    const text = String(m.text || '').toLowerCase();
-    let status = 'present';
-    if (leaveKw.some((k) => text.includes(k))) status = 'leave';
-    else if (halfKw.some((k) => text.includes(k))) status = 'half';
-    const time = new Date(Number(m.ts) * 1000);
+    if (!cls.valid) { result.invalid++; continue; }
 
+    const time = new Date(Number(m.ts) * 1000);
     const cur = perEmp[empId];
-    if (!cur) perEmp[empId] = { time, status };
+    if (!cur) perEmp[empId] = { time, status: cls.status, wfh: cls.wfh };
     else {
       if (time < cur.time) cur.time = time;
-      if (status === 'leave') cur.status = 'leave';
-      else if (status === 'half' && cur.status !== 'leave') cur.status = 'half';
+      // Precedence: leave > absent > half > present.
+      const rank = { leave: 4, absent: 3, half: 2, present: 1 };
+      if ((rank[cls.status] || 0) > (rank[cur.status] || 0)) { cur.status = cls.status; }
+      if (cls.wfh) cur.wfh = 1;
     }
   }
 
-  const upsert = db.prepare(`
-    INSERT INTO attendance (employee_id, date, check_in, status)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(employee_id, date) DO UPDATE SET
-      status = excluded.status,
-      check_in = COALESCE(excluded.check_in, attendance.check_in)`);
   for (const [empId, v] of Object.entries(perEmp)) {
-    const ci = v.status === 'leave' ? null : (isNaN(v.time) ? null : v.time.toISOString());
-    upsert.run(Number(empId), date, ci, v.status);
+    const ci = (v.status === 'leave' || v.status === 'absent') ? null : (isNaN(v.time) ? null : v.time.toISOString());
+    upsertAttendance.run(Number(empId), date, ci, v.status, v.wfh ? 1 : 0);
     result.synced++;
   }
   return result;
 }
 
 async function slackApi(token, method, params) {
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString(),
+  });
+  return res.json();
+}
+
+async function slackGet(token, method, params) {
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`https://slack.com/api/${method}?${qs}`, {
     headers: { Authorization: 'Bearer ' + token },
@@ -78,7 +133,51 @@ async function slackApi(token, method, params) {
   return res.json();
 }
 
-// Fetches one day's messages from the configured channel and syncs.
+// Add an emoji reaction to a message (idempotent — ignores already_reacted).
+async function reactToMessage(token, channel, ts, emoji) {
+  try {
+    const r = await slackApi(token, 'reactions.add', { channel, timestamp: ts, name: emoji });
+    return r.ok || r.error === 'already_reacted';
+  } catch (e) { return false; }
+}
+
+// Reply in-thread to a message.
+async function replyInThread(token, channel, ts, text) {
+  try {
+    const r = await slackApi(token, 'chat.postMessage', { channel, thread_ts: ts, text, mrkdwn: true });
+    return r.ok;
+  } catch (e) { return false; }
+}
+
+// The friendly nudge sent when we can't read an attendance message.
+function invalidNudge(userId, slack) {
+  const examples = '`present` · `WFH` · `half day` · `leave` · `absent`';
+  return `<@${userId}> ⚠️ I couldn't read your attendance from that message. Please post one of: ${examples} so it gets recorded. ✅`;
+}
+
+// Apply 👍 / ❌ reactions + notify for a set of classified messages.
+async function applyReactions(token, channel, classified, slack) {
+  if (slack.autoReact === false) return { reacted: 0, notified: 0 };
+  const validEmoji = slack.validReaction || DEFAULTS.validReaction;
+  const invalidEmoji = slack.invalidReaction || DEFAULTS.invalidReaction;
+  let reacted = 0, notified = 0;
+  for (const m of classified) {
+    // Skip if we've clearly already reacted (avoid duplicate nudges on re-sync).
+    const already = (m.reactions || []).some((r) => r.name === validEmoji || r.name === invalidEmoji);
+    if (already) continue;
+    if (m.valid) {
+      if (await reactToMessage(token, channel, m.ts, validEmoji)) reacted++;
+    } else {
+      if (await reactToMessage(token, channel, m.ts, invalidEmoji)) reacted++;
+      if (slack.notifyOnInvalid !== false) {
+        if (await replyInThread(token, channel, m.ts, invalidNudge(m.user, slack))) notified++;
+      }
+    }
+  }
+  return { reacted, notified };
+}
+
+// Fetches one day's messages from the configured channel, syncs, and reacts.
 async function syncFromSlack(date) {
   const s = getSettings().slack || {};
   if (!s.enabled) throw new Error('Slack sync is turned off. Enable it in Settings → Slack Attendance.');
@@ -90,12 +189,12 @@ async function syncFromSlack(date) {
 
   let data;
   try {
-    data = await slackApi(s.botToken, 'conversations.history', { channel: s.channelId, oldest, latest, limit: 1000 });
+    data = await slackGet(s.botToken, 'conversations.history', { channel: s.channelId, oldest, latest, limit: 1000 });
   } catch (e) {
     throw new Error('Could not reach Slack. Check your internet connection.');
   }
   if (!data.ok) {
-    const hints = { missing_scope: ' (the bot needs the channels:history scope)', not_in_channel: ' (invite the bot to the channel)', channel_not_found: ' (check the Channel ID)', invalid_auth: ' (check the Bot token)' };
+    const hints = { missing_scope: ' (the bot needs channels:history, reactions:write & chat:write scopes)', not_in_channel: ' (invite the bot to the channel)', channel_not_found: ' (check the Channel ID)', invalid_auth: ' (check the Bot token)' };
     throw new Error('Slack: ' + data.error + (hints[data.error] || ''));
   }
   const messages = data.messages || [];
@@ -105,27 +204,68 @@ async function syncFromSlack(date) {
   const ids = [...new Set(messages.filter((m) => m.user).map((m) => m.user))];
   for (const uid of ids) {
     try {
-      const ud = await slackApi(s.botToken, 'users.info', { user: uid });
+      const ud = await slackGet(s.botToken, 'users.info', { user: uid });
       if (ud.ok && ud.user) slackUsers[uid] = { email: (ud.user.profile && ud.user.profile.email) || '', real_name: ud.user.real_name || ud.user.name || '' };
     } catch (e) { /* ignore individual failures */ }
   }
-  return processSlackMessages(messages, slackUsers, date);
+
+  const result = processSlackMessages(messages, slackUsers, date);
+  // React + notify (best-effort; never blocks the sync result).
+  try {
+    const r = await applyReactions(s.botToken, s.channelId, result.classified, s);
+    result.reacted = r.reacted; result.notified = r.notified;
+  } catch (e) { /* ignore */ }
+  delete result.classified;
+  return result;
 }
 
-// Post a message to Slack channel (e.g., announcements)
+// ---- Real-time: handle a single Slack "message" event from the Events API ----
+// event = { type:'message', channel, user, text, ts, subtype? }
+async function processSlackEvent(event) {
+  const s = getSettings().slack || {};
+  if (!s.enabled || !s.botToken) return { ok: false, reason: 'disabled' };
+  if (!event || event.type !== 'message' || event.subtype || !event.user || !event.text) return { ok: false, reason: 'ignored' };
+  if (s.channelId && event.channel !== s.channelId) return { ok: false, reason: 'other_channel' };
+
+  // Resolve the user (fetch profile if needed for email/name matching).
+  let slackUsers = {};
+  try {
+    const ud = await slackGet(s.botToken, 'users.info', { user: event.user });
+    if (ud.ok && ud.user) slackUsers[event.user] = { email: (ud.user.profile && ud.user.profile.email) || '', real_name: ud.user.real_name || ud.user.name || '' };
+  } catch (e) { /* ignore */ }
+  const resolve = buildResolver(slackUsers);
+  const empId = resolve(event.user);
+  const cls = classifyMessage(event.text, s);
+  const date = new Date(Number(event.ts) * 1000).toISOString().slice(0, 10);
+
+  // Record attendance if valid + matched.
+  if (empId && cls.valid) {
+    const ci = (cls.status === 'leave' || cls.status === 'absent') ? null : new Date(Number(event.ts) * 1000).toISOString();
+    upsertAttendance.run(empId, date, ci, cls.status, cls.wfh ? 1 : 0);
+  }
+
+  // React + notify.
+  if (s.autoReact !== false) {
+    const validEmoji = s.validReaction || DEFAULTS.validReaction;
+    const invalidEmoji = s.invalidReaction || DEFAULTS.invalidReaction;
+    if (cls.valid) {
+      await reactToMessage(s.botToken, event.channel, event.ts, validEmoji);
+    } else {
+      await reactToMessage(s.botToken, event.channel, event.ts, invalidEmoji);
+      if (s.notifyOnInvalid !== false) await replyInThread(s.botToken, event.channel, event.ts, invalidNudge(event.user, s));
+    }
+  }
+  return { ok: true, empId, valid: cls.valid, status: cls.status, wfh: cls.wfh, date };
+}
+
+// Post a message to a Slack channel (e.g., announcements)
 async function postToSlack(message, channel) {
   const s = getSettings().slack || {};
   if (!s.enabled || !s.botToken) return false;
-
   const channelId = channel || s.channelId;
   if (!channelId) return false;
-
   try {
-    const data = await slackApi(s.botToken, 'chat.postMessage', {
-      channel: channelId,
-      text: message,
-      mrkdwn: true,
-    });
+    const data = await slackApi(s.botToken, 'chat.postMessage', { channel: channelId, text: message, mrkdwn: true });
     return data.ok;
   } catch (e) {
     console.error('Error posting to Slack:', e);
@@ -133,4 +273,4 @@ async function postToSlack(message, channel) {
   }
 }
 
-module.exports = { processSlackMessages, syncFromSlack, postToSlack };
+module.exports = { processSlackMessages, syncFromSlack, postToSlack, processSlackEvent, classifyMessage };
