@@ -45,6 +45,12 @@ function loginHandler(req, res) {
     return res.status(401).json({ error: 'Invalid email or password.' });
   }
 
+  // Block login for archived employees (their data is preserved, login disabled).
+  const linkedEmp = db.prepare('SELECT status FROM employees WHERE user_id = ?').get(user.id);
+  if (linkedEmp && linkedEmp.status === 'archived') {
+    return res.status(403).json({ error: 'This account has been archived. Please contact HR.' });
+  }
+
   req.session.user = buildSessionUser(user);
   res.json({ user: req.session.user });
 }

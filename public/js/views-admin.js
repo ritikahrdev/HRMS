@@ -165,14 +165,22 @@ const AdminViews = {
   // ---------------- Employees ----------------
   async employees(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
-    const { employees } = await api.get('/employees');
+    let showArchived = false;
+    const isSuper = App.user.role === 'SUPER_ADMIN';
+    let employees = (await api.get('/employees')).employees;
+
     c.innerHTML = `
       <div class="toolbar">
         <input id="search" placeholder="Search name / code / dept..." />
         <div class="spacer"></div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#6b7280;cursor:pointer">
+          <input type="checkbox" id="show-archived" /> Show archived
+        </label>
         <button class="btn" id="add">Add Employee</button>
       </div>
+      <div id="archived-note"></div>
       <div id="list"></div>`;
+
     const render = (rows) => {
       document.getElementById('list').innerHTML = UI.table([
         { key: 'emp_code', label: 'Code' },
@@ -183,8 +191,21 @@ const AdminViews = {
         { key: 'manager_name', label: 'Manager', render: (r) => UI.esc(r.manager_name || '-') },
         { key: 'monthly_salary', label: 'Salary', render: (r) => UI.money(r.monthly_salary) },
         { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
-        { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-edit="${r.id}">Edit</button>${App.has('payroll:manage') ? ` <button class="btn sm secondary" data-salary="${r.id}">Salary</button>` : ''} <button class="btn sm secondary" data-docs="${r.id}">Docs</button> <button class="btn sm secondary" data-onboard="${r.id}">Onboarding</button> <button class="btn sm secondary" data-reset="${r.id}">Reset PW</button>${App.user.role === 'SUPER_ADMIN' ? ` <button class="btn sm red" data-del="${r.id}">Delete</button>` : ''}` },
+        { key: 'act', label: '', render: (r) => {
+          if (r.status === 'archived') {
+            // Archived employees: restore or permanently delete (data preserved until permanent delete)
+            return `<button class="btn sm secondary" data-docs="${r.id}">Docs</button>`
+              + (isSuper ? ` <button class="btn sm green" data-restore="${r.id}">Restore</button> <button class="btn sm red" data-perm="${r.id}">Delete Forever</button>` : '');
+          }
+          return `<button class="btn sm secondary" data-edit="${r.id}">Edit</button>`
+            + (App.has('payroll:manage') ? ` <button class="btn sm secondary" data-salary="${r.id}">Salary</button>` : '')
+            + ` <button class="btn sm secondary" data-docs="${r.id}">Docs</button>`
+            + ` <button class="btn sm secondary" data-onboard="${r.id}">Onboarding</button>`
+            + ` <button class="btn sm secondary" data-reset="${r.id}">Reset PW</button>`
+            + (isSuper ? ` <button class="btn sm red" data-del="${r.id}">Archive</button>` : '');
+        } },
       ], rows, 'No employees yet. Add one or import from Excel.');
+
       document.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => this.employeeForm(c, employees.find((e) => e.id == b.dataset.edit)));
       document.querySelectorAll('[data-salary]').forEach((b) => b.onclick = () => { const e = employees.find((x) => x.id == b.dataset.salary); this.salaryModal(e.id, e.name); });
       document.querySelectorAll('[data-docs]').forEach((b) => b.onclick = () => { const e = employees.find((x) => x.id == b.dataset.docs); this.documentsModal(e.id, e.name); });
@@ -193,19 +214,50 @@ const AdminViews = {
         try { const r = await api.post(`/employees/${b.dataset.reset}/reset-password`); UI.toast('New temp password: ' + r.tempPassword, 'success'); }
         catch (e) { UI.toast(e.message, 'error'); }
       });
+      // Archive (soft delete — keeps all data)
       document.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
         const emp = employees.find((e) => e.id == b.dataset.del);
-        if (!confirm(`Permanently delete ${emp ? emp.name : 'this employee'} and all their records? This cannot be undone.`)) return;
-        try { await api.request('DELETE', '/employees/' + b.dataset.del); UI.toast('Employee deleted.', 'success'); this.employees(c); }
+        if (!confirm(`Archive ${emp ? emp.name : 'this employee'}?\n\nTheir login will be disabled and they'll be removed from active lists, but ALL their data (attendance, leave, payroll, documents) is preserved. You can restore them anytime.`)) return;
+        try { await api.request('DELETE', '/employees/' + b.dataset.del); UI.toast('Employee archived. Their data is preserved.', 'success'); reload(); }
+        catch (e) { UI.toast(e.message, 'error'); }
+      });
+      // Restore archived employee
+      document.querySelectorAll('[data-restore]').forEach((b) => b.onclick = async () => {
+        const emp = employees.find((e) => e.id == b.dataset.restore);
+        if (!confirm(`Restore ${emp ? emp.name : 'this employee'} back to active? Their login will be re-enabled.`)) return;
+        try { await api.post('/employees/' + b.dataset.restore + '/restore'); UI.toast('Employee restored.', 'success'); reload(); }
+        catch (e) { UI.toast(e.message, 'error'); }
+      });
+      // Permanent delete (only for archived)
+      document.querySelectorAll('[data-perm]').forEach((b) => b.onclick = async () => {
+        const emp = employees.find((e) => e.id == b.dataset.perm);
+        const name = emp ? emp.name : 'this employee';
+        if (!confirm(`⚠️ PERMANENTLY DELETE ${name} and ALL their records (attendance, leave, payroll, documents)?\n\nThis CANNOT be undone.`)) return;
+        if (!confirm(`Are you absolutely sure? Type-check: this erases ${name}'s data forever.`)) return;
+        try { await api.request('DELETE', '/employees/' + b.dataset.perm + '/permanent'); UI.toast('Employee permanently deleted.', 'success'); reload(); }
         catch (e) { UI.toast(e.message, 'error'); }
       });
     };
-    render(employees);
-    document.getElementById('add').onclick = () => this.employeeForm(c, null);
-    document.getElementById('search').oninput = (e) => {
-      const q = e.target.value.toLowerCase();
-      render(employees.filter((x) => [x.name, x.emp_code, x.department, x.email].join(' ').toLowerCase().includes(q)));
+
+    const applySearch = () => {
+      const q = (document.getElementById('search').value || '').toLowerCase();
+      const list = q ? employees.filter((x) => [x.name, x.emp_code, x.department, x.email].join(' ').toLowerCase().includes(q)) : employees;
+      render(list);
     };
+
+    const reload = async () => {
+      employees = (await api.get('/employees' + (showArchived ? '?includeArchived=1' : ''))).employees;
+      const archivedCount = employees.filter((e) => e.status === 'archived').length;
+      document.getElementById('archived-note').innerHTML = showArchived && archivedCount
+        ? `<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:#6b7280">📦 Showing ${archivedCount} archived employee${archivedCount !== 1 ? 's' : ''}. Their data is preserved — restore them anytime.</div>`
+        : '';
+      applySearch();
+    };
+
+    await reload();
+    document.getElementById('add').onclick = () => this.employeeForm(c, null);
+    document.getElementById('search').oninput = applySearch;
+    document.getElementById('show-archived').onchange = (e) => { showArchived = e.target.checked; reload(); };
   },
 
   async employeeForm(c, emp) {

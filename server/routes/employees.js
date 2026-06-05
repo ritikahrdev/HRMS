@@ -20,8 +20,13 @@ const LIST_SQL = `
   FROM employees e LEFT JOIN users u ON u.id = e.user_id`;
 
 // List all employees (HR / Finance / Super Admin).
+// By default excludes archived employees; pass ?includeArchived=1 to see them too.
 router.get('/', requirePerm('employees:read'), (req, res) => {
-  res.json({ employees: db.prepare(LIST_SQL + ' ORDER BY e.name').all() });
+  const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
+  const sql = includeArchived
+    ? LIST_SQL + ' ORDER BY e.name'
+    : LIST_SQL + " WHERE e.status != 'archived' ORDER BY e.name";
+  res.json({ employees: db.prepare(sql).all() });
 });
 
 // Staff directory — any logged-in user sees safe contact fields of active staff.
@@ -107,17 +112,39 @@ router.post('/:id/status', requirePerm('employees:write'), (req, res) => {
   res.json({ ok: true, status });
 });
 
-// Permanently delete an employee and their data (super admin only).
+// Archive an employee (super admin only). Their login is disabled and they
+// disappear from active lists, but ALL their data (attendance, leave, payroll,
+// mood, documents, etc.) is preserved and can be restored later.
 router.delete('/:id', requireSuperAdmin, (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
   if (!emp) return res.status(404).json({ error: 'Not found' });
-  // Don't allow deleting yourself.
+  // Don't allow archiving yourself.
+  if (req.session.user.employeeId === emp.id) return res.status(400).json({ error: 'You cannot archive your own profile.' });
+  // Soft-delete: mark archived. No data is removed — the employee row and all
+  // related records (attendance, leave, payroll, mood, documents) stay intact.
+  db.prepare("UPDATE employees SET status = 'archived' WHERE id = ?").run(emp.id);
+  res.json({ ok: true, archived: true });
+});
+
+// Restore an archived employee back to active (super admin only).
+router.post('/:id/restore', requireSuperAdmin, (req, res) => {
+  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+  if (!emp) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE employees SET status = 'active' WHERE id = ?").run(emp.id);
+  res.json({ ok: true, restored: true });
+});
+
+// PERMANENT delete — actually removes the employee and ALL their data forever
+// (super admin only, and only for already-archived employees). Use with care.
+router.delete('/:id/permanent', requireSuperAdmin, (req, res) => {
+  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+  if (!emp) return res.status(404).json({ error: 'Not found' });
   if (req.session.user.employeeId === emp.id) return res.status(400).json({ error: 'You cannot delete your own profile.' });
-  // Clear manager links pointing at this person.
+  if (emp.status !== 'archived') return res.status(400).json({ error: 'Archive the employee first before permanent deletion.' });
   db.prepare('UPDATE employees SET manager_id = NULL WHERE manager_id = ?').run(emp.id);
   db.prepare('DELETE FROM employees WHERE id = ?').run(emp.id); // cascades attendance/leave/etc.
   if (emp.user_id) db.prepare('DELETE FROM users WHERE id = ?').run(emp.user_id);
-  res.json({ ok: true });
+  res.json({ ok: true, permanentlyDeleted: true });
 });
 
 // Reset an employee's password -> returns a new temp password.
