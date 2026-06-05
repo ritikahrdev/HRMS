@@ -558,6 +558,11 @@ router.post('/corrections/:id/decision', requirePerm('attendance:correct'), asyn
   if (!c) return res.status(404).json({ error: 'Not found' });
   if (!canActOnEmployee(req, c.employee_id)) return res.status(403).json({ error: 'Not in your team.' });
 
+  // Approvals are same-day only: a request can only be approved on its own day.
+  if (decision === 'approved' && c.date !== todayStr()) {
+    return res.status(400).json({ error: `This request was for ${c.date} and can only be approved on the same day. It has expired — please reject it.` });
+  }
+
   db.prepare("UPDATE attendance_corrections SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
     .run(decision, comment || '', req.session.user.id, c.id);
 

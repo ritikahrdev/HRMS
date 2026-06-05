@@ -274,17 +274,21 @@ const EmployeeViews = {
         <div style="font-weight:600">No ${filter === 'all' ? '' : filter} requests</div>
       </div>`;
 
+    const todayStr = new Date().toISOString().slice(0, 10);
     return filtered.map(r => {
       const typeIcon = TYPE_ICONS[r.type] || '📋';
       const typeLabel = TYPE_LABELS[r.type] || (r.type || 'Request');
       const [sbg, sfg, sicon] = STATUS_STYLE[r.status] || STATUS_STYLE.pending;
+      // A pending request whose day has passed can no longer be approved (same-day only).
+      const expired = r.status === 'pending' && r.date < todayStr;
       return `
-        <div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin-bottom:10px;background:#fff;display:flex;gap:12px;align-items:flex-start">
+        <div style="border:1px solid ${expired ? '#fed7aa' : '#e5e7eb'};border-radius:10px;padding:14px 16px;margin-bottom:10px;background:#fff;display:flex;gap:12px;align-items:flex-start">
           <div style="font-size:24px;flex-shrink:0;margin-top:2px">${typeIcon}</div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
               <span style="font-weight:700;font-size:14px">${typeLabel}</span>
               <span style="background:${sbg};color:${sfg};padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600">${sicon} ${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span>
+              ${expired ? `<span style="background:#fff7ed;color:#9a3412;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600">⏰ Expired</span>` : ''}
               ${isAdmin ? `<span style="font-size:12px;color:#6b7280;font-weight:600">${UI.esc(r.employee_name || '')} ${r.department ? '· '+UI.esc(r.department) : ''}</span>` : ''}
             </div>
             <div style="font-size:13px;color:#374151;margin-bottom:4px">
@@ -294,11 +298,12 @@ const EmployeeViews = {
               ${r.requested_out ? ` Out: <strong>${r.requested_out}</strong>` : ''}
             </div>
             <div style="font-size:12px;color:#6b7280">${UI.esc(r.reason || '')}</div>
+            ${expired ? `<div style="margin-top:6px;font-size:12px;background:#fff7ed;border:1px solid #fed7aa;padding:6px 10px;border-radius:6px;color:#9a3412">⏰ This request was for a past day and can no longer be approved (same-day approval only). You can reject it.</div>` : ''}
             ${r.comment ? `<div style="margin-top:6px;font-size:12px;background:#f3f4f6;padding:6px 10px;border-radius:6px;color:#374151">💬 <em>${UI.esc(r.comment)}</em></div>` : ''}
             <div style="font-size:11px;color:#9ca3af;margin-top:6px">Submitted ${UI.date(r.applied_at)}${r.decided_at ? ' · Decided '+UI.date(r.decided_at) : ''}</div>
           </div>
           ${!isAdmin && r.status === 'pending' ? `<button class="btn sm secondary cancel-req" data-id="${r.id}" style="flex-shrink:0;border-color:#e5e7eb;color:#6b7280">Cancel</button>` : ''}
-          ${isAdmin && r.status === 'pending' ? `<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0"><button class="btn sm green appr-req" data-id="${r.id}">Approve</button><button class="btn sm red rej-req" data-id="${r.id}">Reject</button></div>` : ''}
+          ${isAdmin && r.status === 'pending' ? `<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">${expired ? '' : `<button class="btn sm green appr-req" data-id="${r.id}">Approve</button>`}<button class="btn sm red rej-req" data-id="${r.id}">Reject</button></div>` : ''}
         </div>`;
     }).join('');
   },
