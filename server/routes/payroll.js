@@ -52,28 +52,30 @@ router.post('/generate', requirePerm('payroll:manage'), (req, res) => {
       return res.status(400).json({ error: 'This month\'s payroll is approved and locked. Unlock it before regenerating.' });
     }
 
-    // Use transaction to prevent duplicate payslips on concurrent requests
-    const transaction = db.transaction(() => {
-      let employees;
-      if (employee_id) employees = [db.prepare('SELECT id FROM employees WHERE id = ?').get(employee_id)].filter(Boolean);
-      else employees = db.prepare("SELECT id FROM employees WHERE status='active'").all();
+    let employees;
+    if (employee_id) employees = [db.prepare('SELECT id FROM employees WHERE id = ?').get(employee_id)].filter(Boolean);
+    else employees = db.prepare("SELECT id FROM employees WHERE status='active'").all();
 
-      const slips = [];
+    // Run inside a transaction (node:sqlite has no db.transaction(); use BEGIN/COMMIT).
+    db.exec('BEGIN');
+    let slips;
+    try {
+      slips = [];
       for (const e of employees) slips.push(withName(generatePayslip(e.id, month)));
-
       db.prepare(
         `INSERT INTO payroll_runs (month, status, updated_at) VALUES (?, 'draft', datetime('now'))
          ON CONFLICT(month) DO UPDATE SET status='draft', updated_at=datetime('now')`
       ).run(month);
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
 
-      return slips;
-    });
-
-    const slips = transaction();
     res.json({ month, count: slips.length, payslips: slips, run: getRun(month) });
   } catch (err) {
     console.error('Error generating payroll:', err);
-    res.status(500).json({ error: 'Failed to generate payroll' });
+    res.status(500).json({ error: 'Failed to generate payroll: ' + (err && err.message ? err.message : 'unknown error') });
   }
 });
 

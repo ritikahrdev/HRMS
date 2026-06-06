@@ -399,8 +399,9 @@ router.post('/mark', requirePerm('attendance:correct'), (req, res) => {
     let hours = 0;
     if (ci && co) hours = +(((new Date(co) - new Date(ci)) / 36e5) || 0).toFixed(2);
 
-    // Use transaction for atomic read-modify-write
-    const transaction = db.transaction(() => {
+    // Atomic read-modify-write (node:sqlite has no db.transaction(); use BEGIN/COMMIT).
+    db.exec('BEGIN');
+    try {
       const existing = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(employee_id, date);
       if (existing) {
         db.prepare('UPDATE attendance SET status = ?, check_in = ?, check_out = ?, work_hours = ? WHERE id = ?')
@@ -409,9 +410,11 @@ router.post('/mark', requirePerm('attendance:correct'), (req, res) => {
         db.prepare('INSERT INTO attendance (employee_id, date, status, check_in, check_out, work_hours) VALUES (?, ?, ?, ?, ?, ?)')
           .run(employee_id, date, status, ci, co, hours);
       }
-    });
-
-    transaction();
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('Error marking attendance:', err);
