@@ -67,11 +67,13 @@ const EmployeeViews = {
   async attendance(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const month = UI.thisMonth();
-    const [{ attendance }, { corrections }, today] = await Promise.all([
+    const [{ attendance }, { corrections }, today, moodData] = await Promise.all([
       api.get('/attendance/my?month=' + month),
       api.get('/attendance/corrections/my'),
       api.get('/attendance/today'),
+      api.get('/mood/my').catch(() => ({ today: null })),
     ]);
+    const todayMood = moodData && moodData.today ? moodData.today : null;
     const a = today.attendance;
     const win = today.window || { open: true, cutoff: '' };
     const checkedIn = a && a.check_in;
@@ -96,7 +98,13 @@ const EmployeeViews = {
           <button class="btn green" id="checkin" ${(checkedIn || windowClosed) ? 'disabled' : ''}>Clock In</button>
           <button class="btn" id="checkout" ${(!checkedIn || checkedOut) ? 'disabled' : ''}>Clock Out</button>
         </div>
-        <p class="muted" style="font-size:12px;margin-top:10px">Missed the window or need a half-day/past-day fix? Use <b>Raise Attendance Request</b> below — your manager/HR will approve it.</p>
+
+        <!-- Daily happiness check-in (marked along with attendance) -->
+        <div id="mood-inline" style="margin-top:16px;padding-top:14px;border-top:1px dashed #e5e7eb">
+          ${this.moodInlineHtml(todayMood)}
+        </div>
+
+        <p class="muted" style="font-size:12px;margin-top:12px">Missed the window or need a half-day/past-day fix? Use <b>Raise Attendance Request</b> below — your manager/HR will approve it.</p>
       </div>
       <div class="toolbar mt">
         <label class="muted">Month</label>
@@ -125,11 +133,18 @@ const EmployeeViews = {
     const tick = () => { const el = document.getElementById('clock'); if (el) el.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
     tick(); clearInterval(this._clock); this._clock = setInterval(tick, 1000);
 
+    // Inline happiness check-in
+    this.bindMoodInline(c);
+
     const ci = document.getElementById('checkin');
     const co = document.getElementById('checkout');
     if (ci) ci.onclick = async () => {
-      try { await api.post('/attendance/check-in'); UI.toast('Clocked in!', 'success'); this.attendance(c); }
-      catch (e) { UI.toast(e.message, 'error'); this.attendance(c); }
+      try {
+        await api.post('/attendance/check-in');
+        if (!todayMood) UI.toast("Clocked in! 👇 Now mark how you're feeling today.", 'success');
+        else UI.toast('Clocked in!', 'success');
+        this.attendance(c);
+      } catch (e) { UI.toast(e.message, 'error'); this.attendance(c); }
     };
     if (co) co.onclick = async () => {
       try { const r = await api.post('/attendance/check-out'); UI.toast('Clocked out. ' + r.workHours + ' hrs worked (' + r.status + ').', 'success'); this.attendance(c); }
@@ -319,6 +334,64 @@ const EmployeeViews = {
         } catch (e) { UI.toast(e.message, 'error'); }
       };
     });
+  },
+
+  // The 5 mood levels used in the inline attendance check-in.
+  MOOD_LEVELS: [
+    { score: 1, emoji: '😞', label: 'Very Unhappy', color: '#ef4444', bg: '#fef2f2' },
+    { score: 2, emoji: '😟', label: 'Unhappy',      color: '#f97316', bg: '#fff7ed' },
+    { score: 3, emoji: '😐', label: 'Neutral',      color: '#eab308', bg: '#fefce8' },
+    { score: 4, emoji: '😊', label: 'Happy',        color: '#22c55e', bg: '#f0fdf4' },
+    { score: 5, emoji: '😄', label: 'Very Happy',   color: '#10b981', bg: '#ecfdf5' },
+  ],
+
+  // Renders the inline mood row: recorded mood, or the picker if not set yet.
+  moodInlineHtml(todayMood) {
+    const M = this.MOOD_LEVELS;
+    if (todayMood) {
+      const m = M.find(x => x.score === todayMood.score) || M[2];
+      return `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:13px;color:#374151;font-weight:600">Today's mood:</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;background:${m.bg};color:${m.color};padding:4px 12px;border-radius:16px;font-size:13px;font-weight:700">${m.emoji} ${m.label}</span>
+          ${todayMood.note ? `<span style="font-size:12px;color:#9ca3af">— ${UI.esc(todayMood.note)}</span>` : ''}
+          <button class="btn sm secondary" id="mood-change" style="margin-left:auto">Change</button>
+        </div>`;
+    }
+    return `
+      <div>
+        <div style="font-size:13px;color:#374151;font-weight:600;margin-bottom:8px">😊 How are you feeling today? <span style="color:#9ca3af;font-weight:400">(mark your happiness along with attendance)</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${M.map(m => `
+            <button class="mood-inline-btn" data-score="${m.score}" title="${m.label}"
+              style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 12px;border:1.5px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;min-width:62px">
+              <span style="font-size:26px">${m.emoji}</span>
+              <span style="font-size:10px;font-weight:600;color:#6b7280">${m.label}</span>
+            </button>`).join('')}
+        </div>
+      </div>`;
+  },
+
+  // Wires the inline mood buttons. Saves immediately and re-renders the row.
+  bindMoodInline(c) {
+    const wrap = document.getElementById('mood-inline');
+    if (!wrap) return;
+    const save = async (score) => {
+      try {
+        const r = await api.post('/mood/checkin', { score });
+        UI.toast(`${r.emoji} Mood saved: ${r.label}`, 'success');
+        const fresh = await api.get('/mood/my').catch(() => ({ today: null }));
+        wrap.innerHTML = this.moodInlineHtml(fresh.today);
+        this.bindMoodInline(c);
+      } catch (e) { UI.toast(e.message, 'error'); }
+    };
+    wrap.querySelectorAll('.mood-inline-btn').forEach(btn => {
+      btn.onmouseenter = () => { btn.style.borderColor = '#4f46e5'; btn.style.background = '#f5f3ff'; };
+      btn.onmouseleave = () => { btn.style.borderColor = '#e5e7eb'; btn.style.background = '#fff'; };
+      btn.onclick = () => save(parseInt(btn.dataset.score));
+    });
+    const change = document.getElementById('mood-change');
+    if (change) change.onclick = () => { wrap.innerHTML = this.moodInlineHtml(null); this.bindMoodInline(c); };
   },
   attTable(rows) {
     return UI.table([
