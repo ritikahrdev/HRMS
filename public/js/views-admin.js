@@ -1407,15 +1407,23 @@ const AdminViews = {
       </div>
       <div class="card mt" style="max-width:760px">
         <div class="section-title">Slack Attendance</div>
-        <p class="muted" style="font-size:12px">Pull attendance from your Slack channel where staff post each day. Create a Slack app with a Bot token (scopes: <b>channels:history</b>, <b>users:read</b>, <b>users:read.email</b>), add it to the channel, and paste the details below. Then use <b>Import Attendance → Sync from Slack</b>.</p>
-        <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="slackEnabled" ${(s.slack || {}).enabled ? 'checked' : ''}/> Enable Slack sync</label></div>
+        <p class="muted" style="font-size:12px">Employees post their status in a Slack channel (e.g. <i>present</i>, <i>WFH</i>, <i>leave</i>) and it syncs here. The bot also reacts 👍 to valid messages and ❌ + a reminder to unreadable ones. <b>Scopes needed:</b> channels:history, chat:write, reactions:write, users:read, users:read.email.</p>
+        <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="slackEnabled" ${(s.slack || {}).enabled ? 'checked' : ''}/> Enable Slack integration</label></div>
         <div class="form-grid">
           <div class="field"><label>Bot Token (xoxb-…)</label><input id="slackToken" value="${UI.esc((s.slack || {}).botToken || '')}" placeholder="xoxb-..." /></div>
           <div class="field"><label>Channel ID</label><input id="slackChannel" value="${UI.esc((s.slack || {}).channelId || '')}" placeholder="C0XXXXXXX" /></div>
-          <div class="field full"><label>"Leave" keywords (comma separated)</label><input id="slackLeave" value="${UI.esc(((s.slack || {}).leaveKeywords || []).join(', '))}" /></div>
+          <div class="field full"><label>Signing Secret <span style="color:#9ca3af;font-weight:400">(for real-time events — optional)</span></label><input id="slackSigning" value="${UI.esc((s.slack || {}).signingSecret || '')}" placeholder="from Slack app → Basic Information" /></div>
+          <div class="field full"><label>"Present" keywords</label><input id="slackPresent" value="${UI.esc(((s.slack || {}).presentKeywords || ['in','present','wfo','office','working','available']).join(', '))}" /></div>
+          <div class="field full"><label>"Work from home" keywords</label><input id="slackWfh" value="${UI.esc(((s.slack || {}).wfhKeywords || ['wfh','work from home','remote']).join(', '))}" /></div>
           <div class="field full"><label>"Half day" keywords</label><input id="slackHalf" value="${UI.esc(((s.slack || {}).halfKeywords || []).join(', '))}" /></div>
+          <div class="field full"><label>"Leave" keywords</label><input id="slackLeave" value="${UI.esc(((s.slack || {}).leaveKeywords || []).join(', '))}" /></div>
+          <div class="field full"><label>"Absent" keywords</label><input id="slackAbsent" value="${UI.esc(((s.slack || {}).absentKeywords || ['absent']).join(', '))}" /></div>
         </div>
-        <p class="muted" style="font-size:12px">Anyone who posts in the channel that day is marked <b>Present</b> (with their post time as clock-in), unless their message matches a Leave/Half keyword. Match employees by their Slack email = HR email, or set a Slack ID on the employee.</p>
+        <div class="checkbox-row" style="margin-top:10px">
+          <label><input type="checkbox" id="slackAutoReact" ${(s.slack || {}).autoReact !== false ? 'checked' : ''}/> React 👍 / ❌ to messages</label>
+          <label><input type="checkbox" id="slackNotify" ${(s.slack || {}).notifyOnInvalid !== false ? 'checked' : ''}/> Reply to unreadable messages with a reminder</label>
+        </div>
+        <p class="muted" style="font-size:12px;margin-top:10px"><b>Real-time:</b> point your Slack app's Event Subscription Request URL to <code>YOUR_PUBLIC_URL/api/slack/events</code> (subscribe to <code>message.channels</code>). For manual pull, use <b>Attendance → Import → Sync from Slack</b>. Employees are matched by Slack email = HR email, or a Slack ID on the employee.</p>
       </div>
       <div class="btn-row mt"><button class="btn" id="save">Save Settings</button></div>
       ${App.user.role === 'SUPER_ADMIN' ? '<div id="accessCard" class="mt"></div>' : ''}`;
@@ -1491,8 +1499,16 @@ const AdminViews = {
           enabled: document.getElementById('slackEnabled').checked,
           botToken: val('slackToken').trim(),
           channelId: val('slackChannel').trim(),
-          leaveKeywords: val('slackLeave').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+          signingSecret: val('slackSigning').trim(),
+          presentKeywords: val('slackPresent').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+          wfhKeywords: val('slackWfh').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
           halfKeywords: val('slackHalf').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+          leaveKeywords: val('slackLeave').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+          absentKeywords: val('slackAbsent').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+          autoReact: document.getElementById('slackAutoReact').checked,
+          notifyOnInvalid: document.getElementById('slackNotify').checked,
+          validReaction: ((s.slack || {}).validReaction) || 'thumbsup',
+          invalidReaction: ((s.slack || {}).invalidReaction) || 'x',
         },
       };
       try { await api.put('/settings', payload); UI.currency = payload.currency || UI.currency; UI.toast('Settings saved. Reloading menu…', 'success'); setTimeout(() => location.reload(), 800); }
