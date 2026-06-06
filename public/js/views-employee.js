@@ -1,16 +1,18 @@
 const EmployeeViews = {
   async dashboard(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
-    const [todayRes, balanceRes, { payslips }] = await Promise.all([
+    const [todayRes, balanceRes, { payslips }, moodData] = await Promise.all([
       api.get('/attendance/today'),
       api.get('/leave/balance'),
       api.get('/payroll/my'),
+      api.get('/mood/my').catch(() => ({ today: null })),
     ]);
     const a = todayRes.attendance;
     const winState = todayRes.window || { open: true, cutoff: '' };
     const checkedIn = a && a.check_in;
     const checkedOut = a && a.check_out;
     const windowClosed = !winState.open && !checkedIn;
+    const todayMood = moodData && moodData.today ? moodData.today : null;
 
     const balRows = Object.values(balanceRes.balance || {})
       .map((v) => `<div class="card stat"><div class="label">${UI.esc(v.name)} left</div><div class="value">${v.remaining}<span class="muted" style="font-size:14px"> / ${v.allowed}</span></div></div>`)
@@ -27,6 +29,7 @@ const EmployeeViews = {
           <div class="btn-row">
             <button class="btn green" id="markatt" ${(checkedIn || windowClosed) ? 'disabled' : ''}>${checkedIn ? '✓ Attendance Marked' : 'Mark Attendance'}</button>
           </div>
+          ${checkedIn ? '' : `<div id="mood-inline" style="margin-top:14px;padding-top:12px;border-top:1px dashed #e5e7eb">${this.moodInlineHtml(todayMood)}</div>`}
         </div>
         ${balRows}
       </div>
@@ -50,8 +53,18 @@ const EmployeeViews = {
     clearInterval(this._clock);
     this._clock = setInterval(tick, 1000);
 
+    // Inline mood picker (mood is mandatory before attendance)
+    this.bindMoodInline(c);
+
     const mark = document.getElementById('markatt');
     if (mark) mark.onclick = async () => {
+      const fresh = await api.get('/mood/my').catch(() => ({ today: null }));
+      if (!fresh.today) {
+        UI.toast('😊 Please mark your mood for today first — it is required.', 'error');
+        const wrap = document.getElementById('mood-inline');
+        if (wrap) { wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); wrap.style.outline = '2px solid #ef4444'; wrap.style.borderRadius = '8px'; setTimeout(() => { wrap.style.outline = ''; }, 2500); }
+        return;
+      }
       try { await api.post('/attendance/check-in'); UI.toast('Attendance marked!', 'success'); this.dashboard(c); }
       catch (e) { UI.toast(e.message, 'error'); this.dashboard(c); }
     };
@@ -132,11 +145,18 @@ const EmployeeViews = {
 
     const mark = document.getElementById('markatt');
     if (mark) mark.onclick = async () => {
+      // Mood is mandatory — must be marked for today before attendance.
+      const fresh = await api.get('/mood/my').catch(() => ({ today: null }));
+      if (!fresh.today) {
+        UI.toast('😊 Please mark your mood for today first — it is required.', 'error');
+        const wrap = document.getElementById('mood-inline');
+        if (wrap) { wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); wrap.style.outline = '2px solid #ef4444'; wrap.style.borderRadius = '8px'; setTimeout(() => { wrap.style.outline = ''; }, 2500); }
+        return;
+      }
       try {
         const r = await api.post('/attendance/check-in');
         const lateMsg = r.lateMinutes > 0 ? ` ⏰ You're ${UI.duration(r.lateMinutes)} late.` : '';
-        if (!todayMood) UI.toast(`Attendance marked!${lateMsg} 👇 Now mark how you're feeling today.`, 'success');
-        else UI.toast(`Attendance marked!${lateMsg}`, 'success');
+        UI.toast(`Attendance marked!${lateMsg}`, 'success');
         this.attendance(c);
       } catch (e) { UI.toast(e.message, 'error'); this.attendance(c); }
     };
@@ -346,7 +366,7 @@ const EmployeeViews = {
     }
     return `
       <div>
-        <div style="font-size:13px;color:#374151;font-weight:600;margin-bottom:8px">😊 How are you feeling today? <span style="color:#9ca3af;font-weight:400">(mark your happiness along with attendance)</span></div>
+        <div style="font-size:13px;color:#374151;font-weight:600;margin-bottom:8px">😊 How are you feeling today? <span style="color:#ef4444;font-weight:700">* required</span> <span style="color:#9ca3af;font-weight:400">— mark before attendance</span></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           ${M.map(m => `
             <button class="mood-inline-btn" data-score="${m.score}" title="${m.label}"

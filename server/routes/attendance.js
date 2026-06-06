@@ -71,6 +71,10 @@ router.post('/check-in', requireLogin, (req, res) => {
     const existing = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, date);
     if (existing && existing.check_in) return res.status(400).json({ error: 'You have already clocked in today.' });
 
+    // Marking today's mood is mandatory before attendance can be marked.
+    const mood = db.prepare('SELECT 1 FROM mood_checkins WHERE employee_id = ? AND date = ?').get(empId, date);
+    if (!mood) return res.status(400).json({ error: 'Please mark your mood for today first — it is required before marking attendance.', needMood: true });
+
     const { cutoff, label, allDay } = clockInCutoff();
     if (new Date() > cutoff) {
       return res.status(400).json({
