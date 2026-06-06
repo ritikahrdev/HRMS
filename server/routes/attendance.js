@@ -22,23 +22,24 @@ function myEmpId(req, res) {
 }
 
 // The latest time an employee may mark attendance today.
-// If an explicit "attendanceCloseTime" (HH:MM) is set, that wins; otherwise
-// it's shift in-time + grace minutes.
+// Flexible hours by default: if no explicit "attendanceCloseTime" (HH:MM) is
+// set, the window stays open all day. Set a close time to enforce a cut-off.
 function clockInCutoff() {
   const s = getSettings();
   const grace = Number(s.graceMinutes != null ? s.graceMinutes : 30);
   const cutoff = new Date();
   const close = String(s.attendanceCloseTime || '').trim();
+  let allDay = false;
   if (/^\d{1,2}:\d{2}$/.test(close)) {
     const [ch, cm] = close.split(':').map(Number);
     cutoff.setHours(ch || 0, cm || 0, 0, 0);
   } else {
-    const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
-    cutoff.setHours(ih || 0, im || 0, 0, 0);
-    cutoff.setMinutes(cutoff.getMinutes() + grace);
+    // No close time configured -> open all day (flexible hours).
+    cutoff.setHours(23, 59, 59, 999);
+    allDay = true;
   }
   const label = `${pad(cutoff.getHours())}:${pad(cutoff.getMinutes())}`;
-  return { cutoff, label, grace };
+  return { cutoff, label, grace, allDay };
 }
 
 // Decides Present / Half / Absent from hours worked against the shift.
@@ -55,11 +56,11 @@ function statusForHours(hours) {
 router.get('/today', requireLogin, (req, res) => {
   const empId = myEmpId(req, res); if (!empId) return;
   const row = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, todayStr());
-  const { cutoff, label } = clockInCutoff();
+  const { cutoff, label, allDay } = clockInCutoff();
   res.json({
     date: todayStr(),
     attendance: row || null,
-    window: { open: new Date() <= cutoff, cutoff: label },
+    window: { open: new Date() <= cutoff, cutoff: label, allDay },
   });
 });
 
@@ -70,7 +71,7 @@ router.post('/check-in', requireLogin, (req, res) => {
     const existing = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, date);
     if (existing && existing.check_in) return res.status(400).json({ error: 'You have already clocked in today.' });
 
-    const { cutoff, label } = clockInCutoff();
+    const { cutoff, label, allDay } = clockInCutoff();
     if (new Date() > cutoff) {
       return res.status(400).json({
         error: `The attendance window closed at ${label}. Please raise an attendance request for the admin to approve.`,
@@ -79,11 +80,15 @@ router.post('/check-in', requireLogin, (req, res) => {
     }
 
     const now = new Date().toISOString();
-    // Late minutes = clock-in after shift start time.
-    const s = getSettings();
-    const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
-    const startToday = new Date(); startToday.setHours(ih || 0, im || 0, 0, 0);
-    const lateMin = Math.max(0, Math.round((new Date(now) - startToday) / 60000));
+    // Late minutes only matter for fixed hours. With flexible hours (window open
+    // all day), we don't flag anyone late — we just record their actual time.
+    let lateMin = 0;
+    if (!allDay) {
+      const s = getSettings();
+      const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
+      const startToday = new Date(); startToday.setHours(ih || 0, im || 0, 0, 0);
+      lateMin = Math.max(0, Math.round((new Date(now) - startToday) / 60000));
+    }
 
     if (existing) db.prepare('UPDATE attendance SET check_in = ?, status = ?, late_minutes = ? WHERE id = ?').run(now, 'present', lateMin, existing.id);
     else db.prepare('INSERT INTO attendance (employee_id, date, check_in, status, late_minutes) VALUES (?, ?, ?, ?, ?)').run(empId, date, now, 'present', lateMin);

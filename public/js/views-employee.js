@@ -22,7 +22,7 @@ const EmployeeViews = {
           <div class="section-title">Today's Attendance</div>
           <div class="pill-clock" id="clock">--:--</div>
           <div class="muted" style="margin:6px 0 14px">
-            ${checkedIn ? 'Attendance marked at ' + UI.time(a.check_in) : (windowClosed ? '<span style="color:var(--red)">Window closed (till ' + UI.esc(winState.cutoff) + '). Raise a request from My Attendance.</span>' : "Not marked yet (mark before " + UI.esc(winState.cutoff) + ')')}
+            ${checkedIn ? 'Attendance marked at ' + UI.time(a.check_in) : (windowClosed ? '<span style="color:var(--red)">Window closed (till ' + UI.esc(winState.cutoff) + '). Raise a request from My Attendance.</span>' : (winState.allDay ? 'Not marked yet — you can mark anytime today.' : 'Not marked yet (mark before ' + UI.esc(winState.cutoff) + ')'))}
           </div>
           <div class="btn-row">
             <button class="btn green" id="markatt" ${(checkedIn || windowClosed) ? 'disabled' : ''}>${checkedIn ? '✓ Attendance Marked' : 'Mark Attendance'}</button>
@@ -78,6 +78,8 @@ const EmployeeViews = {
         + (a.status ? ' &middot; Status: ' + UI.tag(a.status) : '');
     } else if (windowClosed) {
       statusLine = `<span style="color:var(--red)">Attendance window closed (you could mark until <b>${UI.esc(win.cutoff)}</b>). Use <b>Raise Attendance Request</b> below.</span>`;
+    } else if (win.allDay) {
+      statusLine = `You haven't marked attendance today. You can mark it <b>anytime today</b> — it records your actual time.`;
     } else {
       statusLine = `You haven't marked attendance today. Please mark it before <b>${UI.esc(win.cutoff)}</b>.`;
     }
