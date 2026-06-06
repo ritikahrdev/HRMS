@@ -136,6 +136,10 @@ router.get('/my', requireLogin, (req, res) => {
     const rows = month
       ? db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date LIKE ? ORDER BY date DESC').all(empId, `${month}-%`)
       : db.prepare('SELECT * FROM attendance WHERE employee_id = ? ORDER BY date DESC LIMIT 60').all(empId);
+    // Attach the mood/happiness marked on each date (captured with attendance).
+    const moods = db.prepare('SELECT date, score, note FROM mood_checkins WHERE employee_id = ?').all(empId);
+    const moodByDate = {}; for (const m of moods) moodByDate[m.date] = m;
+    for (const r of rows) { const m = moodByDate[r.date]; r.mood_score = m ? m.score : null; r.mood_note = m ? m.note : null; }
     res.json({ attendance: rows });
   } catch (err) {
     console.error('Error fetching attendance:', err);
@@ -163,6 +167,9 @@ router.get('/day', requireLogin, (req, res) => {
   const leaves = db.prepare("SELECT employee_id FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(date, date);
   const onLeave = new Set(leaves.map((l) => l.employee_id));
   const holiday = db.prepare('SELECT name FROM holidays WHERE date = ?').get(date);
+  // Mood/happiness marked for this date, keyed by employee.
+  const moods = db.prepare('SELECT employee_id, score, note FROM mood_checkins WHERE date = ?').all(date);
+  const moodMap = {}; for (const m of moods) moodMap[m.employee_id] = m;
 
   const list = employees.map((e) => {
     const a = attMap[e.id];
@@ -171,7 +178,8 @@ router.get('/day', requireLogin, (req, res) => {
     else if (a && a.check_in) status = 'present';
     else if (onLeave.has(e.id)) status = 'leave';
     else if (holiday) status = 'holiday';
-    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, marked: !!(a && a.check_in) };
+    const mood = moodMap[e.id] || null;
+    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, marked: !!(a && a.check_in), mood_score: mood ? mood.score : null, mood_note: mood ? mood.note : null };
   });
   const summary = { present: 0, half: 0, leave: 0, absent: 0, holiday: 0 };
   for (const l of list) summary[l.status] = (summary[l.status] || 0) + 1;

@@ -672,6 +672,7 @@ const AdminViews = {
       { key: 'check_in', label: 'Marked At', render: (r) => r.check_in ? '<b>' + UI.time(r.check_in) + '</b>' : '<span style="color:#cbd5e1">—</span>' },
       { key: 'late', label: 'Late By', render: (r) => r.late_minutes > 0 ? '<span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700">⏰ ' + UI.duration(r.late_minutes) + '</span>' : (r.marked ? '<span style="color:#16a34a;font-size:12px">On time</span>' : '<span style="color:#cbd5e1">—</span>') },
       { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) + (r.wfh ? ' <span title="Work from home" style="font-size:12px">🏠</span>' : '') + (r.source === 'slack' ? ' <span title="Marked via Slack" style="font-size:11px;color:#6b7280">💬</span>' : '') },
+      { key: 'mood', label: 'Mood', render: (r) => r.mood_note ? `<span title="${UI.esc(r.mood_note)}">${UI.mood(r.mood_score)}</span>` : UI.mood(r.mood_score) },
       { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-edit="${r.id}">Edit</button> <button class="btn sm red" data-del="${r.id}">Delete</button>` },
     ], list, 'No active employees.');
   },

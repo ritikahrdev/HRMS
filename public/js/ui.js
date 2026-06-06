@@ -29,6 +29,14 @@ const UI = {
     return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   },
 
+  // Mood score (1-5) -> emoji + label. Used to show happiness with attendance.
+  MOODS: { 1: ['😞', 'Very Unhappy'], 2: ['😟', 'Unhappy'], 3: ['😐', 'Neutral'], 4: ['😊', 'Happy'], 5: ['😄', 'Very Happy'] },
+  mood(score, withLabel) {
+    const m = this.MOODS[Math.round(Number(score))];
+    if (!m) return '<span style="color:#cbd5e1">—</span>';
+    return withLabel ? `<span title="${m[1]}">${m[0]} <span style="font-size:11px;color:#6b7280">${m[1]}</span></span>` : `<span title="${m[1]}" style="font-size:18px">${m[0]}</span>`;
+  },
+
   // Format a number of minutes as "1h 59m", "45m", or "2h".
   duration(mins) {
     const m = Math.max(0, Math.round(Number(mins) || 0));

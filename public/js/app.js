@@ -40,7 +40,7 @@ const App = {
     if (this.modOn('performance')) push('Company', '#/performance', 'Performance', () => AdminViews.performance(c()));
     if (this.modOn('surveys')) push('Company', '#/surveys', 'Surveys', () => AdminViews.surveys(c()));
     if (this.modOn('helpdesk')) push('Company', '#/helpdesk', 'Helpdesk', () => AdminViews.helpdesk(c()));
-    if (u.employeeId) push('Me', '#/my-mood', 'My Mood', () => EmployeeViews.mood(c()));
+    // Mood/happiness is captured alongside attendance — no separate section.
 
     // ---- ADMIN (only for staff with the matching permission) ----
     if (this.has('employees:read')) push('Admin', '#/employees', 'Employees', () => AdminViews.employees(c()));
@@ -56,7 +56,6 @@ const App = {
     if (this.has('payroll:manage') && this.modOn('loans')) push('Admin', '#/loans', 'Loans & Advances', () => AdminViews.loans(c()));
     if (this.has('employees:write') && this.modOn('assets')) push('Admin', '#/assets', 'Assets', () => AdminViews.assets(c()));
     if (this.has('settings:manage')) push('Admin', '#/inventory', 'Inventory', () => AdminViews.inventory(c()));
-    if (this.has('reports:view')) push('Admin', '#/happiness', 'Happiness Score', () => AdminViews.happiness(c()));
     if (this.has('reports:view')) push('Admin', '#/reports', 'Reports', () => AdminViews.reports(c()));
     if (this.has('settings:manage')) push('Admin', '#/settings', 'Settings', () => AdminViews.settings(c()));
 

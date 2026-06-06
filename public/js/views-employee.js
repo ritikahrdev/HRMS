@@ -385,6 +385,7 @@ const EmployeeViews = {
       { key: 'check_in', label: 'Marked At', render: (r) => UI.time(r.check_in) },
       { key: 'late_minutes', label: 'Late', render: (r) => r.late_minutes ? UI.duration(r.late_minutes) : '-' },
       { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
+      { key: 'mood', label: 'Mood', render: (r) => r.mood_note ? `<span title="${UI.esc(r.mood_note)}">${UI.mood(r.mood_score)}</span>` : UI.mood(r.mood_score) },
     ], rows, 'No attendance records for this month.');
   },
 
