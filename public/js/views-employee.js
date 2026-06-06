@@ -22,12 +22,10 @@ const EmployeeViews = {
           <div class="section-title">Today's Attendance</div>
           <div class="pill-clock" id="clock">--:--</div>
           <div class="muted" style="margin:6px 0 14px">
-            ${checkedIn ? 'Clocked in at ' + UI.time(a.check_in) : (windowClosed ? '<span style="color:var(--red)">Window closed (till ' + UI.esc(winState.cutoff) + '). Raise a request from My Attendance.</span>' : 'Not clocked in yet (clock in before ' + UI.esc(winState.cutoff) + ')')}
-            ${checkedOut ? ' &middot; Clocked out at ' + UI.time(a.check_out) : ''}
+            ${checkedIn ? 'Attendance marked at ' + UI.time(a.check_in) : (windowClosed ? '<span style="color:var(--red)">Window closed (till ' + UI.esc(winState.cutoff) + '). Raise a request from My Attendance.</span>' : "Not marked yet (mark before " + UI.esc(winState.cutoff) + ')')}
           </div>
           <div class="btn-row">
-            <button class="btn green" id="checkin" ${(checkedIn || windowClosed) ? 'disabled' : ''}>Clock In</button>
-            <button class="btn" id="checkout" ${(!checkedIn || checkedOut) ? 'disabled' : ''}>Clock Out</button>
+            <button class="btn green" id="markatt" ${(checkedIn || windowClosed) ? 'disabled' : ''}>${checkedIn ? '✓ Attendance Marked' : 'Mark Attendance'}</button>
           </div>
         </div>
         ${balRows}
@@ -52,15 +50,10 @@ const EmployeeViews = {
     clearInterval(this._clock);
     this._clock = setInterval(tick, 1000);
 
-    const ci = document.getElementById('checkin');
-    const co = document.getElementById('checkout');
-    if (ci) ci.onclick = async () => {
-      try { await api.post('/attendance/check-in'); UI.toast('Clocked in!', 'success'); this.dashboard(c); }
+    const mark = document.getElementById('markatt');
+    if (mark) mark.onclick = async () => {
+      try { await api.post('/attendance/check-in'); UI.toast('Attendance marked!', 'success'); this.dashboard(c); }
       catch (e) { UI.toast(e.message, 'error'); this.dashboard(c); }
-    };
-    if (co) co.onclick = async () => {
-      try { const r = await api.post('/attendance/check-out'); UI.toast('Clocked out. ' + r.workHours + ' hrs worked (' + r.status + ').', 'success'); this.dashboard(c); }
-      catch (e) { UI.toast(e.message, 'error'); }
     };
   },
 
@@ -81,13 +74,12 @@ const EmployeeViews = {
     const windowClosed = !win.open && !checkedIn;
     let statusLine;
     if (checkedIn) {
-      statusLine = 'Clocked in at <b>' + UI.time(a.check_in) + '</b>'
-        + (checkedOut ? ' &middot; Clocked out at <b>' + UI.time(a.check_out) + '</b>' : '')
+      statusLine = 'Attendance marked at <b>' + UI.time(a.check_in) + '</b>'
         + (a.status ? ' &middot; Status: ' + UI.tag(a.status) : '');
     } else if (windowClosed) {
-      statusLine = `<span style="color:var(--red)">Attendance window closed (clock-in was allowed until <b>${UI.esc(win.cutoff)}</b>). Use <b>Raise Attendance Request</b> below.</span>`;
+      statusLine = `<span style="color:var(--red)">Attendance window closed (you could mark until <b>${UI.esc(win.cutoff)}</b>). Use <b>Raise Attendance Request</b> below.</span>`;
     } else {
-      statusLine = `You have not clocked in today. Please clock in before <b>${UI.esc(win.cutoff)}</b>.`;
+      statusLine = `You haven't marked attendance today. Please mark it before <b>${UI.esc(win.cutoff)}</b>.`;
     }
     c.innerHTML = `
       <div class="card">
@@ -95,8 +87,7 @@ const EmployeeViews = {
         <div class="pill-clock" id="clock">--:--</div>
         <div class="muted" style="margin:6px 0 14px">${statusLine}</div>
         <div class="btn-row">
-          <button class="btn green" id="checkin" ${(checkedIn || windowClosed) ? 'disabled' : ''}>Clock In</button>
-          <button class="btn" id="checkout" ${(!checkedIn || checkedOut) ? 'disabled' : ''}>Clock Out</button>
+          <button class="btn green" id="markatt" ${(checkedIn || windowClosed) ? 'disabled' : ''}>${checkedIn ? '✓ Attendance Marked' : 'Mark Attendance'}</button>
         </div>
 
         <!-- Daily happiness check-in (marked along with attendance) -->
@@ -136,19 +127,14 @@ const EmployeeViews = {
     // Inline happiness check-in
     this.bindMoodInline(c);
 
-    const ci = document.getElementById('checkin');
-    const co = document.getElementById('checkout');
-    if (ci) ci.onclick = async () => {
+    const mark = document.getElementById('markatt');
+    if (mark) mark.onclick = async () => {
       try {
         await api.post('/attendance/check-in');
-        if (!todayMood) UI.toast("Clocked in! 👇 Now mark how you're feeling today.", 'success');
-        else UI.toast('Clocked in!', 'success');
+        if (!todayMood) UI.toast("Attendance marked! 👇 Now mark how you're feeling today.", 'success');
+        else UI.toast('Attendance marked!', 'success');
         this.attendance(c);
       } catch (e) { UI.toast(e.message, 'error'); this.attendance(c); }
-    };
-    if (co) co.onclick = async () => {
-      try { const r = await api.post('/attendance/check-out'); UI.toast('Clocked out. ' + r.workHours + ' hrs worked (' + r.status + ').', 'success'); this.attendance(c); }
-      catch (e) { UI.toast(e.message, 'error'); }
     };
 
     document.getElementById('m').onchange = async (e) => {
@@ -216,12 +202,8 @@ const EmployeeViews = {
               </select>
             </div>
             <div class="field">
-              <label>Clock In <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
+              <label>Attendance Time <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
               <input type="time" id="req-in" style="width:100%" />
-            </div>
-            <div class="field">
-              <label>Clock Out <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
-              <input type="time" id="req-out" style="width:100%" />
             </div>
           </div>
 
@@ -266,7 +248,7 @@ const EmployeeViews = {
             date, type: m.root.querySelector('#req-type').value,
             requested_status: status,
             requested_in: m.root.querySelector('#req-in').value || null,
-            requested_out: m.root.querySelector('#req-out').value || null,
+            requested_out: null,
             reason,
           });
           m.close();
@@ -396,11 +378,8 @@ const EmployeeViews = {
   attTable(rows) {
     return UI.table([
       { key: 'date', label: 'Date', render: (r) => UI.date(r.date) },
-      { key: 'check_in', label: 'Clock In', render: (r) => UI.time(r.check_in) },
-      { key: 'check_out', label: 'Clock Out', render: (r) => UI.time(r.check_out) },
-      { key: 'work_hours', label: 'Hours', render: (r) => r.work_hours || '-' },
+      { key: 'check_in', label: 'Marked At', render: (r) => UI.time(r.check_in) },
       { key: 'late_minutes', label: 'Late', render: (r) => r.late_minutes ? r.late_minutes + 'm' : '-' },
-      { key: 'ot_hours', label: 'OT', render: (r) => r.ot_hours ? r.ot_hours + 'h' : '-' },
       { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
     ], rows, 'No attendance records for this month.');
   },
