@@ -22,7 +22,7 @@ const EmployeeViews = {
           <div class="section-title">Today's Attendance</div>
           <div class="pill-clock" id="clock">--:--</div>
           <div class="muted" style="margin:6px 0 14px">
-            ${checkedIn ? 'Attendance marked at ' + UI.time(a.check_in) : (windowClosed ? '<span style="color:var(--red)">Window closed (till ' + UI.esc(winState.cutoff) + '). Raise a request from My Attendance.</span>' : (winState.allDay ? 'Not marked yet — you can mark anytime today.' : 'Not marked yet (mark before ' + UI.esc(winState.cutoff) + ')'))}
+            ${checkedIn ? 'Attendance marked at ' + UI.time(a.check_in) + (a.late_minutes > 0 ? ' <span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700">⏰ Late by ' + a.late_minutes + ' min</span>' : '') : (windowClosed ? '<span style="color:var(--red)">Window closed (till ' + UI.esc(winState.cutoff) + '). Raise a request from My Attendance.</span>' : (winState.allDay ? 'Not marked yet — you can mark anytime today.' : 'Not marked yet (mark before ' + UI.esc(winState.cutoff) + ')'))}
           </div>
           <div class="btn-row">
             <button class="btn green" id="markatt" ${(checkedIn || windowClosed) ? 'disabled' : ''}>${checkedIn ? '✓ Attendance Marked' : 'Mark Attendance'}</button>
@@ -75,7 +75,8 @@ const EmployeeViews = {
     let statusLine;
     if (checkedIn) {
       statusLine = 'Attendance marked at <b>' + UI.time(a.check_in) + '</b>'
-        + (a.status ? ' &middot; Status: ' + UI.tag(a.status) : '');
+        + (a.status ? ' &middot; Status: ' + UI.tag(a.status) : '')
+        + (a.late_minutes > 0 ? ' &middot; <span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700">⏰ Late by ' + a.late_minutes + ' min</span>' : '');
     } else if (windowClosed) {
       statusLine = `<span style="color:var(--red)">Attendance window closed (you could mark until <b>${UI.esc(win.cutoff)}</b>). Use <b>Raise Attendance Request</b> below.</span>`;
     } else if (win.allDay) {
@@ -132,9 +133,10 @@ const EmployeeViews = {
     const mark = document.getElementById('markatt');
     if (mark) mark.onclick = async () => {
       try {
-        await api.post('/attendance/check-in');
-        if (!todayMood) UI.toast("Attendance marked! 👇 Now mark how you're feeling today.", 'success');
-        else UI.toast('Attendance marked!', 'success');
+        const r = await api.post('/attendance/check-in');
+        const lateMsg = r.lateMinutes > 0 ? ` ⏰ You're ${r.lateMinutes} min late.` : '';
+        if (!todayMood) UI.toast(`Attendance marked!${lateMsg} 👇 Now mark how you're feeling today.`, 'success');
+        else UI.toast(`Attendance marked!${lateMsg}`, 'success');
         this.attendance(c);
       } catch (e) { UI.toast(e.message, 'error'); this.attendance(c); }
     };

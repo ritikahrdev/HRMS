@@ -80,14 +80,17 @@ router.post('/check-in', requireLogin, (req, res) => {
     }
 
     const now = new Date().toISOString();
-    // Late minutes only matter for fixed hours. With flexible hours (window open
-    // all day), we don't flag anyone late — we just record their actual time.
+    // Marking is allowed all day, but anyone who marks after shift start + grace
+    // (e.g. 10:00 + 30 = 10:30) is flagged late. late_minutes = minutes past the
+    // shift start time; 0 if marked within the grace window.
+    const s = getSettings();
+    const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
+    const grace = Number(s.graceMinutes != null ? s.graceMinutes : 30);
+    const shiftStart = new Date(); shiftStart.setHours(ih || 0, im || 0, 0, 0);
+    const graceCutoff = new Date(shiftStart.getTime() + grace * 60000);
     let lateMin = 0;
-    if (!allDay) {
-      const s = getSettings();
-      const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
-      const startToday = new Date(); startToday.setHours(ih || 0, im || 0, 0, 0);
-      lateMin = Math.max(0, Math.round((new Date(now) - startToday) / 60000));
+    if (new Date(now) > graceCutoff) {
+      lateMin = Math.max(0, Math.round((new Date(now) - shiftStart) / 60000));
     }
 
     if (existing) db.prepare('UPDATE attendance SET check_in = ?, status = ?, late_minutes = ? WHERE id = ?').run(now, 'present', lateMin, existing.id);
