@@ -171,7 +171,7 @@ router.get('/day', requireLogin, (req, res) => {
     else if (a && a.check_in) status = 'present';
     else if (onLeave.has(e.id)) status = 'leave';
     else if (holiday) status = 'holiday';
-    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null };
+    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, marked: !!(a && a.check_in) };
   });
   const summary = { present: 0, half: 0, leave: 0, absent: 0, holiday: 0 };
   for (const l of list) summary[l.status] = (summary[l.status] || 0) + 1;
