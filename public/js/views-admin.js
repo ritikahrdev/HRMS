@@ -1320,7 +1320,8 @@ const AdminViews = {
         <div class="form-grid">
           <div class="field"><label>In Time (shift start)</label><input type="time" id="workStart" value="${UI.esc(s.workStart)}" /></div>
           <div class="field"><label>Out Time (shift end)</label><input type="time" id="workEnd" value="${UI.esc(s.workEnd)}" /></div>
-          <div class="field"><label>Clock-in grace (minutes)</label><input type="number" id="graceMinutes" value="${s.graceMinutes != null ? s.graceMinutes : 30}" /><span class="muted" style="font-size:12px">Employees can clock in until In&nbsp;Time + this many minutes. After that they must raise a request.</span></div>
+          <div class="field"><label>Clock-in grace (minutes)</label><input type="number" id="graceMinutes" value="${s.graceMinutes != null ? s.graceMinutes : 30}" /><span class="muted" style="font-size:12px">Used only when no explicit close time is set below: window = In&nbsp;Time + grace.</span></div>
+          <div class="field"><label>Attendance marking closes at</label><input type="time" id="attendanceCloseTime" value="${UI.esc(s.attendanceCloseTime || '')}" /><span class="muted" style="font-size:12px">Hard cut-off — after this time employees can't mark attendance and must raise a request. Leave blank to use In&nbsp;Time + grace.</span></div>
           <div class="field"><label>Full Day Hours (≥ = Present)</label><input type="number" step="0.5" id="fullDayHours" value="${s.fullDayHours}" /></div>
           <div class="field"><label>Half Day Hours (≥ = Half)</label><input type="number" step="0.5" id="halfDayHours" value="${s.halfDayHours}" /><span class="muted" style="font-size:12px">Below this many hours counts as Absent.</span></div>
           <div class="field"><label>Weekend Policy (note)</label><input id="weekendPolicy" value="${UI.esc(s.weekendPolicy)}" placeholder="e.g. sat-sun" /></div>
@@ -1445,6 +1446,7 @@ const AdminViews = {
         workStart: val('workStart'), workEnd: val('workEnd'), weekendPolicy: val('weekendPolicy'),
         attendanceSheetUrl: val('attendanceSheetUrl'),
         fullDayHours: Number(val('fullDayHours')), halfDayHours: Number(val('halfDayHours')), graceMinutes: Number(val('graceMinutes')),
+        attendanceCloseTime: val('attendanceCloseTime'),
         workingDays: Array.from(document.querySelectorAll('.wd:checked')).map((x) => Number(x.value)),
         leaveTypes: ltState.filter((t) => t.code && t.name),
         payrollClosingDay: Number(val('payrollClosingDay')),

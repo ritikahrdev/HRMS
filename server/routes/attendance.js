@@ -21,14 +21,22 @@ function myEmpId(req, res) {
   return id;
 }
 
-// The latest time an employee may clock in today = in-time + grace minutes.
+// The latest time an employee may mark attendance today.
+// If an explicit "attendanceCloseTime" (HH:MM) is set, that wins; otherwise
+// it's shift in-time + grace minutes.
 function clockInCutoff() {
   const s = getSettings();
-  const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
   const grace = Number(s.graceMinutes != null ? s.graceMinutes : 30);
   const cutoff = new Date();
-  cutoff.setHours(ih || 0, im || 0, 0, 0);
-  cutoff.setMinutes(cutoff.getMinutes() + grace);
+  const close = String(s.attendanceCloseTime || '').trim();
+  if (/^\d{1,2}:\d{2}$/.test(close)) {
+    const [ch, cm] = close.split(':').map(Number);
+    cutoff.setHours(ch || 0, cm || 0, 0, 0);
+  } else {
+    const [ih, im] = String(s.workStart || '10:00').split(':').map(Number);
+    cutoff.setHours(ih || 0, im || 0, 0, 0);
+    cutoff.setMinutes(cutoff.getMinutes() + grace);
+  }
   const label = `${pad(cutoff.getHours())}:${pad(cutoff.getMinutes())}`;
   return { cutoff, label, grace };
 }
