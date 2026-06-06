@@ -1317,11 +1317,27 @@ const AdminViews = {
       </div>
       <div class="card mt" style="max-width:760px">
         <div class="section-title">Attendance / Working Hours</div>
+
+        <!-- Dedicated, prominent attendance-cutoff control -->
+        <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:14px 16px;margin-bottom:18px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="font-size:22px">⏰</div>
+            <div style="flex:1;min-width:220px">
+              <div style="font-weight:700;font-size:14px;color:#5b21b6">Allowed attendance time (cut-off)</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:2px">Employees can mark attendance until this time. <b>After it, they can't mark directly</b> — they must raise an <b>Attendance Request</b> for admin approval.</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="time" id="attendanceCloseTime" value="${UI.esc(s.attendanceCloseTime || '')}" style="font-size:15px;padding:6px 10px" />
+              <button class="btn sm secondary" type="button" id="clearCutoff" title="Remove the cut-off (open all day)">Clear</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:8px">Leave blank for <b>no limit</b> — attendance stays open all day (flexible hours). Example: set <b>11:00</b> so anyone after 11:00 must raise a request.</div>
+        </div>
+
         <div class="form-grid">
           <div class="field"><label>In Time (shift start)</label><input type="time" id="workStart" value="${UI.esc(s.workStart)}" /></div>
           <div class="field"><label>Out Time (shift end)</label><input type="time" id="workEnd" value="${UI.esc(s.workEnd)}" /></div>
-          <div class="field"><label>Clock-in grace (minutes)</label><input type="number" id="graceMinutes" value="${s.graceMinutes != null ? s.graceMinutes : 30}" /><span class="muted" style="font-size:12px">Used to flag late arrivals against In&nbsp;Time. Does not close the window.</span></div>
-          <div class="field"><label>Attendance marking closes at</label><input type="time" id="attendanceCloseTime" value="${UI.esc(s.attendanceCloseTime || '')}" /><span class="muted" style="font-size:12px"><b>Leave blank = open all day</b> (flexible hours). Set a time only if you want a hard cut-off after which employees must raise a request.</span></div>
+          <div class="field"><label>Clock-in grace (minutes)</label><input type="number" id="graceMinutes" value="${s.graceMinutes != null ? s.graceMinutes : 30}" /><span class="muted" style="font-size:12px">After In&nbsp;Time + grace, marks are flagged <b>late</b> (they can still mark until the cut-off above).</span></div>
           <div class="field"><label>Full Day Hours (≥ = Present)</label><input type="number" step="0.5" id="fullDayHours" value="${s.fullDayHours}" /></div>
           <div class="field"><label>Half Day Hours (≥ = Half)</label><input type="number" step="0.5" id="halfDayHours" value="${s.halfDayHours}" /><span class="muted" style="font-size:12px">Below this many hours counts as Absent.</span></div>
           <div class="field"><label>Weekend Policy (note)</label><input id="weekendPolicy" value="${UI.esc(s.weekendPolicy)}" placeholder="e.g. sat-sun" /></div>
@@ -1435,6 +1451,9 @@ const AdminViews = {
     };
     renderLt();
     document.getElementById('addLt').onclick = () => { syncLt(); ltState.push({ code: '', name: '', quota: 0, paid: true }); renderLt(); };
+
+    const clearCutoff = document.getElementById('clearCutoff');
+    if (clearCutoff) clearCutoff.onclick = () => { const el = document.getElementById('attendanceCloseTime'); if (el) el.value = ''; };
 
     document.getElementById('save').onclick = async () => {
       syncLt();
