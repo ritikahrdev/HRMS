@@ -528,7 +528,7 @@ const AdminViews = {
           <div class="card" style="flex:1;min-width:120px;text-align:center">
             <div style="font-size:28px;font-weight:800;color:${punctuality.onTimeRate == null ? '#9ca3af' : (punctuality.onTimeRate >= 80 ? '#16a34a' : '#f97316')}">${punctuality.onTimeRate != null ? punctuality.onTimeRate + '%' : '—'}</div>
             <div class="muted" style="font-size:12px">⏰ On-Time Rate</div>
-            ${punctuality.late ? `<div style="font-size:10px;color:#9ca3af;margin-top:2px">${punctuality.late} late · avg ${punctuality.avgLateMin}m</div>` : ''}
+            ${punctuality.late ? `<div style="font-size:10px;color:#9ca3af;margin-top:2px">${punctuality.late} late · avg ${UI.duration(punctuality.avgLateMin)}</div>` : ''}
           </div>
           <div class="card" style="flex:1;min-width:120px;text-align:center">
             <div style="font-size:28px;font-weight:800;color:#7c3aed">${stats.avgWorkHours != null ? stats.avgWorkHours + 'h' : '—'}</div>

@@ -29,6 +29,17 @@ const UI = {
     return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   },
 
+  // Format a number of minutes as "1h 59m", "45m", or "2h".
+  duration(mins) {
+    const m = Math.max(0, Math.round(Number(mins) || 0));
+    if (m === 0) return '0m';
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    if (h && r) return `${h}h ${r}m`;
+    if (h) return `${h}h`;
+    return `${r}m`;
+  },
+
   tag(status) {
     const label = String(status || '').replace(/^\w/, (c) => c.toUpperCase());
     return `<span class="tag ${this.esc(status)}">${this.esc(label)}</span>`;
