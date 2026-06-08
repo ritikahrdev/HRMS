@@ -81,14 +81,15 @@ const UI = {
 
   closeModal() { document.getElementById('modal-root').innerHTML = ''; },
 
-  // Renders a table. columns: [{key, label, render?}]. rows: array of objects.
+  // Renders a table. columns: [{key, label, render?, sticky?}]. rows: array of objects.
+  // A column with sticky:true stays frozen on the left when scrolling sideways.
   table(columns, rows, emptyMsg = 'Nothing here yet.') {
     if (!rows || rows.length === 0) return `<div class="table-wrap"><div class="empty">${this.esc(emptyMsg)}</div></div>`;
-    const head = columns.map((c) => `<th>${this.esc(c.label)}</th>`).join('');
+    const head = columns.map((c) => `<th${c.sticky ? ' class="sticky-col"' : ''}>${this.esc(c.label)}</th>`).join('');
     const body = rows.map((r) => {
       const tds = columns.map((c) => {
         const v = c.render ? c.render(r) : this.esc(r[c.key]);
-        return `<td>${v == null ? '' : v}</td>`;
+        return `<td${c.sticky ? ' class="sticky-col"' : ''}>${v == null ? '' : v}</td>`;
       }).join('');
       return `<tr>${tds}</tr>`;
     }).join('');

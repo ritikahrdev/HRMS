@@ -209,6 +209,18 @@ tbody tr:nth-child(even) { background: #fcfcfe; }
 tbody tr:hover { background: var(--primary-soft); }
 tr:last-child td { border-bottom: none; }
 
+/* ---------- Frozen (sticky) column ---------- */
+/* A column marked sticky stays pinned to the left while scrolling sideways. */
+th.sticky-col, td.sticky-col {
+  position: sticky;
+  left: 0;
+  box-shadow: 1px 0 0 var(--border);   /* divider line on the right edge */
+}
+td.sticky-col { background: #fff; z-index: 1; }
+th.sticky-col { background: #f8fafc; z-index: 3; }            /* above other headers + cells */
+tbody tr:nth-child(even) td.sticky-col { background: #fcfcfe; }
+tbody tr:hover td.sticky-col { background: var(--primary-soft); }
+
 /* ---------- Badges ---------- */
 .tag { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
 .tag.present, .tag.approved, .tag.active { background: #dcfce7; color: #166534; }

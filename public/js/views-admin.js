@@ -183,8 +183,8 @@ const AdminViews = {
 
     const render = (rows) => {
       document.getElementById('list').innerHTML = UI.table([
+        { key: 'name', label: 'Name', sticky: true },
         { key: 'emp_code', label: 'Code' },
-        { key: 'name', label: 'Name' },
         { key: 'department', label: 'Dept', render: (r) => UI.esc(r.department || '-') },
         { key: 'designation', label: 'Designation', render: (r) => UI.esc(r.designation || '-') },
         { key: 'role', label: 'Role', render: (r) => UI.esc((r.role || 'EMPLOYEE').replace('_', ' ')) },
