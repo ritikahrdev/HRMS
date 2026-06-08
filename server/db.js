@@ -367,6 +367,18 @@ if (!hasColumn('employees', 'slack_id')) db.exec('ALTER TABLE employees ADD COLU
 if (!hasColumn('employees', 'manager_id')) {
   db.exec('ALTER TABLE employees ADD COLUMN manager_id INTEGER');
 }
+// Extended employee profile columns (full HR roster import).
+for (const col of [
+  'personal_email', 'permanent_address', 'current_address', 'date_of_confirmation',
+  'permission_role', 'work_mode', 'employee_type', 'office_address', 'latitude', 'longitude',
+  'shift_timing', 'break_type', 'allowances', 'overtime_allowed', 'overtime_hours',
+  'bank_holder_name', 'bank_name', 'marital_status', 'nationality', 'languages_known',
+]) {
+  if (!hasColumn('employees', col)) db.exec(`ALTER TABLE employees ADD COLUMN ${col} TEXT`);
+}
+for (const col of ['leave_earned', 'leave_casual', 'leave_comp_off']) {
+  if (!hasColumn('employees', col)) db.exec(`ALTER TABLE employees ADD COLUMN ${col} REAL`);
+}
 // Attendance correction enhancements
 if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
 // Work-from-home flag (set when attendance comes from a Slack "WFH" message)
