@@ -170,6 +170,11 @@ const AdminViews = {
     let employees = (await api.get('/employees')).employees;
 
     c.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+        <div class="section-title" style="margin:0">👥 Employees</div>
+        <button class="btn sm secondary" id="toggle-stats">📊 Show Stats</button>
+      </div>
+      <div id="emp-stats" style="display:none"></div>
       <div class="toolbar">
         <input id="search" placeholder="Search name / code / dept..." />
         <div class="spacer"></div>
@@ -180,6 +185,21 @@ const AdminViews = {
       </div>
       <div id="archived-note"></div>
       <div id="list"></div>`;
+
+    // Workforce stats panel (lazy-loaded on first open)
+    let statsLoaded = false;
+    document.getElementById('toggle-stats').onclick = async (e) => {
+      const panel = document.getElementById('emp-stats');
+      const open = panel.style.display === 'none';
+      panel.style.display = open ? 'block' : 'none';
+      e.target.textContent = open ? '📊 Hide Stats' : '📊 Show Stats';
+      if (open && !statsLoaded) {
+        panel.innerHTML = '<div class="muted" style="margin:10px 0">Loading stats…</div>';
+        const s = await api.get('/employees/stats').catch(() => null);
+        panel.innerHTML = s ? this.employeeStatsHtml(s) : '<div class="muted">Could not load stats.</div>';
+        statsLoaded = true;
+      }
+    };
 
     const render = (rows) => {
       document.getElementById('list').innerHTML = UI.table([
@@ -266,6 +286,59 @@ const AdminViews = {
     document.getElementById('add').onclick = () => this.employeeForm(c, null);
     document.getElementById('search').oninput = applySearch;
     document.getElementById('show-archived').onchange = (e) => { showArchived = e.target.checked; reload(); };
+  },
+
+  // Renders the workforce statistics panel.
+  employeeStatsHtml(s) {
+    const COLORS = ['#4f46e5', '#16a34a', '#f59e0b', '#ef4444', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6', '#84cc16', '#f97316'];
+    const card = (label, value, color) => `
+      <div class="card" style="flex:1;min-width:120px;text-align:center">
+        <div style="font-size:26px;font-weight:800;color:${color}">${value}</div>
+        <div class="muted" style="font-size:12px">${label}</div>
+      </div>`;
+
+    // Horizontal bar breakdown for a grouped list.
+    const breakdown = (title, rows) => {
+      const total = rows.reduce((a, b) => a + b.count, 0) || 1;
+      return `
+        <div class="card" style="flex:1;min-width:240px">
+          <div style="font-weight:700;margin-bottom:12px">${title}</div>
+          ${rows.length ? rows.map((r, i) => {
+            const pct = Math.round((r.count / total) * 100);
+            const clr = COLORS[i % COLORS.length];
+            return `<div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+                <span style="font-weight:600">${UI.esc(r.label)}</span>
+                <span style="color:#6b7280">${r.count} <span style="color:#9ca3af">(${pct}%)</span></span>
+              </div>
+              <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:${clr};border-radius:4px"></div>
+              </div>
+            </div>`;
+          }).join('') : '<div class="muted" style="font-size:13px">No data.</div>'}
+        </div>`;
+    };
+
+    return `
+      <div style="margin:6px 0 18px">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+          ${card('Active Headcount', s.totalActive, '#4f46e5')}
+          ${card('Managers', s.managers, '#16a34a')}
+          ${card('New This Month', s.newThisMonth, '#0ea5e9')}
+          ${card('New This Year', s.newThisYear, '#a855f7')}
+          ${card('With Login', s.withLogin, '#f59e0b')}
+          ${card('Archived', s.totalArchived, '#9ca3af')}
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px">
+          ${breakdown('🏢 By Department', s.byDepartment)}
+          ${breakdown('💼 By Employee Type', s.byType)}
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+          ${breakdown('⚧ By Gender', s.byGender)}
+          ${breakdown('🏠 By Work Mode', s.byWorkMode)}
+          ${breakdown('🩸 By Blood Group', s.byBloodGroup)}
+        </div>
+      </div>`;
   },
 
   async employeeForm(c, emp) {

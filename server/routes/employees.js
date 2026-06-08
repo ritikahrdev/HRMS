@@ -29,6 +29,42 @@ router.get('/', requirePerm('employees:read'), (req, res) => {
   res.json({ employees: db.prepare(sql).all() });
 });
 
+// Workforce statistics (active employees, with overall counts).
+router.get('/stats', requirePerm('employees:read'), (req, res) => {
+  const W = "status = 'active'";
+  const groupCount = (col) => db.prepare(
+    `SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'Not set') AS label, COUNT(*) AS count
+     FROM employees WHERE ${W} GROUP BY label ORDER BY count DESC, label`
+  ).all();
+
+  const totalActive = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W}`).get().n;
+  const totalArchived = db.prepare("SELECT COUNT(*) AS n FROM employees WHERE status='archived'").get().n;
+  const managers = db.prepare(
+    `SELECT COUNT(DISTINCT manager_id) AS n FROM employees WHERE ${W} AND manager_id IS NOT NULL`
+  ).get().n;
+  const withLogin = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND user_id IS NOT NULL`).get().n;
+
+  // New joiners this month + this year.
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const newThisMonth = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND substr(date_of_joining,1,7) = ?`).get(ym).n;
+  const newThisYear = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND substr(date_of_joining,1,4) = ?`).get(String(now.getFullYear())).n;
+
+  res.json({
+    totalActive,
+    totalArchived,
+    managers,
+    withLogin,
+    newThisMonth,
+    newThisYear,
+    byDepartment: groupCount('department'),
+    byType: groupCount('employee_type'),
+    byGender: groupCount('gender'),
+    byWorkMode: groupCount('work_mode'),
+    byBloodGroup: groupCount('blood_group'),
+  });
+});
+
 // Staff directory — any logged-in user sees safe contact fields of active staff.
 router.get('/directory', requireLogin, (req, res) => {
   const rows = db.prepare(
