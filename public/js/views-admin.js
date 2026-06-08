@@ -1740,7 +1740,14 @@ const AdminViews = {
     const canSeeId = App.has('employees:read');
     const stChip = (d) => d.status === 'verified' ? '<span class="tag approved">✓ Verified</span>'
       : (d.status === 'rejected' ? '<span class="tag rejected">✗ Rejected</span>' : '<span class="tag pending">⏳ Pending review</span>');
-    const vActions = (id) => canVerify ? ` <button class="btn sm green" data-verify="${id}" title="Mark verified">✓</button> <button class="btn sm red" data-reject="${id}" title="Reject">✗</button>` : '';
+    // Only show verify/reject controls while a document still needs a decision.
+    // Verified docs need no action; rejected docs can be re-verified.
+    const vActions = (d) => {
+      if (!canVerify) return '';
+      if (d.status === 'verified') return '';
+      if (d.status === 'rejected') return ` <button class="btn sm green" data-verify="${d.id}" title="Mark verified">✓ Verify</button>`;
+      return ` <button class="btn sm green" data-verify="${d.id}" title="Mark verified">✓ Verify</button> <button class="btn sm red" data-reject="${d.id}" title="Reject">✗ Reject</button>`;
+    };
 
     const load = async () => {
       const { documents } = await api.get(`/employees/${employeeId}/documents`);
@@ -1752,11 +1759,11 @@ const AdminViews = {
       const checklist = required.map((t) => {
         const doc = byType[t];
         if (!doc) return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div><span class="tag rejected">Missing</span></div><div class="doc-act"><label class="btn sm">Upload<input type="file" class="reqfile" data-type="${UI.esc(t)}" style="display:none"/></label></div></div>`;
-        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${stChip(doc)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${doc.id}/file" target="_blank">View</a>${vActions(doc.id)} <button class="btn sm secondary" data-del="${doc.id}">✕</button></div></div>`;
+        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${stChip(doc)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${doc.id}/file" target="_blank">View</a>${vActions(doc)} <button class="btn sm secondary" data-del="${doc.id}">✕</button></div></div>`;
       }).join('');
 
       const others = documents.filter((d) => !required.includes(d.doc_type));
-      const otherRows = others.map((d) => `<div class="doc-row"><div class="doc-name">${UI.esc(d.title || d.doc_type || 'Document')}<br/><span class="muted" style="font-size:11px;font-weight:400">${UI.date(d.uploaded_at)}</span></div><div>${stChip(d)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${d.id}/file" target="_blank">View</a>${vActions(d.id)} <button class="btn sm secondary" data-del="${d.id}">✕</button></div></div>`).join('');
+      const otherRows = others.map((d) => `<div class="doc-row"><div class="doc-name">${UI.esc(d.title || d.doc_type || 'Document')}<br/><span class="muted" style="font-size:11px;font-weight:400">${UI.date(d.uploaded_at)}</span></div><div>${stChip(d)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${d.id}/file" target="_blank">View</a>${vActions(d)} <button class="btn sm secondary" data-del="${d.id}">✕</button></div></div>`).join('');
 
       // Identity checks (number validity + duplicates) — staff only.
       let idPanel = '';
