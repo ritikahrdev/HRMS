@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+data
+*.md
+.vscode
+.idea
+run-hrms-hidden.vbs
+start-hrms-server.bat
+start.bat

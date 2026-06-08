@@ -53,12 +53,15 @@ const config = {
   },
 };
 
-// File paths
+// File paths.
+// DATA_DIR lets you point the database + uploads at a mounted persistent
+// volume in production (e.g. /data on Render/Railway/Fly). Defaults to ./data.
+const dataDir = process.env.DATA_DIR || path.join(root, 'data');
 config.paths = {
   root,
-  data: path.join(root, 'data'),
-  uploads: process.env.UPLOAD_DIR || path.join(root, 'data', 'uploads'),
-  db: process.env.DATABASE_PATH || path.join(root, 'data', 'hr.db'),
+  data: dataDir,
+  uploads: process.env.UPLOAD_DIR || path.join(dataDir, 'uploads'),
+  db: process.env.DATABASE_PATH || path.join(dataDir, 'hr.db'),
 };
 
 // Create required directories
