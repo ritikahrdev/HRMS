@@ -15,6 +15,20 @@ const DEFAULT_TASKS = [
   'Read employee handbook',
 ];
 
+// Onboarding overview: every active employee with their checklist progress,
+// newest joiners first. Powers the dedicated Onboarding section.
+router.get('/', requirePerm('employees:write'), (req, res) => {
+  const rows = db.prepare(`
+    SELECT e.id, e.name, e.department, e.designation, e.date_of_joining, e.status,
+      (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id) AS total,
+      (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id AND t.done = 1) AS done
+    FROM employees e
+    WHERE e.status = 'active'
+    ORDER BY (e.date_of_joining IS NULL), e.date_of_joining DESC, e.id DESC
+  `).all();
+  res.json({ employees: rows });
+});
+
 // View an employee's onboarding checklist (self or manager/HR).
 router.get('/:employeeId', requireLogin, (req, res) => {
   if (!canActOnEmployee(req, req.params.employeeId)) return res.status(403).json({ error: 'No access.' });

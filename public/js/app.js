@@ -47,6 +47,7 @@ const App = {
     if (isManager) push('Admin', '#/team', 'My Team', () => AdminViews.team(c()));
     if (this.has('employees:write')) push('Admin', '#/import', 'Import Excel', () => AdminViews.import(c()));
     if (this.has('recruitment:manage') && this.modOn('recruitment')) push('Admin', '#/recruitment', 'Recruitment', () => AdminViews.recruitment(c()));
+    if (this.has('employees:write')) push('Admin', '#/onboarding', 'Onboarding', () => AdminViews.onboarding(c()));
     if (this.has('attendance:viewAll') || this.has('attendance:viewTeam')) push('Admin', '#/attendance', 'Attendance', () => AdminViews.attendance(c()));
     if (this.has('attendance:correct')) push('Admin', '#/corrections', 'Attendance Requests', () => AdminViews.corrections(c()));
     if (this.has('leave:approve')) push('Admin', '#/leave-approvals', 'Leave Approvals', () => AdminViews.leave(c()));
@@ -76,7 +77,7 @@ const App = {
     '#/my-payslips': '💸', '#/profile': '👤',
     '#/directory': '📒', '#/notices': '📢', '#/holidays': '📅', '#/recognition': '🏆',
     '#/performance': '🎯', '#/surveys': '📝', '#/helpdesk': '🎧',
-    '#/employees': '👥', '#/team': '🧑‍🤝‍🧑', '#/import': '📥', '#/attendance': '🕒',
+    '#/employees': '👥', '#/team': '🧑‍🤝‍🧑', '#/import': '📥', '#/onboarding': '🚀', '#/attendance': '🕒',
     '#/corrections': '✏️', '#/leave-approvals': '✅', '#/leave-calendar': '📆',
     '#/reimb-approvals': '💳', '#/payroll': '💰', '#/loans': '🏦', '#/assets': '💻',
     '#/inventory': '📦', '#/happiness': '💛', '#/reports': '📊', '#/settings': '⚙️',

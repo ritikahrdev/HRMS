@@ -2818,8 +2818,86 @@ const AdminViews = {
     return UI.table(cols, tickets, tickets.length === 0 ? '📭 No tickets in this category.' : '');
   },
 
+  // ---------------- Onboarding section (dedicated page) ----------------
+  async onboarding(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    const { employees } = await api.get('/onboarding');
+    const statusOf = (e) => (e.total === 0 ? 'notstarted' : (e.done >= e.total ? 'done' : 'inprogress'));
+    const pct = (e) => (e.total ? Math.round((e.done / e.total) * 100) : 0);
+    const now = new Date();
+    const daysSince = (d) => { if (!d) return Infinity; return Math.floor((now - new Date(d + 'T00:00:00')) / 86400000); };
+    const newThisMonth = employees.filter((e) => daysSince(e.date_of_joining) <= 31).length;
+    const inProg = employees.filter((e) => statusOf(e) === 'inprogress').length;
+    const notStarted = employees.filter((e) => statusOf(e) === 'notstarted').length;
+    const completed = employees.filter((e) => statusOf(e) === 'done').length;
+    const tile = (label, val, color) => `<div class="card" style="flex:1;min-width:120px;text-align:center;margin:0"><div style="font-size:26px;font-weight:700;color:${color}">${val}</div><div class="muted" style="font-size:12px">${label}</div></div>`;
+
+    c.innerHTML = `
+      <div class="toolbar"><div class="section-title" style="margin:0">🚀 Onboarding</div><div class="spacer"></div>
+        <input id="obSearch" placeholder="Search name / department" style="max-width:220px" />
+        <select id="obFilter">
+          <option value="attention">Needs attention</option>
+          <option value="all">All employees</option>
+          <option value="notstarted">Not started</option>
+          <option value="inprogress">In progress</option>
+          <option value="done">Completed</option>
+        </select>
+      </div>
+      <p class="muted" style="margin-top:-4px">Track every new hire's checklist and account setup in one place. Open a person to tick tasks or notify managers/IT to create their accounts.</p>
+      <div class="btn-row" style="gap:10px;margin:12px 0 16px;align-items:stretch">
+        ${tile('Joined this month', newThisMonth, '#2563eb')}
+        ${tile('In progress', inProg, '#d97706')}
+        ${tile('Not started', notStarted, '#dc2626')}
+        ${tile('Completed', completed, '#16a34a')}
+      </div>
+      <div id="obTable"></div>`;
+
+    const reload = () => AdminViews.onboarding(c);
+    const badge = (e) => {
+      const s = statusOf(e);
+      if (s === 'done') return '<span class="tag" style="background:#dcfce7;color:#166534">Completed</span>';
+      if (s === 'inprogress') return '<span class="tag" style="background:#fef3c7;color:#92400e">In progress</span>';
+      return '<span class="tag" style="background:#fee2e2;color:#991b1b">Not started</span>';
+    };
+    const bar = (e) => {
+      const p = pct(e);
+      return `<div style="display:flex;align-items:center;gap:8px;min-width:150px"><div style="flex:1;height:8px;background:#e5e7eb;border-radius:6px;overflow:hidden"><div style="width:${p}%;height:100%;background:${p === 100 ? '#16a34a' : '#2563eb'}"></div></div><span class="muted" style="font-size:11px;white-space:nowrap">${e.done}/${e.total || 0}</span></div>`;
+    };
+    const renderTable = () => {
+      const q = (document.getElementById('obSearch').value || '').toLowerCase();
+      const f = document.getElementById('obFilter').value;
+      let rows = employees.filter((e) => !q || (e.name || '').toLowerCase().includes(q) || (e.department || '').toLowerCase().includes(q));
+      if (f === 'notstarted') rows = rows.filter((e) => statusOf(e) === 'notstarted');
+      else if (f === 'inprogress') rows = rows.filter((e) => statusOf(e) === 'inprogress');
+      else if (f === 'done') rows = rows.filter((e) => statusOf(e) === 'done');
+      else if (f === 'attention') rows = rows.filter((e) => statusOf(e) !== 'done');
+      document.getElementById('obTable').innerHTML = UI.table([
+        { key: 'name', label: 'Employee', sticky: true, render: (e) => `<b>${UI.esc(e.name)}</b>${e.designation ? `<br><span class="muted" style="font-size:11px">${UI.esc(e.designation)}</span>` : ''}` },
+        { key: 'department', label: 'Department', render: (e) => UI.esc(e.department || '—') },
+        { key: 'doj', label: 'Joined', render: (e) => (e.date_of_joining ? UI.esc(e.date_of_joining) : '—') },
+        { key: 'progress', label: 'Progress', render: bar },
+        { key: 'status', label: 'Status', render: badge },
+        { key: 'actions', label: '', render: (e) => (e.total === 0
+          ? `<button class="btn sm" data-start="${e.id}">Start onboarding</button>`
+          : `<button class="btn sm secondary" data-open="${e.id}">Open checklist</button>`) },
+      ], rows, 'No employees match this filter.');
+      document.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => {
+        const e = employees.find((x) => x.id == b.dataset.open);
+        AdminViews.onboardingModal(e.id, e.name, reload);
+      });
+      document.querySelectorAll('[data-start]').forEach((b) => b.onclick = async () => {
+        const e = employees.find((x) => x.id == b.dataset.start);
+        try { await api.post('/onboarding/' + e.id + '/template'); UI.toast('Onboarding started — checklist added & managers notified.', 'success'); reload(); }
+        catch (err) { UI.toast(err.message, 'error'); }
+      });
+    };
+    document.getElementById('obSearch').oninput = renderTable;
+    document.getElementById('obFilter').onchange = renderTable;
+    renderTable();
+  },
+
   // ---------------- Onboarding checklist (modal) ----------------
-  async onboardingModal(employeeId, name) {
+  async onboardingModal(employeeId, name, onClose) {
     const m = UI.modal({
       title: 'Onboarding — ' + (name || ''),
       bodyHtml: `<div id="ob" class="muted">Loading...</div>
@@ -2832,7 +2910,12 @@ const AdminViews = {
         </div>`,
       footHtml: `<button class="btn secondary" data-close-btn>Close</button>`,
     });
-    m.root.querySelector('[data-close-btn]').onclick = m.close;
+    // Run onClose (e.g. refresh the Onboarding list) on every way of closing.
+    const closeAnd = () => { m.close(); if (onClose) onClose(); };
+    m.root.querySelector('[data-close-btn]').onclick = closeAnd;
+    m.root.querySelector('[data-close]').onclick = closeAnd;
+    const overlay = m.root.querySelector('[data-overlay]');
+    if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay && onClose) onClose(); });
     const load = async () => {
       const { tasks } = await api.get('/onboarding/' + employeeId);
       const done = tasks.filter((t) => t.done).length;
