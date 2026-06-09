@@ -481,6 +481,9 @@ db.exec("UPDATE users SET role='EMPLOYEE' WHERE role='employee'");
 
 // ---- Seed default settings -------------------------------------------------
 const defaultSettings = {
+  // Attendance webhook secret (auto-generated; trusted systems send it in the
+  // X-Webhook-Secret header). Override with the ATTENDANCE_WEBHOOK_SECRET env var.
+  webhookSecret: require('crypto').randomBytes(24).toString('hex'),
   // Company
   companyName: 'My Company',
   legalName: '',

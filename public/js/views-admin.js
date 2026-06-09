@@ -1498,10 +1498,72 @@ const AdminViews = {
         </div>
         <p class="muted" style="font-size:12px;margin-top:10px"><b>Real-time:</b> point your Slack app's Event Subscription Request URL to <code>YOUR_PUBLIC_URL/api/slack/events</code> (subscribe to <code>message.channels</code>). For manual pull, use <b>Attendance → Import → Sync from Slack</b>. Employees are matched by Slack email = HR email, or a Slack ID on the employee.</p>
       </div>
+
+      <div class="card mt" style="max-width:760px">
+        <div class="section-title">🔗 Attendance Webhook (for trusted systems)</div>
+        <p class="muted" style="font-size:12px">Let an external system push attendance straight into HRMS. It must send a <code>POST</code> with the secret below in the <code>X-Webhook-Secret</code> header. Re-sending for the same person + day updates the existing record (no duplicates).</p>
+        <div class="field">
+          <label>Endpoint URL</label>
+          <div class="btn-row" style="align-items:center">
+            <input id="whUrl" readonly value="${UI.esc((window.location.origin) + '/api/webhook/attendance')}" />
+            <button class="btn sm" type="button" id="whCopyUrl">Copy</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Webhook Secret</label>
+          <div class="btn-row" style="align-items:center">
+            <input id="whSecret" readonly type="password" value="${UI.esc(s.webhookSecret || '')}" />
+            <button class="btn sm" type="button" id="whShow">Show</button>
+            <button class="btn sm" type="button" id="whCopySecret">Copy</button>
+            <button class="btn sm red" type="button" id="whRegen">Regenerate</button>
+          </div>
+          <p class="muted" style="font-size:11px;margin-top:4px">Keep this private. Regenerating immediately invalidates the old secret.</p>
+        </div>
+        <div class="field">
+          <label>Example payload</label>
+          <pre style="background:#0d1117;color:#c9d1d9;padding:10px;border-radius:6px;overflow:auto;font-size:12px;margin:0">{
+  "name": "Ankit Singh Rawat",
+  "status": "WFH",
+  "time": "2026-06-09T10:00:00Z"
+}</pre>
+          <p class="muted" style="font-size:11px;margin-top:6px">Statuses: <code>Present</code>, <code>Absent</code>, <code>WFH</code>, <code>Holiday</code>. Responses: <code>200</code> success · <code>401</code> bad secret · <code>404</code> unknown employee · <code>400</code> bad payload.</p>
+        </div>
+      </div>
+
       <div class="btn-row mt"><button class="btn" id="save">Save Settings</button></div>
       ${App.user.role === 'SUPER_ADMIN' ? '<div id="accessCard" class="mt"></div>' : ''}`;
 
     if (App.user.role === 'SUPER_ADMIN') this.accessControlCard();
+
+    // ----- Attendance webhook card -----
+    const whSecret = document.getElementById('whSecret');
+    const copyText = async (text, msg) => {
+      try { await navigator.clipboard.writeText(text); UI.toast(msg, 'success'); }
+      catch { UI.toast('Copy failed — select and copy manually.', 'error'); }
+    };
+    const whCopyUrl = document.getElementById('whCopyUrl');
+    if (whCopyUrl) whCopyUrl.onclick = () => copyText(document.getElementById('whUrl').value, 'Endpoint URL copied.');
+    const whCopySecret = document.getElementById('whCopySecret');
+    if (whCopySecret) whCopySecret.onclick = () => copyText(whSecret.value, 'Secret copied.');
+    const whShow = document.getElementById('whShow');
+    if (whShow) whShow.onclick = () => {
+      const hidden = whSecret.type === 'password';
+      whSecret.type = hidden ? 'text' : 'password';
+      whShow.textContent = hidden ? 'Hide' : 'Show';
+    };
+    const whRegen = document.getElementById('whRegen');
+    if (whRegen) whRegen.onclick = async () => {
+      if (!confirm('Generate a new secret? Any system using the current secret will stop working until you give it the new one.')) return;
+      const bytes = new Uint8Array(24);
+      (window.crypto || window.msCrypto).getRandomValues(bytes);
+      const next = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+      try {
+        await api.put('/settings', { webhookSecret: next });
+        whSecret.value = next; whSecret.type = 'text';
+        if (whShow) whShow.textContent = 'Hide';
+        UI.toast('New webhook secret generated.', 'success');
+      } catch (e) { UI.toast(e.message, 'error'); }
+    };
 
     document.getElementById('logo').onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;
