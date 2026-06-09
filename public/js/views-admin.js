@@ -1368,6 +1368,9 @@ const AdminViews = {
     ]).map((t) => ({ code: t.code, name: t.name, quota: t.quota || 0, paid: t.paid !== false }));
     const days = [['1', 'Mon'], ['2', 'Tue'], ['3', 'Wed'], ['4', 'Thu'], ['5', 'Fri'], ['6', 'Sat'], ['0', 'Sun']];
     const wd = s.workingDays || [];
+    const da = s.departmentAccounts || {};
+    const daKeys = ['default', ...Object.keys(da).filter((k) => k.toLowerCase() !== 'default')];
+    const daText = daKeys.map((k) => `${k}: ${(da[k] || []).join(', ')}`).join('\n');
     c.innerHTML = `
       <div class="card" style="max-width:760px">
         <div class="section-title">Company</div>
@@ -1500,6 +1503,14 @@ const AdminViews = {
       </div>
 
       <div class="card mt" style="max-width:760px">
+        <div class="section-title">🔐 Account provisioning by department</div>
+        <p class="muted" style="font-size:12px">When a new hire is onboarded, their manager and HR/IT get an alert to create these accounts, and the items are added to the onboarding checklist. One department per line as <code>Department: account1, account2, …</code>. The <code>default</code> line is used for any department not listed.</p>
+        <div class="field">
+          <textarea id="departmentAccounts" rows="9" style="font-family:monospace;font-size:12px;white-space:pre">${UI.esc(daText)}</textarea>
+        </div>
+      </div>
+
+      <div class="card mt" style="max-width:760px">
         <div class="section-title">🔗 Attendance Webhook (for trusted systems)</div>
         <p class="muted" style="font-size:12px">Let an external system push attendance straight into HRMS. It must send a <code>POST</code> with the secret below in the <code>X-Webhook-Secret</code> header. Re-sending for the same person + day updates the existing record (no duplicates).</p>
         <div class="field">
@@ -1615,6 +1626,15 @@ const AdminViews = {
         payrollClosingDay: Number(val('payrollClosingDay')),
         requiredDocs: val('requiredDocs').split('\n').map((x) => x.trim()).filter(Boolean),
         uidaiCert: val('uidaiCert').trim(),
+        departmentAccounts: (() => {
+          const out = {};
+          val('departmentAccounts').split('\n').forEach((line) => {
+            const i = line.indexOf(':'); if (i < 0) return;
+            const dept = line.slice(0, i).trim(); if (!dept) return;
+            out[dept] = line.slice(i + 1).split(',').map((x) => x.trim()).filter(Boolean);
+          });
+          return out;
+        })(),
         payroll: {
           perDayBasis: val('perDayBasis'),
           deductAbsent: document.getElementById('deductAbsent').checked,
@@ -2803,7 +2823,13 @@ const AdminViews = {
     const m = UI.modal({
       title: 'Onboarding — ' + (name || ''),
       bodyHtml: `<div id="ob" class="muted">Loading...</div>
-        <div class="btn-row mt"><input id="newtask" placeholder="New task" /><button class="btn secondary" id="addtask">Add</button><button class="btn secondary" id="template">Use default checklist</button></div>`,
+        <div class="btn-row mt"><input id="newtask" placeholder="New task" /><button class="btn secondary" id="addtask">Add</button><button class="btn secondary" id="template">Use default checklist</button></div>
+        <div id="acctSetup" class="card" style="margin-top:14px;background:#f8fafc">
+          <div class="section-title" style="font-size:14px">🔐 Account provisioning</div>
+          <div id="acctList" class="muted" style="font-size:12px">Loading department accounts…</div>
+          <div class="btn-row mt"><button class="btn" id="notifyAccounts">📨 Notify managers to create accounts</button></div>
+          <p class="muted" style="font-size:11px;margin:6px 0 0">Sends the new hire's manager and HR/IT an in-app alert listing the accounts to create, and adds them to the checklist above. Set up by department in <b>Settings → Account provisioning</b>.</p>
+        </div>`,
       footHtml: `<button class="btn secondary" data-close-btn>Close</button>`,
     });
     m.root.querySelector('[data-close-btn]').onclick = m.close;
@@ -2815,14 +2841,25 @@ const AdminViews = {
       m.root.querySelectorAll('[data-task]').forEach((el) => el.onchange = async () => { try { await api.put('/onboarding/task/' + el.dataset.task, { done: el.checked }); load(); } catch (e) { UI.toast(e.message, 'error'); } });
       m.root.querySelectorAll('[data-tdel]').forEach((b) => b.onclick = async () => { try { await api.request('DELETE', '/onboarding/task/' + b.dataset.tdel); load(); } catch (e) { UI.toast(e.message, 'error'); } });
     };
+    const loadAccounts = async () => {
+      try {
+        const { department, accounts } = await api.get('/onboarding/' + employeeId + '/account-setup');
+        m.root.querySelector('#acctList').innerHTML = `Department: <b>${UI.esc(department)}</b><br/>Accounts required: ${accounts.length ? accounts.map((a) => `<span class="tag" style="margin:2px 2px 0 0">${UI.esc(a)}</span>`).join('') : '<i>none configured</i>'}`;
+      } catch (e) { m.root.querySelector('#acctList').textContent = e.message; }
+    };
     m.root.querySelector('#addtask').onclick = async () => {
       const title = m.root.querySelector('#newtask').value.trim(); if (!title) return;
       try { await api.post('/onboarding/' + employeeId, { title }); m.root.querySelector('#newtask').value = ''; load(); } catch (e) { UI.toast(e.message, 'error'); }
     };
     m.root.querySelector('#template').onclick = async () => {
-      try { await api.post('/onboarding/' + employeeId + '/template'); UI.toast('Default checklist added.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); }
+      try { await api.post('/onboarding/' + employeeId + '/template'); UI.toast('Default checklist added & managers notified.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); }
+    };
+    m.root.querySelector('#notifyAccounts').onclick = async () => {
+      try { const r = await api.post('/onboarding/' + employeeId + '/account-setup'); UI.toast(`Notified ${r.notified} manager(s)/admin(s) · ${r.tasksAdded} task(s) added.`, 'success'); load(); }
+      catch (e) { UI.toast(e.message, 'error'); }
     };
     load();
+    loadAccounts();
   },
 
   // ---------------- Recruitment (ATS): jobs list ----------------

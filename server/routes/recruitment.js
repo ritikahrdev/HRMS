@@ -6,6 +6,7 @@ const config = require('../config');
 const { requirePerm } = require('../middleware/auth');
 const { upload } = require('../services/upload');
 const { createEmployee } = require('../services/employees');
+const { provisionAccountsForOnboarding } = require('../services/accountSetup');
 
 const router = express.Router();
 const P = requirePerm('recruitment:manage');
@@ -158,7 +159,9 @@ router.post('/applicants/:id/hire', P, (req, res) => {
     const ins = db.prepare('INSERT INTO onboarding_tasks (employee_id, title, position) VALUES (?, ?, ?)');
     ONBOARDING.forEach((t, i) => ins.run(employee.id, t, i + 1));
     db.prepare("UPDATE applicants SET stage='hired' WHERE id=?").run(a.id);
-    res.json({ ok: true, employeeId: employee.id, tempPassword });
+    // Notify managers/IT to create the department's required accounts.
+    const accountSetup = provisionAccountsForOnboarding(employee.id, req.session.user.id);
+    res.json({ ok: true, employeeId: employee.id, tempPassword, accountSetup });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

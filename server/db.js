@@ -517,6 +517,29 @@ const defaultSettings = {
     'Two contact numbers for reference check',
     'Emergency contact number',
   ],
+  // Onboarding → account provisioning. When a new hire is onboarded, the
+  // managers / account creators are notified to set up the accounts their
+  // department requires. Editable in Settings. "default" applies to any
+  // department not explicitly listed.
+  departmentAccounts: {
+    default: ['Work email (Google Workspace)', 'Slack', 'HRMS login', 'Biometric / ID card'],
+    Tech: ['Work email (Google Workspace)', 'Slack', 'GitHub', 'Jira', 'Cloud / AWS console', 'VPN'],
+    Engineering: ['Work email (Google Workspace)', 'Slack', 'GitHub', 'Jira', 'Cloud / AWS console', 'VPN'],
+    IT: ['Work email (Google Workspace)', 'Slack', 'Admin console', 'VPN', 'Asset management tool'],
+    Product: ['Work email (Google Workspace)', 'Slack', 'Jira', 'Figma', 'Analytics dashboard'],
+    Design: ['Work email (Google Workspace)', 'Slack', 'Figma', 'Adobe Creative Cloud'],
+    Sales: ['Work email (Google Workspace)', 'Slack', 'CRM (HubSpot / Salesforce)', 'Calling / dialer tool', 'LinkedIn Sales Navigator'],
+    'Field Sales': ['Work email (Google Workspace)', 'Slack', 'CRM', 'Calling / dialer tool', 'Mobile field app'],
+    'Account Management': ['Work email (Google Workspace)', 'Slack', 'CRM', 'Customer success tool', 'Analytics dashboard'],
+    Revenue: ['Work email (Google Workspace)', 'Slack', 'CRM', 'Billing / RevOps tool', 'Analytics dashboard'],
+    Marketing: ['Work email (Google Workspace)', 'Slack', 'CRM', 'Social media scheduler', 'Analytics dashboard'],
+    'Human Resources': ['Work email (Google Workspace)', 'Slack', 'HRMS admin', 'Payroll portal'],
+    HR: ['Work email (Google Workspace)', 'Slack', 'HRMS admin', 'Payroll portal'],
+    Finance: ['Work email (Google Workspace)', 'Slack', 'Accounting / ERP', 'Banking portal', 'Payroll portal'],
+    Founder: ['Work email (Google Workspace)', 'Slack', 'Admin console', 'Banking portal', 'All-systems access'],
+    Operations: ['Work email (Google Workspace)', 'Slack', 'HRMS login', 'Internal tools'],
+    Support: ['Work email (Google Workspace)', 'Slack', 'Helpdesk / ticketing', 'CRM'],
+  },
   // Leave
   leavePolicy: { casual: 7, sick: 7 }, // legacy; superseded by leaveTypes
   leaveTypes: [
@@ -574,6 +597,15 @@ if (!settingsRow) {
   let changed = false;
   for (const k of Object.keys(defaultSettings)) {
     if (!(k in saved)) { saved[k] = defaultSettings[k]; changed = true; }
+  }
+  // Backfill new default department→account lists without clobbering admin edits.
+  if (saved.departmentAccounts && typeof saved.departmentAccounts === 'object') {
+    for (const dept of Object.keys(defaultSettings.departmentAccounts)) {
+      if (!(dept in saved.departmentAccounts)) {
+        saved.departmentAccounts[dept] = defaultSettings.departmentAccounts[dept];
+        changed = true;
+      }
+    }
   }
   if (changed) db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(saved));
 }
