@@ -94,22 +94,22 @@ function parseCsv(text) {
 }
 
 /** Parses CSV text (literal) and upserts attendance. */
-function syncFromCsv(csvText) {
-  return processGrid(parseCsv(csvText));
+async function syncFromCsv(csvText) {
+  return await processGrid(parseCsv(csvText));
 }
 
 /** Parses an uploaded .xlsx / .xls / .csv file (Buffer) and upserts attendance. */
-function syncFromBuffer(buffer) {
+async function syncFromBuffer(buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
-  return processGrid(aoa);
+  return await processGrid(aoa);
 }
 
 // Decides whether the sheet is a tidy list (one row per day) or a grid
 // (one row per employee, one column per date) and routes accordingly.
 // `aoa` is an array of arrays (rows of cells).
-function processGrid(aoa) {
+async function processGrid(aoa) {
   if (!aoa || !aoa.length) return { total: 0, synced: 0, unmatched: 0, errors: [], unmatchedKeys: [] };
 
   // Find the header row = the row with the most date-like cells.
@@ -120,7 +120,7 @@ function processGrid(aoa) {
   }
 
   // 3+ date columns in a header => grid/matrix sheet.
-  if (headerIdx >= 0 && bestDates >= 3) return processMatrix(aoa, headerIdx);
+  if (headerIdx >= 0 && bestDates >= 3) return await processMatrix(aoa, headerIdx);
 
   // Otherwise treat as a tidy list using the first row as headers.
   const header = aoa[0] || [];
@@ -129,7 +129,7 @@ function processGrid(aoa) {
     header.forEach((h, i) => { o[h] = r[i] != null ? r[i] : ''; });
     return o;
   });
-  return processRows(rows);
+  return await processRows(rows);
 }
 
 function makeUpsert() {
@@ -143,8 +143,8 @@ function makeUpsert() {
 }
 
 // Builds an employee resolver that matches by code, email, or (full) name.
-function buildLookup() {
-  const employees = db.prepare('SELECT id, emp_code, email, name FROM employees').all();
+async function buildLookup() {
+  const employees = await db.prepare('SELECT id, emp_code, email, name FROM employees').all();
   const byCode = {}, byEmail = {}, byName = {};
   const clean = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
   for (const e of employees) {
@@ -163,9 +163,9 @@ function buildLookup() {
 }
 
 // Matrix layout: employee per row, date per column.
-function processMatrix(grid, headerIdx) {
+async function processMatrix(grid, headerIdx) {
   const header = grid[headerIdx];
-  const lookup = buildLookup();
+  const lookup = await buildLookup();
   const upsert = makeUpsert();
   const result = { total: 0, synced: 0, unmatched: 0, errors: [], unmatchedKeys: [], mode: 'grid' };
 
@@ -203,7 +203,7 @@ function processMatrix(grid, headerIdx) {
     for (const dc of dateCols) {
       const status = normaliseStatus(row[dc.idx]);
       if (!status) continue; // blank / week-off / unknown -> leave as is
-      upsert.run({ employee_id: empId, date: dc.date, check_in: null, check_out: null, status });
+      await upsert.run({ employee_id: empId, date: dc.date, check_in: null, check_out: null, status });
       result.synced++;
     }
   }
@@ -214,8 +214,8 @@ function processMatrix(grid, headerIdx) {
  * Tidy layout: one row per employee per day.
  * Returns { total, synced, unmatched, errors:[], unmatchedKeys:[] }.
  */
-function processRows(rows) {
-  const lookup = buildLookup();
+async function processRows(rows) {
+  const lookup = await buildLookup();
   const result = { total: rows.length, synced: 0, unmatched: 0, errors: [], unmatchedKeys: [], mode: 'list' };
   const upsert = makeUpsert();
 
@@ -242,7 +242,7 @@ function processRows(rows) {
     let status = normaliseStatus(rec.status);
     if (!status) status = tIn ? 'present' : 'absent';
 
-    upsert.run({
+    await upsert.run({
       employee_id: empId,
       date,
       check_in: tIn ? `${date}T${tIn}:00` : null,
@@ -294,7 +294,7 @@ async function syncFromUrl(url) {
   if (/<html/i.test(text.slice(0, 200))) {
     throw new Error('That link returned a web page, not a sheet. Set the sheet to "Anyone with the link can view", or publish it to the web as CSV, then paste the link again.');
   }
-  return syncFromCsv(text);
+  return await syncFromCsv(text);
 }
 
 module.exports = { syncFromCsv, syncFromBuffer, syncFromUrl };

@@ -4,11 +4,11 @@ const { sendMail } = require('./email');
 // Applies an approve/reject decision to a leave request. Idempotent-ish:
 // if already decided, returns the current state without re-notifying.
 async function applyLeaveDecision(id, decision, comment, approverUserId) {
-  const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(id);
+  const lr = await db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(id);
   if (!lr) return { ok: false, notFound: true };
   if (lr.status !== 'pending') return { ok: true, already: true, leave: lr };
 
-  db.prepare("UPDATE leave_requests SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
+  await db.prepare("UPDATE leave_requests SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
     .run(decision, comment || '', approverUserId || null, lr.id);
 
   if (decision === 'approved') {
@@ -21,13 +21,13 @@ async function applyLeaveDecision(id, decision, comment, approverUserId) {
       return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
     };
     for (let ds = lr.from_date; ds <= lr.to_date; ds = addDays(ds, 1)) {
-      const ex = db.prepare('SELECT id, check_in FROM attendance WHERE employee_id = ? AND date = ?').get(lr.employee_id, ds);
-      if (!ex) db.prepare('INSERT INTO attendance (employee_id, date, status) VALUES (?, ?, ?)').run(lr.employee_id, ds, markStatus);
-      else if (!ex.check_in) db.prepare('UPDATE attendance SET status = ? WHERE id = ?').run(markStatus, ex.id);
+      const ex = await db.prepare('SELECT id, check_in FROM attendance WHERE employee_id = ? AND date = ?').get(lr.employee_id, ds);
+      if (!ex) await db.prepare('INSERT INTO attendance (employee_id, date, status) VALUES (?, ?, ?)').run(lr.employee_id, ds, markStatus);
+      else if (!ex.check_in) await db.prepare('UPDATE attendance SET status = ? WHERE id = ?').run(markStatus, ex.id);
     }
   }
 
-  const emp = db.prepare('SELECT name, email FROM employees WHERE id = ?').get(lr.employee_id);
+  const emp = await db.prepare('SELECT name, email FROM employees WHERE id = ?').get(lr.employee_id);
   if (emp && emp.email) {
     await sendMail({
       to: emp.email,
@@ -39,14 +39,14 @@ async function applyLeaveDecision(id, decision, comment, approverUserId) {
 }
 
 async function applyReimbursementDecision(id, decision, comment, approverUserId) {
-  const row = db.prepare('SELECT * FROM reimbursements WHERE id = ?').get(id);
+  const row = await db.prepare('SELECT * FROM reimbursements WHERE id = ?').get(id);
   if (!row) return { ok: false, notFound: true };
   if (row.status !== 'pending') return { ok: true, already: true, reimbursement: row };
 
-  db.prepare("UPDATE reimbursements SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
+  await db.prepare("UPDATE reimbursements SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
     .run(decision, comment || '', approverUserId || null, row.id);
 
-  const emp = db.prepare('SELECT name, email FROM employees WHERE id = ?').get(row.employee_id);
+  const emp = await db.prepare('SELECT name, email FROM employees WHERE id = ?').get(row.employee_id);
   if (emp && emp.email) {
     await sendMail({
       to: emp.email,
@@ -59,16 +59,16 @@ async function applyReimbursementDecision(id, decision, comment, approverUserId)
 
 // Finds who should approve a given employee's requests and returns their emails.
 // kind = 'leave' (manager or HR) or 'reimbursement' (manager or Finance).
-function approverEmailsFor(employeeId, kind) {
-  const emp = db.prepare('SELECT manager_id FROM employees WHERE id = ?').get(employeeId);
+async function approverEmailsFor(employeeId, kind) {
+  const emp = await db.prepare('SELECT manager_id FROM employees WHERE id = ?').get(employeeId);
   const emails = [];
   if (emp && emp.manager_id) {
-    const mgr = db.prepare('SELECT email FROM employees WHERE id = ?').get(emp.manager_id);
+    const mgr = await db.prepare('SELECT email FROM employees WHERE id = ?').get(emp.manager_id);
     if (mgr && mgr.email) emails.push(mgr.email);
   }
   // Always also notify the relevant admins.
   const roles = kind === 'reimbursement' ? ['FINANCE_ADMIN', 'SUPER_ADMIN'] : ['HR_ADMIN', 'SUPER_ADMIN'];
-  const admins = db.prepare(
+  const admins = await db.prepare(
     `SELECT email FROM users WHERE role IN (${roles.map(() => '?').join(',')}) AND email IS NOT NULL`
   ).all(...roles);
   for (const a of admins) if (a.email && !emails.includes(a.email)) emails.push(a.email);

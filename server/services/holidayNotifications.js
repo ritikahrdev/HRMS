@@ -44,7 +44,7 @@ async function sendHolidayNotifications() {
     sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
 
     // Get holidays in the next 7 days
-    const upcomingHolidays = db.prepare(`
+    const upcomingHolidays = await db.prepare(`
       SELECT * FROM holidays
       WHERE date >= ? AND date <= ?
       ORDER BY date ASC
@@ -56,7 +56,7 @@ async function sendHolidayNotifications() {
     }
 
     // Get all active employees
-    const employees = db.prepare("SELECT id, name, email FROM employees WHERE status='active' AND email IS NOT NULL").all();
+    const employees = await db.prepare("SELECT id, name, email FROM employees WHERE status='active' AND email IS NOT NULL").all();
     const settings = getSettings();
 
     let notified = 0;

@@ -1,11 +1,11 @@
 const express = require('express');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 const path = require('path');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
-
-require('./db'); // initialise schema + seed
+const db = require('./db'); // Postgres adapter — schema/seed run via db.init() at startup
 
 const app = express();
 
@@ -44,6 +44,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(
   session({
+    store: new pgSession({ pool: db.pool, tableName: 'user_sessions', createTableIfMissing: true }),
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
@@ -134,10 +135,20 @@ app.use((err, req, res, next) => {
 });
 
 const port = config.port || 4000;
-app.listen(port, () => {
-  console.log('\n==============================================');
-  console.log('  HR Software is running!');
-  console.log(`  Open your browser at:  http://localhost:${port}`);
-  console.log(`  Admin login: ${config.defaultAdmin.email}`);
-  console.log('==============================================\n');
-});
+
+// Initialise the database (create schema + seed + warm caches) BEFORE listening.
+(async () => {
+  try {
+    await db.init();
+    app.listen(port, () => {
+      console.log('\n==============================================');
+      console.log('  HR Software is running!');
+      console.log(`  Open your browser at:  http://localhost:${port}`);
+      console.log(`  Admin login: ${config.defaultAdmin.email}`);
+      console.log('==============================================\n');
+    });
+  } catch (e) {
+    console.error('❌ Failed to start — database init error:', e.message);
+    process.exit(1);
+  }
+})();

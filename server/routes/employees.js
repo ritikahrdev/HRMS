@@ -24,146 +24,178 @@ const LIST_SQL = `
 
 // List all employees (HR / Finance / Super Admin).
 // By default excludes archived employees; pass ?includeArchived=1 to see them too.
-router.get('/', requirePerm('employees:read'), (req, res) => {
-  const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
-  const sql = includeArchived
-    ? LIST_SQL + ' ORDER BY e.name'
-    : LIST_SQL + " WHERE e.status != 'archived' ORDER BY e.name";
-  res.json({ employees: db.prepare(sql).all() });
+router.get('/', requirePerm('employees:read'), async (req, res) => {
+  try {
+    const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
+    const sql = includeArchived
+      ? LIST_SQL + ' ORDER BY e.name'
+      : LIST_SQL + " WHERE e.status != 'archived' ORDER BY e.name";
+    res.json({ employees: await db.prepare(sql).all() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Workforce statistics (active employees, with overall counts).
-router.get('/stats', requirePerm('employees:read'), (req, res) => {
-  const W = "status = 'active'";
-  const groupCount = (col) => db.prepare(
-    `SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'Not set') AS label, COUNT(*) AS count
-     FROM employees WHERE ${W} GROUP BY label ORDER BY count DESC, label`
-  ).all();
+router.get('/stats', requirePerm('employees:read'), async (req, res) => {
+  try {
+    const W = "status = 'active'";
+    const groupCount = (col) => db.prepare(
+      `SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'Not set') AS label, COUNT(*) AS count
+       FROM employees WHERE ${W} GROUP BY label ORDER BY count DESC, label`
+    ).all();
 
-  const totalActive = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W}`).get().n;
-  const totalArchived = db.prepare("SELECT COUNT(*) AS n FROM employees WHERE status='archived'").get().n;
-  const managers = db.prepare(
-    `SELECT COUNT(DISTINCT manager_id) AS n FROM employees WHERE ${W} AND manager_id IS NOT NULL`
-  ).get().n;
-  const withLogin = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND user_id IS NOT NULL`).get().n;
+    const totalActive = (await db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W}`).get()).n;
+    const totalArchived = (await db.prepare("SELECT COUNT(*) AS n FROM employees WHERE status='archived'").get()).n;
+    const managers = (await db.prepare(
+      `SELECT COUNT(DISTINCT manager_id) AS n FROM employees WHERE ${W} AND manager_id IS NOT NULL`
+    ).get()).n;
+    const withLogin = (await db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND user_id IS NOT NULL`).get()).n;
 
-  // New joiners this month + this year.
-  const now = new Date();
-  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const newThisMonth = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND substr(date_of_joining,1,7) = ?`).get(ym).n;
-  const newThisYear = db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND substr(date_of_joining,1,4) = ?`).get(String(now.getFullYear())).n;
+    // New joiners this month + this year.
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const newThisMonth = (await db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND substr(date_of_joining,1,7) = ?`).get(ym)).n;
+    const newThisYear = (await db.prepare(`SELECT COUNT(*) AS n FROM employees WHERE ${W} AND substr(date_of_joining,1,4) = ?`).get(String(now.getFullYear()))).n;
 
-  res.json({
-    totalActive,
-    totalArchived,
-    managers,
-    withLogin,
-    newThisMonth,
-    newThisYear,
-    byDepartment: groupCount('department'),
-    byType: groupCount('employee_type'),
-    byGender: groupCount('gender'),
-    byWorkMode: groupCount('work_mode'),
-    byBloodGroup: groupCount('blood_group'),
-  });
+    res.json({
+      totalActive,
+      totalArchived,
+      managers,
+      withLogin,
+      newThisMonth,
+      newThisYear,
+      byDepartment: await groupCount('department'),
+      byType: await groupCount('employee_type'),
+      byGender: await groupCount('gender'),
+      byWorkMode: await groupCount('work_mode'),
+      byBloodGroup: await groupCount('blood_group'),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Staff directory — any logged-in user sees safe contact fields of active staff.
-router.get('/directory', requireLogin, (req, res) => {
-  const rows = db.prepare(
-    `SELECT e.id, e.name, e.emp_code, e.department, e.designation, e.email, e.phone,
-            (SELECT name FROM employees m WHERE m.id = e.manager_id) AS manager_name
-     FROM employees e WHERE e.status = 'active' ORDER BY e.name`
-  ).all();
-  res.json({ employees: rows });
+router.get('/directory', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.prepare(
+      `SELECT e.id, e.name, e.emp_code, e.department, e.designation, e.email, e.phone,
+              (SELECT name FROM employees m WHERE m.id = e.manager_id) AS manager_name
+       FROM employees e WHERE e.status = 'active' ORDER BY e.name`
+    ).all();
+    res.json({ employees: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // A manager's direct reports.
-router.get('/team', requireLogin, (req, res) => {
-  const ids = teamEmployeeIds(req);
-  if (ids.length === 0) return res.json({ employees: [] });
-  const rows = db.prepare(LIST_SQL + ` WHERE e.id IN (${ids.map(() => '?').join(',')}) ORDER BY e.name`).all(...ids);
-  res.json({ employees: rows });
+router.get('/team', requireLogin, async (req, res) => {
+  try {
+    const ids = await teamEmployeeIds(req);
+    if (ids.length === 0) return res.json({ employees: [] });
+    const rows = await db.prepare(LIST_SQL + ` WHERE e.id IN (${ids.map(() => '?').join(',')}) ORDER BY e.name`).all(...ids);
+    res.json({ employees: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Current employee's own profile.
-router.get('/me', requireLogin, (req, res) => {
-  const empId = req.session.user.employeeId;
-  if (!empId) return res.json({ employee: null });
-  const emp = db.prepare(LIST_SQL + ' WHERE e.id = ?').get(empId);
-  res.json({ employee: emp });
+router.get('/me', requireLogin, async (req, res) => {
+  try {
+    const empId = req.session.user.employeeId;
+    if (!empId) return res.json({ employee: null });
+    const emp = await db.prepare(LIST_SQL + ' WHERE e.id = ?').get(empId);
+    res.json({ employee: emp });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Self-service onboarding form: a new hire saves their own personal/joining
 // details straight into HRMS (whitelisted fields only). Documents are uploaded
 // through the existing /:id/documents endpoint (self-upload is allowed).
-router.put('/me/onboarding', requireLogin, (req, res) => {
-  const empId = req.session.user.employeeId;
-  if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
-  const updates = {};
-  for (const f of SELF_ONBOARDING_FIELDS) {
-    if (f in req.body) updates[f] = req.body[f] == null ? null : String(req.body[f]).trim();
+router.put('/me/onboarding', requireLogin, async (req, res) => {
+  try {
+    const empId = req.session.user.employeeId;
+    if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
+    const updates = {};
+    for (const f of SELF_ONBOARDING_FIELDS) {
+      if (f in req.body) updates[f] = req.body[f] == null ? null : String(req.body[f]).trim();
+    }
+    const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+    if (setClause) await db.prepare(`UPDATE employees SET ${setClause} WHERE id = @id`).run({ ...updates, id: empId });
+    res.json({ employee: await db.prepare(LIST_SQL + ' WHERE e.id = ?').get(empId) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
-  if (setClause) db.prepare(`UPDATE employees SET ${setClause} WHERE id = @id`).run({ ...updates, id: empId });
-  res.json({ employee: db.prepare(LIST_SQL + ' WHERE e.id = ?').get(empId) });
 });
 
 // The new hire submits the completed form -> notify HR + their manager so the
 // documents can be reviewed/verified.
-router.post('/me/onboarding/submit', requireLogin, (req, res) => {
-  const empId = req.session.user.employeeId;
-  if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
-  if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+router.post('/me/onboarding/submit', requireLogin, async (req, res) => {
+  try {
+    const empId = req.session.user.employeeId;
+    if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
 
-  // Enforce: every field filled + every required document uploaded.
-  const missingFields = ONBOARDING_REQUIRED_FIELDS.filter((f) => !String(emp[f] == null ? '' : emp[f]).trim());
-  const requiredDocs = getSettings().requiredDocs || [];
-  const haveTypes = new Set(
-    db.prepare('SELECT doc_type FROM employee_documents WHERE employee_id = ?').all(empId)
-      .filter((d) => d.doc_type).map((d) => d.doc_type)
-  );
-  const missingDocs = requiredDocs.filter((t) => !haveTypes.has(t));
-  if (missingFields.length || missingDocs.length) {
-    return res.status(400).json({
-      error: 'Please complete all fields and upload all required documents before submitting.',
-      missingFields,
-      missingDocs,
+    // Enforce: every field filled + every required document uploaded.
+    const missingFields = ONBOARDING_REQUIRED_FIELDS.filter((f) => !String(emp[f] == null ? '' : emp[f]).trim());
+    const requiredDocs = getSettings().requiredDocs || [];
+    const haveTypes = new Set(
+      (await db.prepare('SELECT doc_type FROM employee_documents WHERE employee_id = ?').all(empId))
+        .filter((d) => d.doc_type).map((d) => d.doc_type)
+    );
+    const missingDocs = requiredDocs.filter((t) => !haveTypes.has(t));
+    if (missingFields.length || missingDocs.length) {
+      return res.status(400).json({
+        error: 'Please complete all fields and upload all required documents before submitting.',
+        missingFields,
+        missingDocs,
+      });
+    }
+
+    await db.prepare("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now') WHERE id = ?").run(empId);
+    try { await syncAutomatedTasks(empId); } catch (e) { /* non-fatal */ }
+
+    const recipients = new Set();
+    if (emp.manager_id) {
+      const mu = await db.prepare('SELECT user_id FROM employees WHERE id = ?').get(emp.manager_id);
+      if (mu && mu.user_id) recipients.add(mu.user_id);
+    }
+    for (const u of await db.prepare('SELECT id, role FROM users').all()) if (can(u.role, 'employees:write')) recipients.add(u.id);
+    recipients.delete(req.session.user.id);
+    await notifyUsers([...recipients], {
+      type: 'onboarding',
+      title: `Onboarding form submitted: ${emp.name}`,
+      body: `${emp.name} has completed their joining form and uploaded their documents. Please review and verify.`,
+      link: '#/onboarding',
     });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-
-  db.prepare("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now') WHERE id = ?").run(empId);
-  try { syncAutomatedTasks(empId); } catch (e) { /* non-fatal */ }
-
-  const recipients = new Set();
-  if (emp.manager_id) {
-    const mu = db.prepare('SELECT user_id FROM employees WHERE id = ?').get(emp.manager_id);
-    if (mu && mu.user_id) recipients.add(mu.user_id);
-  }
-  for (const u of db.prepare('SELECT id, role FROM users').all()) if (can(u.role, 'employees:write')) recipients.add(u.id);
-  recipients.delete(req.session.user.id);
-  notifyUsers([...recipients], {
-    type: 'onboarding',
-    title: `Onboarding form submitted: ${emp.name}`,
-    body: `${emp.name} has completed their joining form and uploaded their documents. Please review and verify.`,
-    link: '#/onboarding',
-  });
-  res.json({ ok: true });
 });
 
 // Single employee.
-router.get('/:id', requireLogin, (req, res) => {
-  if (!canActOnEmployee(req, req.params.id)) return res.status(403).json({ error: 'No access.' });
-  const emp = db.prepare(LIST_SQL + ' WHERE e.id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  res.json({ employee: emp });
+router.get('/:id', requireLogin, async (req, res) => {
+  try {
+    if (!(await canActOnEmployee(req, req.params.id))) return res.status(403).json({ error: 'No access.' });
+    const emp = await db.prepare(LIST_SQL + ' WHERE e.id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    res.json({ employee: emp });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Create employee.
 router.post('/', requirePerm('employees:write'), async (req, res) => {
   try {
-    const { employee, tempPassword } = createEmployee(req.body || {});
+    const { employee, tempPassword } = await createEmployee(req.body || {});
     if (tempPassword && employee.email) {
       const s = getSettings();
       await sendMail({
@@ -183,192 +215,244 @@ router.post('/', requirePerm('employees:write'), async (req, res) => {
 });
 
 // Update employee (and optionally their login role).
-router.put('/:id', requirePerm('employees:write'), (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
+router.put('/:id', requirePerm('employees:write'), async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
 
-  const updates = {};
-  for (const f of FIELDS) if (f in req.body) updates[f] = req.body[f];
-  if ('monthly_salary' in updates) updates.monthly_salary = Number(updates.monthly_salary) || 0;
-  if ('manager_id' in updates) updates.manager_id = updates.manager_id ? Number(updates.manager_id) : null;
+    const updates = {};
+    for (const f of FIELDS) if (f in req.body) updates[f] = req.body[f];
+    if ('monthly_salary' in updates) updates.monthly_salary = Number(updates.monthly_salary) || 0;
+    if ('manager_id' in updates) updates.manager_id = updates.manager_id ? Number(updates.manager_id) : null;
 
-  const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
-  if (setClause) {
-    db.prepare(`UPDATE employees SET ${setClause} WHERE id = @id`).run({ ...updates, id: emp.id });
+    const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+    if (setClause) {
+      await db.prepare(`UPDATE employees SET ${setClause} WHERE id = @id`).run({ ...updates, id: emp.id });
+    }
+    if ('role' in req.body && emp.user_id) {
+      await db.prepare('UPDATE users SET role = ? WHERE id = ?').run(normaliseRole(req.body.role), emp.user_id);
+    }
+    res.json({ employee: await db.prepare(LIST_SQL + ' WHERE e.id = ?').get(emp.id) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  if ('role' in req.body && emp.user_id) {
-    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(normaliseRole(req.body.role), emp.user_id);
-  }
-  res.json({ employee: db.prepare(LIST_SQL + ' WHERE e.id = ?').get(emp.id) });
 });
 
 // Activate / deactivate.
-router.post('/:id/status', requirePerm('employees:write'), (req, res) => {
-  const status = req.body.status === 'inactive' ? 'inactive' : 'active';
-  db.prepare('UPDATE employees SET status = ? WHERE id = ?').run(status, req.params.id);
-  res.json({ ok: true, status });
+router.post('/:id/status', requirePerm('employees:write'), async (req, res) => {
+  try {
+    const status = req.body.status === 'inactive' ? 'inactive' : 'active';
+    await db.prepare('UPDATE employees SET status = ? WHERE id = ?').run(status, req.params.id);
+    res.json({ ok: true, status });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Archive an employee (super admin only). Their login is disabled and they
 // disappear from active lists, but ALL their data (attendance, leave, payroll,
 // mood, documents, etc.) is preserved and can be restored later.
-router.delete('/:id', requireSuperAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  // Don't allow archiving yourself.
-  if (req.session.user.employeeId === emp.id) return res.status(400).json({ error: 'You cannot archive your own profile.' });
-  // Soft-delete: mark archived. No data is removed — the employee row and all
-  // related records (attendance, leave, payroll, mood, documents) stay intact.
-  db.prepare("UPDATE employees SET status = 'archived' WHERE id = ?").run(emp.id);
-  res.json({ ok: true, archived: true });
+router.delete('/:id', requireSuperAdmin, async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    // Don't allow archiving yourself.
+    if (req.session.user.employeeId === emp.id) return res.status(400).json({ error: 'You cannot archive your own profile.' });
+    // Soft-delete: mark archived. No data is removed — the employee row and all
+    // related records (attendance, leave, payroll, mood, documents) stay intact.
+    await db.prepare("UPDATE employees SET status = 'archived' WHERE id = ?").run(emp.id);
+    res.json({ ok: true, archived: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Restore an archived employee back to active (super admin only).
-router.post('/:id/restore', requireSuperAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  db.prepare("UPDATE employees SET status = 'active' WHERE id = ?").run(emp.id);
-  res.json({ ok: true, restored: true });
+router.post('/:id/restore', requireSuperAdmin, async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    await db.prepare("UPDATE employees SET status = 'active' WHERE id = ?").run(emp.id);
+    res.json({ ok: true, restored: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // PERMANENT delete — actually removes the employee and ALL their data forever
 // (super admin only, and only for already-archived employees). Use with care.
-router.delete('/:id/permanent', requireSuperAdmin, (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  if (req.session.user.employeeId === emp.id) return res.status(400).json({ error: 'You cannot delete your own profile.' });
-  if (emp.status !== 'archived') return res.status(400).json({ error: 'Archive the employee first before permanent deletion.' });
-  db.prepare('UPDATE employees SET manager_id = NULL WHERE manager_id = ?').run(emp.id);
-  db.prepare('DELETE FROM employees WHERE id = ?').run(emp.id); // cascades attendance/leave/etc.
-  if (emp.user_id) db.prepare('DELETE FROM users WHERE id = ?').run(emp.user_id);
-  res.json({ ok: true, permanentlyDeleted: true });
+router.delete('/:id/permanent', requireSuperAdmin, async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    if (req.session.user.employeeId === emp.id) return res.status(400).json({ error: 'You cannot delete your own profile.' });
+    if (emp.status !== 'archived') return res.status(400).json({ error: 'Archive the employee first before permanent deletion.' });
+    await db.prepare('UPDATE employees SET manager_id = NULL WHERE manager_id = ?').run(emp.id);
+    await db.prepare('DELETE FROM employees WHERE id = ?').run(emp.id); // cascades attendance/leave/etc.
+    if (emp.user_id) await db.prepare('DELETE FROM users WHERE id = ?').run(emp.user_id);
+    res.json({ ok: true, permanentlyDeleted: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Reset an employee's password -> returns a new temp password.
 router.post('/:id/reset-password', requirePerm('employees:write'), async (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp || !emp.user_id) return res.status(404).json({ error: 'No login for this employee' });
-  const temp = makeTempPassword();
-  db.prepare('UPDATE users SET password_hash = ?, must_change = 1 WHERE id = ?').run(
-    bcrypt.hashSync(temp, 10),
-    emp.user_id
-  );
-  if (emp.email) {
-    await sendMail({
-      to: emp.email,
-      subject: 'Your HR portal password was reset',
-      html: `<p>Hi ${emp.name},</p><p>Your new temporary password is <b>${temp}</b>. Please log in and change it.</p>`,
-    });
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp || !emp.user_id) return res.status(404).json({ error: 'No login for this employee' });
+    const temp = makeTempPassword();
+    await db.prepare('UPDATE users SET password_hash = ?, must_change = 1 WHERE id = ?').run(
+      bcrypt.hashSync(temp, 10),
+      emp.user_id
+    );
+    if (emp.email) {
+      await sendMail({
+        to: emp.email,
+        subject: 'Your HR portal password was reset',
+        html: `<p>Hi ${emp.name},</p><p>Your new temporary password is <b>${temp}</b>. Please log in and change it.</p>`,
+      });
+    }
+    res.json({ tempPassword: temp });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json({ tempPassword: temp });
 });
 
 // ---- Salary structure (Finance / Super Admin) ------------------------------
-router.get('/:id/salary', requirePerm('payroll:manage'), (req, res) => {
-  const emp = db.prepare('SELECT id, name, monthly_salary, salary_structure FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  let structure = null;
-  try { structure = emp.salary_structure ? JSON.parse(emp.salary_structure) : null; } catch (e) { structure = null; }
-  res.json({ employee: { id: emp.id, name: emp.name, monthly_salary: emp.monthly_salary }, structure });
+router.get('/:id/salary', requirePerm('payroll:manage'), async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT id, name, monthly_salary, salary_structure FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    let structure = null;
+    try { structure = emp.salary_structure ? JSON.parse(emp.salary_structure) : null; } catch (e) { structure = null; }
+    res.json({ employee: { id: emp.id, name: emp.name, monthly_salary: emp.monthly_salary }, structure });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-router.put('/:id/salary', requirePerm('payroll:manage'), (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  const earnings = (req.body && Array.isArray(req.body.earnings) ? req.body.earnings : [])
-    .map((e) => ({ name: String(e.name || 'Earning'), amount: +e.amount || 0 }))
-    .filter((e) => e.name);
-  const deductions = (req.body && Array.isArray(req.body.deductions) ? req.body.deductions : [])
-    .map((d) => ({ name: String(d.name || 'Deduction'), amount: +d.amount || 0 }))
-    .filter((d) => d.name);
-  const gross = +earnings.reduce((s, e) => s + e.amount, 0).toFixed(2);
-  const structure = { earnings, deductions };
-  db.prepare('UPDATE employees SET salary_structure = ?, monthly_salary = ? WHERE id = ?')
-    .run(JSON.stringify(structure), gross, emp.id);
-  res.json({ ok: true, gross, structure });
+router.put('/:id/salary', requirePerm('payroll:manage'), async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    const earnings = (req.body && Array.isArray(req.body.earnings) ? req.body.earnings : [])
+      .map((e) => ({ name: String(e.name || 'Earning'), amount: +e.amount || 0 }))
+      .filter((e) => e.name);
+    const deductions = (req.body && Array.isArray(req.body.deductions) ? req.body.deductions : [])
+      .map((d) => ({ name: String(d.name || 'Deduction'), amount: +d.amount || 0 }))
+      .filter((d) => d.name);
+    const gross = +earnings.reduce((s, e) => s + e.amount, 0).toFixed(2);
+    const structure = { earnings, deductions };
+    await db.prepare('UPDATE employees SET salary_structure = ?, monthly_salary = ? WHERE id = ?')
+      .run(JSON.stringify(structure), gross, emp.id);
+    res.json({ ok: true, gross, structure });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ---- Employee documents ----------------------------------------------------
-function canManageDocs(req, employeeId) {
+async function canManageDocs(req, employeeId) {
   // Admins with employee write access, or the employee themselves.
-  if (req.session.user.role !== 'EMPLOYEE' && canActOnEmployee(req, employeeId)) return true;
+  if (req.session.user.role !== 'EMPLOYEE' && await canActOnEmployee(req, employeeId)) return true;
   return req.session.user.employeeId === Number(employeeId);
 }
 
-router.get('/:id/documents', requireLogin, (req, res) => {
-  if (!canManageDocs(req, req.params.id)) return res.status(403).json({ error: 'No access.' });
-  const docs = db.prepare('SELECT id, title, doc_type, file, status, verify_note, verified_at, uploaded_at FROM employee_documents WHERE employee_id = ? ORDER BY uploaded_at DESC').all(req.params.id);
-  res.json({ documents: docs });
+router.get('/:id/documents', requireLogin, async (req, res) => {
+  try {
+    if (!(await canManageDocs(req, req.params.id))) return res.status(403).json({ error: 'No access.' });
+    const docs = await db.prepare('SELECT id, title, doc_type, file, status, verify_note, verified_at, uploaded_at FROM employee_documents WHERE employee_id = ? ORDER BY uploaded_at DESC').all(req.params.id);
+    res.json({ documents: docs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ID validity (format/checksum) + duplicate detection across employees.
-router.get('/:id/verification', requireLogin, (req, res) => {
-  if (!canActOnEmployee(req, req.params.id)) return res.status(403).json({ error: 'No access.' });
-  const e = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!e) return res.status(404).json({ error: 'Not found' });
+router.get('/:id/verification', requireLogin, async (req, res) => {
+  try {
+    if (!(await canActOnEmployee(req, req.params.id))) return res.status(403).json({ error: 'No access.' });
+    const e = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!e) return res.status(404).json({ error: 'Not found' });
 
-  const dupes = (col, val) => {
-    if (!val) return [];
-    return db.prepare(`SELECT name FROM employees WHERE id != ? AND lower(trim(${col})) = lower(trim(?))`).all(e.id, val).map((r) => r.name);
-  };
-  res.json({
-    pan: e.pan ? { ...validatePAN(e.pan), duplicates: dupes('pan', e.pan) } : null,
-    aadhaar: e.aadhaar ? { ...validateAadhaar(e.aadhaar), duplicates: dupes('aadhaar', e.aadhaar) } : null,
-    ifsc: e.ifsc ? validateIFSC(e.ifsc) : null,
-    emailDuplicates: dupes('email', e.email),
-    phoneDuplicates: dupes('phone', e.phone),
-  });
+    const dupes = async (col, val) => {
+      if (!val) return [];
+      return (await db.prepare(`SELECT name FROM employees WHERE id != ? AND lower(trim(${col})) = lower(trim(?))`).all(e.id, val)).map((r) => r.name);
+    };
+    res.json({
+      pan: e.pan ? { ...validatePAN(e.pan), duplicates: await dupes('pan', e.pan) } : null,
+      aadhaar: e.aadhaar ? { ...validateAadhaar(e.aadhaar), duplicates: await dupes('aadhaar', e.aadhaar) } : null,
+      ifsc: e.ifsc ? validateIFSC(e.ifsc) : null,
+      emailDuplicates: await dupes('email', e.email),
+      phoneDuplicates: await dupes('phone', e.phone),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Automatic Aadhaar verification via UIDAI Offline e-KYC XML (digital signature).
-router.post('/:id/aadhaar-verify', requirePerm('employees:write'), memoryUpload.single('xml'), (req, res) => {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
-  if (!emp) return res.status(404).json({ error: 'Not found' });
-  if (!req.file) return res.status(400).json({ error: 'Upload the UIDAI Offline e-KYC XML file.' });
+router.post('/:id/aadhaar-verify', requirePerm('employees:write'), memoryUpload.single('xml'), async (req, res) => {
+  try {
+    const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (!emp) return res.status(404).json({ error: 'Not found' });
+    if (!req.file) return res.status(400).json({ error: 'Upload the UIDAI Offline e-KYC XML file.' });
 
-  let result;
-  try { result = aadhaarOffline.check(req.file.buffer.toString('utf8'), getSettings().uidaiCert || ''); }
-  catch (e) { return res.status(400).json({ error: 'Could not read that file. Download "Offline e-KYC" from UIDAI, unzip with your share code, and upload the XML.' }); }
+    let result;
+    try { result = aadhaarOffline.check(req.file.buffer.toString('utf8'), getSettings().uidaiCert || ''); }
+    catch (e) { return res.status(400).json({ error: 'Could not read that file. Download "Offline e-KYC" from UIDAI, unzip with your share code, and upload the XML.' }); }
 
-  result.employeeName = emp.name;
-  result.nameMatch = !!(result.name && emp.name && result.name.trim().toLowerCase() === emp.name.trim().toLowerCase());
+    result.employeeName = emp.name;
+    result.nameMatch = !!(result.name && emp.name && result.name.trim().toLowerCase() === emp.name.trim().toLowerCase());
 
-  // If genuinely signed by UIDAI, store the file as a verified mandatory document.
-  if (result.signatureValid === true) {
-    const fname = `aadhaar-ekyc-${emp.id}-${Date.now()}.xml`;
-    fs.writeFileSync(path.join(config.paths.uploads, fname), req.file.buffer);
-    const docType = 'Government-issued ID (Aadhaar & PAN, or Passport)';
-    db.prepare("INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by, status, verify_note, verified_at) VALUES (?, ?, ?, ?, ?, 'verified', ?, datetime('now'))")
-      .run(emp.id, 'Aadhaar (UIDAI Offline e-KYC — verified)', docType, fname, req.session.user.id,
-        `UIDAI digital signature valid. Name on Aadhaar: ${result.name} (XXXX-XXXX-${result.last4}).` + (result.nameMatch ? ' Matches profile.' : ' ⚠ Differs from profile name.'));
+    // If genuinely signed by UIDAI, store the file as a verified mandatory document.
+    if (result.signatureValid === true) {
+      const fname = `aadhaar-ekyc-${emp.id}-${Date.now()}.xml`;
+      fs.writeFileSync(path.join(config.paths.uploads, fname), req.file.buffer);
+      const docType = 'Government-issued ID (Aadhaar & PAN, or Passport)';
+      await db.prepare("INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by, status, verify_note, verified_at) VALUES (?, ?, ?, ?, ?, 'verified', ?, datetime('now'))")
+        .run(emp.id, 'Aadhaar (UIDAI Offline e-KYC — verified)', docType, fname, req.session.user.id,
+          `UIDAI digital signature valid. Name on Aadhaar: ${result.name} (XXXX-XXXX-${result.last4}).` + (result.nameMatch ? ' Matches profile.' : ' ⚠ Differs from profile name.'));
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(result);
 });
 
 // HR marks a document verified / rejected after review.
-router.post('/:id/documents/:docId/verify', requirePerm('employees:write'), (req, res) => {
-  const doc = db.prepare('SELECT * FROM employee_documents WHERE id = ? AND employee_id = ?').get(req.params.docId, req.params.id);
-  if (!doc) return res.status(404).json({ error: 'Not found' });
-  const status = ['verified', 'rejected', 'pending'].includes(req.body.status) ? req.body.status : 'pending';
-  db.prepare("UPDATE employee_documents SET status = ?, verify_note = ?, verified_by = ?, verified_at = datetime('now') WHERE id = ?")
-    .run(status, (req.body && req.body.note) || '', req.session.user.id, doc.id);
-  res.json({ ok: true, status });
-});
-
-router.post('/:id/documents', requireLogin, upload.single('file'), (req, res) => {
-  if (!canManageDocs(req, req.params.id)) return res.status(403).json({ error: 'No access.' });
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
-  const docType = (req.body && req.body.doc_type) || '';
-  const title = (req.body && req.body.title) || docType || req.file.originalname;
-  const r = db.prepare('INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by) VALUES (?, ?, ?, ?, ?)')
-    .run(req.params.id, title, docType, req.file.filename, req.session.user.id);
-  res.json({ id: r.lastInsertRowid });
-});
-
-router.get('/:id/documents/:docId/file', requireLogin, (req, res) => {
+router.post('/:id/documents/:docId/verify', requirePerm('employees:write'), async (req, res) => {
   try {
-    if (!canManageDocs(req, req.params.id)) return res.status(403).send('Forbidden');
-    const doc = db.prepare('SELECT * FROM employee_documents WHERE id = ? AND employee_id = ?').get(req.params.docId, req.params.id);
+    const doc = await db.prepare('SELECT * FROM employee_documents WHERE id = ? AND employee_id = ?').get(req.params.docId, req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    const status = ['verified', 'rejected', 'pending'].includes(req.body.status) ? req.body.status : 'pending';
+    await db.prepare("UPDATE employee_documents SET status = ?, verify_note = ?, verified_by = ?, verified_at = datetime('now') WHERE id = ?")
+      .run(status, (req.body && req.body.note) || '', req.session.user.id, doc.id);
+    res.json({ ok: true, status });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/:id/documents', requireLogin, upload.single('file'), async (req, res) => {
+  try {
+    if (!(await canManageDocs(req, req.params.id))) return res.status(403).json({ error: 'No access.' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    const docType = (req.body && req.body.doc_type) || '';
+    const title = (req.body && req.body.title) || docType || req.file.originalname;
+    const r = await db.prepare('INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by) VALUES (?, ?, ?, ?, ?)')
+      .run(req.params.id, title, docType, req.file.filename, req.session.user.id);
+    res.json({ id: r.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/:id/documents/:docId/file', requireLogin, async (req, res) => {
+  try {
+    if (!(await canManageDocs(req, req.params.id))) return res.status(403).send('Forbidden');
+    const doc = await db.prepare('SELECT * FROM employee_documents WHERE id = ? AND employee_id = ?').get(req.params.docId, req.params.id);
     if (!doc) return res.status(404).send('Not found');
 
     // Path traversal protection: verify resolved path is within uploads directory
@@ -386,10 +470,14 @@ router.get('/:id/documents/:docId/file', requireLogin, (req, res) => {
   }
 });
 
-router.delete('/:id/documents/:docId', requireLogin, (req, res) => {
-  if (!canManageDocs(req, req.params.id)) return res.status(403).json({ error: 'No access.' });
-  db.prepare('DELETE FROM employee_documents WHERE id = ? AND employee_id = ?').run(req.params.docId, req.params.id);
-  res.json({ ok: true });
+router.delete('/:id/documents/:docId', requireLogin, async (req, res) => {
+  try {
+    if (!(await canManageDocs(req, req.params.id))) return res.status(403).json({ error: 'No access.' });
+    await db.prepare('DELETE FROM employee_documents WHERE id = ? AND employee_id = ?').run(req.params.docId, req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

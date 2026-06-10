@@ -30,7 +30,7 @@ function normaliseHeader(h) {
   return String(h || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function validateRow(row, seenCodes, seenEmails) {
+async function validateRow(row, seenCodes, seenEmails) {
   const issues = [];
   if (!row.name || !String(row.name).trim()) issues.push('Name is missing');
 
@@ -38,7 +38,7 @@ function validateRow(row, seenCodes, seenEmails) {
     const email = String(row.email).trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push('Email looks invalid');
     else {
-      const dup = db.prepare('SELECT 1 FROM users WHERE lower(email)=lower(?)').get(email);
+      const dup = await db.prepare('SELECT 1 FROM users WHERE lower(email)=lower(?)').get(email);
       if (dup) issues.push('Email already exists in system');
       if (seenEmails.has(email.toLowerCase())) issues.push('Duplicate email in file');
       seenEmails.add(email.toLowerCase());
@@ -49,7 +49,7 @@ function validateRow(row, seenCodes, seenEmails) {
 
   if (row.emp_code) {
     const code = String(row.emp_code).trim();
-    const dup = db.prepare('SELECT 1 FROM employees WHERE emp_code=?').get(code);
+    const dup = await db.prepare('SELECT 1 FROM employees WHERE emp_code=?').get(code);
     if (dup) issues.push('Employee code already exists');
     if (seenCodes.has(code)) issues.push('Duplicate employee code in file');
     seenCodes.add(code);
@@ -70,7 +70,7 @@ function isBlocking(issues) {
 }
 
 // Parse + validate, but do not save.
-router.post('/preview', requirePerm('employees:write'), memoryUpload.single('file'), (req, res) => {
+router.post('/preview', requirePerm('employees:write'), memoryUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   let rows;
   try {
@@ -81,24 +81,30 @@ router.post('/preview', requirePerm('employees:write'), memoryUpload.single('fil
     return res.status(400).json({ error: 'Could not read the file. Use an .xlsx or .csv file.' });
   }
 
-  const seenCodes = new Set();
-  const seenEmails = new Set();
-  const out = rows.map((raw, idx) => {
-    const mapped = {};
-    for (const key of Object.keys(raw)) {
-      const field = HEADER_MAP[normaliseHeader(key)];
-      if (field) mapped[field] = typeof raw[key] === 'string' ? raw[key].trim() : raw[key];
+  try {
+    const seenCodes = new Set();
+    const seenEmails = new Set();
+    const out = [];
+    for (let idx = 0; idx < rows.length; idx++) {
+      const raw = rows[idx];
+      const mapped = {};
+      for (const key of Object.keys(raw)) {
+        const field = HEADER_MAP[normaliseHeader(key)];
+        if (field) mapped[field] = typeof raw[key] === 'string' ? raw[key].trim() : raw[key];
+      }
+      const issues = await validateRow(mapped, seenCodes, seenEmails);
+      out.push({ rowNumber: idx + 2, data: mapped, issues, blocking: isBlocking(issues) });
     }
-    const issues = validateRow(mapped, seenCodes, seenEmails);
-    return { rowNumber: idx + 2, data: mapped, issues, blocking: isBlocking(issues) };
-  });
 
-  res.json({
-    total: out.length,
-    rows: out,
-    okCount: out.filter((r) => !r.blocking).length,
-    problemCount: out.filter((r) => r.blocking).length,
-  });
+    res.json({
+      total: out.length,
+      rows: out,
+      okCount: out.filter((r) => !r.blocking).length,
+      problemCount: out.filter((r) => r.blocking).length,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Commit corrected rows.
@@ -112,7 +118,7 @@ router.post('/commit', requirePerm('employees:write'), async (req, res) => {
 
   for (const r of rows) {
     try {
-      const { employee, tempPassword } = createEmployee(r);
+      const { employee, tempPassword } = await createEmployee(r);
       results.created++;
       if (tempPassword && employee.email) {
         await sendMail({

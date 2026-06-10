@@ -39,7 +39,7 @@ function safeEqual(a, b) {
 
 // POST /api/webhook/attendance
 // Trusted systems push attendance here with the X-Webhook-Secret header.
-router.post('/attendance', (req, res) => {
+router.post('/attendance', async (req, res) => {
   // 1) Validate the webhook secret.
   const secret = configuredSecret();
   const provided = req.get('X-Webhook-Secret');
@@ -70,7 +70,7 @@ router.post('/attendance', (req, res) => {
   const date = dateMatch ? dateMatch[1] : parsed.toISOString().slice(0, 10);
 
   // 4) Find the employee by name (prefer an active match).
-  const emp = db.prepare(
+  const emp = await db.prepare(
     "SELECT id, name FROM employees WHERE lower(trim(name)) = lower(trim(?)) " +
     "ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END LIMIT 1"
   ).get(name);
@@ -81,7 +81,7 @@ router.post('/attendance', (req, res) => {
   // 5) Upsert attendance (idempotent — never creates duplicates for the same day).
   const check_in = mapped.status === 'present' ? parsed.toISOString() : null;
   try {
-    upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh });
+    await upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh });
   } catch (e) {
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
   }

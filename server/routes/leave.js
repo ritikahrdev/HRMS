@@ -38,16 +38,16 @@ router.post('/', requireLogin, async (req, res) => {
     if (halfDay && from_date !== to_date) return res.status(400).json({ error: 'A half-day leave must be for a single date.' });
 
     const days = halfDay ? 0.5 : daysBetween(from_date, to_date);
-    const r = db.prepare(
+    const r = await db.prepare(
       'INSERT INTO leave_requests (employee_id, type, from_date, to_date, days, reason, half_day) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(empId, type, from_date, to_date, days, reason || '', halfDay ? 1 : 0);
 
     // Email the approver(s) with one-click approve / reject links.
-    const emp = db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
+    const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
     const id = r.lastInsertRowid;
     const approveLink = actionUrl('leave', id, 'approved');
     const rejectLink = actionUrl('leave', id, 'rejected');
-    const to = approverEmailsFor(empId, 'leave');
+    const to = await approverEmailsFor(empId, 'leave');
     if (to.length) {
       await sendMail({
         to: to.join(','),
@@ -74,19 +74,19 @@ router.get('/types', requireLogin, (req, res) => {
 });
 
 // Leave balance for the logged-in employee (per configured type, this year).
-function balanceFor(empId) {
+async function balanceFor(empId) {
   const types = leaveTypes();
   const year = new Date().getFullYear();
-  const used = db.prepare(
+  const used = await db.prepare(
     `SELECT type, COALESCE(SUM(days),0) AS d FROM leave_requests
      WHERE employee_id = ? AND status='approved' AND substr(from_date,1,4) = ? GROUP BY type`
   ).all(empId, String(year));
   const usedMap = {}; for (const u of used) usedMap[u.type] = u.d;
 
   // Comp-off allowance = granted credits this year.
-  const compCredits = db.prepare(
+  const compCredits = (await db.prepare(
     "SELECT COALESCE(SUM(days),0) AS d FROM comp_off_credits WHERE employee_id = ? AND substr(created_at,1,4) = ?"
-  ).get(empId, String(year)).d;
+  ).get(empId, String(year))).d;
 
   const balance = {};
   for (const t of types) {
@@ -98,76 +98,104 @@ function balanceFor(empId) {
   return { year, balance };
 }
 
-router.get('/balance', requireLogin, (req, res) => {
-  const empId = myEmpId(req, res); if (!empId) return;
-  res.json(balanceFor(empId));
+router.get('/balance', requireLogin, async (req, res) => {
+  try {
+    const empId = myEmpId(req, res); if (!empId) return;
+    res.json(await balanceFor(empId));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // My leave requests.
-router.get('/my', requireLogin, (req, res) => {
-  const empId = myEmpId(req, res); if (!empId) return;
-  const rows = db.prepare('SELECT * FROM leave_requests WHERE employee_id = ? ORDER BY applied_at DESC').all(empId);
-  res.json({ leaves: rows });
+router.get('/my', requireLogin, async (req, res) => {
+  try {
+    const empId = myEmpId(req, res); if (!empId) return;
+    const rows = await db.prepare('SELECT * FROM leave_requests WHERE employee_id = ? ORDER BY applied_at DESC').all(empId);
+    res.json({ leaves: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Team/company leave calendar — approved leaves overlapping a month.
-router.get('/calendar', requirePerm('leave:approve'), (req, res) => {
-  const month = req.query.month || new Date().toISOString().slice(0, 7);
-  const base = `SELECT lr.*, e.name AS employee_name, e.emp_code FROM leave_requests lr
+router.get('/calendar', requirePerm('leave:approve'), async (req, res) => {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const base = `SELECT lr.*, e.name AS employee_name, e.emp_code FROM leave_requests lr
                 JOIN employees e ON e.id = lr.employee_id
                 WHERE lr.status='approved' AND NOT (lr.to_date < ? OR lr.from_date > ?)`;
-  const lo = `${month}-01`, hi = `${month}-31`;
-  let rows;
-  if (req.session.user.role === 'MANAGER') {
-    const ids = teamEmployeeIds(req);
-    if (ids.length === 0) return res.json({ month, leaves: [] });
-    rows = db.prepare(base + ` AND lr.employee_id IN (${ids.map(() => '?').join(',')}) ORDER BY lr.from_date`).all(lo, hi, ...ids);
-  } else {
-    rows = db.prepare(base + ' ORDER BY lr.from_date').all(lo, hi);
+    const lo = `${month}-01`, hi = `${month}-31`;
+    let rows;
+    if (req.session.user.role === 'MANAGER') {
+      const ids = await teamEmployeeIds(req);
+      if (ids.length === 0) return res.json({ month, leaves: [] });
+      rows = await db.prepare(base + ` AND lr.employee_id IN (${ids.map(() => '?').join(',')}) ORDER BY lr.from_date`).all(lo, hi, ...ids);
+    } else {
+      rows = await db.prepare(base + ' ORDER BY lr.from_date').all(lo, hi);
+    }
+    res.json({ month, leaves: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json({ month, leaves: rows });
 });
 
 // ---- Comp-off credits (HR/Super grant; e.g. for working a holiday/weekend) ----
-router.get('/compoff', requirePerm('leave:approve'), (req, res) => {
-  const empId = req.query.employee_id;
-  const base = `SELECT cc.*, e.name AS employee_name FROM comp_off_credits cc JOIN employees e ON e.id = cc.employee_id`;
-  const rows = empId
-    ? db.prepare(base + ' WHERE cc.employee_id = ? ORDER BY cc.created_at DESC').all(empId)
-    : db.prepare(base + ' ORDER BY cc.created_at DESC').all();
-  res.json({ credits: rows });
+router.get('/compoff', requirePerm('leave:approve'), async (req, res) => {
+  try {
+    const empId = req.query.employee_id;
+    const base = `SELECT cc.*, e.name AS employee_name FROM comp_off_credits cc JOIN employees e ON e.id = cc.employee_id`;
+    const rows = empId
+      ? await db.prepare(base + ' WHERE cc.employee_id = ? ORDER BY cc.created_at DESC').all(empId)
+      : await db.prepare(base + ' ORDER BY cc.created_at DESC').all();
+    res.json({ credits: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-router.post('/compoff', requirePerm('leave:approve'), (req, res) => {
-  const { employee_id, days, reason } = req.body || {};
-  if (!employee_id || !days) return res.status(400).json({ error: 'Employee and days are required.' });
-  if (!canActOnEmployee(req, employee_id)) return res.status(403).json({ error: 'Not in your team.' });
-  const r = db.prepare('INSERT INTO comp_off_credits (employee_id, days, reason, granted_by) VALUES (?, ?, ?, ?)')
-    .run(employee_id, Number(days) || 0, reason || '', req.session.user.id);
-  res.json({ id: r.lastInsertRowid });
+router.post('/compoff', requirePerm('leave:approve'), async (req, res) => {
+  try {
+    const { employee_id, days, reason } = req.body || {};
+    if (!employee_id || !days) return res.status(400).json({ error: 'Employee and days are required.' });
+    if (!(await canActOnEmployee(req, employee_id))) return res.status(403).json({ error: 'Not in your team.' });
+    const r = await db.prepare('INSERT INTO comp_off_credits (employee_id, days, reason, granted_by) VALUES (?, ?, ?, ?)')
+      .run(employee_id, Number(days) || 0, reason || '', req.session.user.id);
+    res.json({ id: r.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-router.delete('/compoff/:id', requirePerm('leave:approve'), (req, res) => {
-  db.prepare('DELETE FROM comp_off_credits WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+router.delete('/compoff/:id', requirePerm('leave:approve'), async (req, res) => {
+  try {
+    await db.prepare('DELETE FROM comp_off_credits WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // All leave requests for approvers (HR/Super = all; Manager = team), optional status filter.
-router.get('/', requirePerm('leave:approve'), (req, res) => {
-  const status = req.query.status;
-  const base = `SELECT lr.*, e.name AS employee_name, e.emp_code
+router.get('/', requirePerm('leave:approve'), async (req, res) => {
+  try {
+    const status = req.query.status;
+    const base = `SELECT lr.*, e.name AS employee_name, e.emp_code
                FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id`;
-  let where = '';
-  let params = [];
-  if (req.session.user.role === 'MANAGER') {
-    const ids = teamEmployeeIds(req);
-    if (ids.length === 0) return res.json({ leaves: [] });
-    where = ` WHERE lr.employee_id IN (${ids.map(() => '?').join(',')})`;
-    params = ids;
+    let where = '';
+    let params = [];
+    if (req.session.user.role === 'MANAGER') {
+      const ids = await teamEmployeeIds(req);
+      if (ids.length === 0) return res.json({ leaves: [] });
+      where = ` WHERE lr.employee_id IN (${ids.map(() => '?').join(',')})`;
+      params = ids;
+    }
+    if (status) { where += (where ? ' AND' : ' WHERE') + ' lr.status = ?'; params.push(status); }
+    const rows = await db.prepare(base + where + ' ORDER BY lr.applied_at DESC').all(...params);
+    res.json({ leaves: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  if (status) { where += (where ? ' AND' : ' WHERE') + ' lr.status = ?'; params.push(status); }
-  const rows = db.prepare(base + where + ' ORDER BY lr.applied_at DESC').all(...params);
-  res.json({ leaves: rows });
 });
 
 // Approve or reject.
@@ -176,9 +204,9 @@ router.post('/:id/decision', requirePerm('leave:approve'), async (req, res) => {
   if (!['approved', 'rejected'].includes(decision))
     return res.status(400).json({ error: 'decision must be approved or rejected' });
 
-  const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
+  const lr = await db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'Not found' });
-  if (!canActOnEmployee(req, lr.employee_id)) return res.status(403).json({ error: 'Not in your team.' });
+  if (!(await canActOnEmployee(req, lr.employee_id))) return res.status(403).json({ error: 'Not in your team.' });
 
   await applyLeaveDecision(lr.id, decision, comment, req.session.user.id);
   res.json({ ok: true });

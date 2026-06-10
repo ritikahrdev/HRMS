@@ -15,7 +15,7 @@ router.get('/access', requireSuperAdmin, (req, res) => {
 });
 
 // Save the per-role permission overrides (Super Admin only).
-router.put('/access', requireSuperAdmin, (req, res) => {
+router.put('/access', requireSuperAdmin, async (req, res) => {
   const incoming = (req.body && req.body.rolePermissions) || {};
   const valid = new Set(ALL_PERMISSIONS.map((p) => p.key));
   const clean = {};
@@ -25,7 +25,7 @@ router.put('/access', requireSuperAdmin, (req, res) => {
       clean[role] = incoming[role].filter((p) => valid.has(p));
     }
   }
-  saveSettings({ rolePermissions: clean });
+  await saveSettings({ rolePermissions: clean });
   res.json({ ok: true });
 });
 
@@ -40,7 +40,7 @@ router.get('/', requirePerm('settings:manage'), (req, res) => {
   res.json({ settings: getSettings() });
 });
 
-router.put('/', requirePerm('settings:manage'), (req, res) => {
+router.put('/', requirePerm('settings:manage'), async (req, res) => {
   const allowed = [
     'companyName', 'legalName', 'address', 'gst', 'cin', 'pan', 'email', 'phone',
     'website', 'currency', 'slipFooter', 'workStart', 'workEnd', 'workingDays',
@@ -51,13 +51,13 @@ router.put('/', requirePerm('settings:manage'), (req, res) => {
   ];
   const partial = {};
   for (const k of allowed) if (k in req.body) partial[k] = req.body[k];
-  res.json({ settings: saveSettings(partial) });
+  res.json({ settings: await saveSettings(partial) });
 });
 
 // Logo upload.
-router.post('/logo', requirePerm('settings:manage'), upload.single('logo'), (req, res) => {
+router.post('/logo', requirePerm('settings:manage'), upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  const s = saveSettings({ logoFile: req.file.filename });
+  const s = await saveSettings({ logoFile: req.file.filename });
   res.json({ logoFile: s.logoFile });
 });
 

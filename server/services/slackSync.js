@@ -41,8 +41,8 @@ function classifyMessage(rawText, slack) {
 }
 
 // Build a resolver mapping a Slack user id -> employee id.
-function buildResolver(slackUsers) {
-  const employees = db.prepare('SELECT id, emp_code, email, name, slack_id FROM employees').all();
+async function buildResolver(slackUsers) {
+  const employees = await db.prepare('SELECT id, emp_code, email, name, slack_id FROM employees').all();
   const byId = {}, byEmail = {}, byName = {};
   for (const e of employees) {
     if (e.slack_id) byId[e.slack_id] = e.id;
@@ -72,9 +72,9 @@ const upsertAttendance = db.prepare(`
 // Maps Slack messages (for one day) to attendance and upserts.
 // Returns { total, synced, unmatched, invalid, unmatchedKeys, classified, mode:'slack' }.
 // `classified` lists per-message outcomes so the caller can react/notify.
-function processSlackMessages(messages, slackUsers, date) {
+async function processSlackMessages(messages, slackUsers, date) {
   const slack = getSettings().slack || {};
-  const resolve = buildResolver(slackUsers);
+  const resolve = await buildResolver(slackUsers);
 
   const perEmp = {};
   const classified = []; // { ts, user, empId, valid, status, wfh }
@@ -110,7 +110,7 @@ function processSlackMessages(messages, slackUsers, date) {
 
   for (const [empId, v] of Object.entries(perEmp)) {
     const ci = (v.status === 'leave' || v.status === 'absent') ? null : (isNaN(v.time) ? null : v.time.toISOString());
-    upsertAttendance.run(Number(empId), date, ci, v.status, v.wfh ? 1 : 0);
+    await upsertAttendance.run(Number(empId), date, ci, v.status, v.wfh ? 1 : 0);
     result.synced++;
   }
   return result;
@@ -209,7 +209,7 @@ async function syncFromSlack(date) {
     } catch (e) { /* ignore individual failures */ }
   }
 
-  const result = processSlackMessages(messages, slackUsers, date);
+  const result = await processSlackMessages(messages, slackUsers, date);
   // React + notify (best-effort; never blocks the sync result).
   try {
     const r = await applyReactions(s.botToken, s.channelId, result.classified, s);
@@ -233,7 +233,7 @@ async function processSlackEvent(event) {
     const ud = await slackGet(s.botToken, 'users.info', { user: event.user });
     if (ud.ok && ud.user) slackUsers[event.user] = { email: (ud.user.profile && ud.user.profile.email) || '', real_name: ud.user.real_name || ud.user.name || '' };
   } catch (e) { /* ignore */ }
-  const resolve = buildResolver(slackUsers);
+  const resolve = await buildResolver(slackUsers);
   const empId = resolve(event.user);
   const cls = classifyMessage(event.text, s);
   const date = new Date(Number(event.ts) * 1000).toISOString().slice(0, 10);
@@ -241,7 +241,7 @@ async function processSlackEvent(event) {
   // Record attendance if valid + matched.
   if (empId && cls.valid) {
     const ci = (cls.status === 'leave' || cls.status === 'absent') ? null : new Date(Number(event.ts) * 1000).toISOString();
-    upsertAttendance.run(empId, date, ci, cls.status, cls.wfh ? 1 : 0);
+    await upsertAttendance.run(empId, date, ci, cls.status, cls.wfh ? 1 : 0);
   }
 
   // React + notify.

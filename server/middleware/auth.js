@@ -26,17 +26,17 @@ function requireSuperAdmin(req, res, next) {
 }
 
 // Returns the employee ids managed by the current user (their direct reports).
-function teamEmployeeIds(req) {
+async function teamEmployeeIds(req) {
   const myEmpId = req.session.user.employeeId;
   if (!myEmpId) return [];
-  return db.prepare('SELECT id FROM employees WHERE manager_id = ?').all(myEmpId).map((r) => r.id);
+  return (await db.prepare('SELECT id FROM employees WHERE manager_id = ?').all(myEmpId)).map((r) => r.id);
 }
 
 // True if the user may act on a given employee record (admins: any; managers: own team).
-function canActOnEmployee(req, employeeId) {
+async function canActOnEmployee(req, employeeId) {
   const role = req.session.user.role;
   if (role === 'SUPER_ADMIN' || role === 'HR_ADMIN' || role === 'FINANCE_ADMIN') return true;
-  if (role === 'MANAGER') return teamEmployeeIds(req).includes(Number(employeeId));
+  if (role === 'MANAGER') return (await teamEmployeeIds(req)).includes(Number(employeeId));
   return req.session.user.employeeId === Number(employeeId);
 }
 

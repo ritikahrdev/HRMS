@@ -7,7 +7,13 @@
 // It also translates the SQLite SQL dialect the app was written in into
 // Postgres on the fly (placeholders, datetime/date(), RETURNING id, etc.).
 // ---------------------------------------------------------------------------
-const { Pool } = require('pg');
+const pglib = require('pg');
+const { Pool } = pglib;
+
+// Postgres returns BIGINT (incl. COUNT/SUM) as a STRING by default. SQLite
+// returned numbers, and the app does truthiness/arithmetic on counts — so parse
+// bigint as a JS number (safe: our counts/ids fit well within 2^53).
+pglib.types.setTypeParser(20, (v) => (v === null ? null : parseInt(v, 10)));
 
 const connectionString =
   process.env.DATABASE_URL ||
@@ -60,10 +66,16 @@ function translate(sql) {
   return { text, order };
 }
 
+// Tables whose primary key is NOT an `id` column — never append RETURNING id.
+const NO_ID_TABLES = new Set(['payroll_runs', 'settings', 'user_sessions']);
+
 // Append RETURNING id to a bare INSERT so we can report lastInsertRowid.
 function withReturning(text) {
   if (/\breturning\b/i.test(text)) return { text, hasReturning: true };
-  if (/^\s*insert\b/i.test(text)) return { text: text.replace(/;?\s*$/, '') + ' RETURNING id', hasReturning: true };
+  const m = text.match(/^\s*insert\s+into\s+"?(\w+)"?/i);
+  if (m && !NO_ID_TABLES.has(m[1].toLowerCase())) {
+    return { text: text.replace(/;?\s*$/, '') + ' RETURNING id', hasReturning: true };
+  }
   return { text, hasReturning: false };
 }
 

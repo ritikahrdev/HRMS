@@ -29,13 +29,13 @@ async function sendMail({ to, subject, html, text, attachments }) {
   );
 
   if (!to) {
-    logStmt.run('', subject || '', 'error', 'No recipient', '');
+    await logStmt.run('', subject || '', 'error', 'No recipient', '');
     return { ok: false, reason: 'no-recipient' };
   }
 
   const t = getTransporter();
   if (!t) {
-    logStmt.run(to, subject || '', 'disabled', null, text || html || '');
+    await logStmt.run(to, subject || '', 'disabled', null, text || html || '');
     console.log(`[email disabled] would send "${subject}" to ${to}`);
     return { ok: false, reason: 'disabled' };
   }
@@ -49,10 +49,10 @@ async function sendMail({ to, subject, html, text, attachments }) {
       html: html || undefined,
       attachments: attachments || undefined,
     });
-    logStmt.run(to, subject || '', 'sent', null, text || html || '');
+    await logStmt.run(to, subject || '', 'sent', null, text || html || '');
     return { ok: true };
   } catch (err) {
-    logStmt.run(to, subject || '', 'error', String(err.message || err), '');
+    await logStmt.run(to, subject || '', 'error', String(err.message || err), '');
     console.error('Email send failed:', err.message);
     return { ok: false, reason: 'error', error: err.message };
   }

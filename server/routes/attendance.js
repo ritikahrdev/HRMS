@@ -53,26 +53,30 @@ function statusForHours(hours) {
 }
 
 // Today's status for the logged-in employee (incl. the clock-in window state).
-router.get('/today', requireLogin, (req, res) => {
-  const empId = myEmpId(req, res); if (!empId) return;
-  const row = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, todayStr());
-  const { cutoff, label, allDay } = clockInCutoff();
-  res.json({
-    date: todayStr(),
-    attendance: row || null,
-    window: { open: new Date() <= cutoff, cutoff: label, allDay },
-  });
+router.get('/today', requireLogin, async (req, res) => {
+  try {
+    const empId = myEmpId(req, res); if (!empId) return;
+    const row = await db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, todayStr());
+    const { cutoff, label, allDay } = clockInCutoff();
+    res.json({
+      date: todayStr(),
+      attendance: row || null,
+      window: { open: new Date() <= cutoff, cutoff: label, allDay },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.post('/check-in', requireLogin, (req, res) => {
+router.post('/check-in', requireLogin, async (req, res) => {
   try {
     const empId = myEmpId(req, res); if (!empId) return;
     const date = todayStr();
-    const existing = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, date);
+    const existing = await db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, date);
     if (existing && existing.check_in) return res.status(400).json({ error: 'You have already clocked in today.' });
 
     // Marking today's mood is mandatory before attendance can be marked.
-    const mood = db.prepare('SELECT 1 FROM mood_checkins WHERE employee_id = ? AND date = ?').get(empId, date);
+    const mood = await db.prepare('SELECT 1 FROM mood_checkins WHERE employee_id = ? AND date = ?').get(empId, date);
     if (!mood) return res.status(400).json({ error: 'Please mark your mood for today first — it is required before marking attendance.', needMood: true });
 
     const { cutoff, label, allDay } = clockInCutoff();
@@ -97,8 +101,8 @@ router.post('/check-in', requireLogin, (req, res) => {
       lateMin = Math.max(0, Math.round((new Date(now) - shiftStart) / 60000));
     }
 
-    if (existing) db.prepare('UPDATE attendance SET check_in = ?, status = ?, late_minutes = ? WHERE id = ?').run(now, 'present', lateMin, existing.id);
-    else db.prepare('INSERT INTO attendance (employee_id, date, check_in, status, late_minutes) VALUES (?, ?, ?, ?, ?)').run(empId, date, now, 'present', lateMin);
+    if (existing) await db.prepare('UPDATE attendance SET check_in = ?, status = ?, late_minutes = ? WHERE id = ?').run(now, 'present', lateMin, existing.id);
+    else await db.prepare('INSERT INTO attendance (employee_id, date, check_in, status, late_minutes) VALUES (?, ?, ?, ?, ?)').run(empId, date, now, 'present', lateMin);
     res.json({ ok: true, checkIn: now, lateMinutes: lateMin });
   } catch (err) {
     console.error('Error checking in:', err);
@@ -106,11 +110,11 @@ router.post('/check-in', requireLogin, (req, res) => {
   }
 });
 
-router.post('/check-out', requireLogin, (req, res) => {
+router.post('/check-out', requireLogin, async (req, res) => {
   try {
     const empId = myEmpId(req, res); if (!empId) return;
     const date = todayStr();
-    const row = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, date);
+    const row = await db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(empId, date);
     if (!row || !row.check_in) return res.status(400).json({ error: 'Please clock in first.' });
     if (row.check_out) return res.status(400).json({ error: 'You have already clocked out today.' });
     const now = new Date().toISOString();
@@ -118,7 +122,7 @@ router.post('/check-out', requireLogin, (req, res) => {
     const status = statusForHours(hours);
     const full = Number(getSettings().fullDayHours || 9);
     const ot = +Math.max(0, hours - full).toFixed(2);
-    db.prepare('UPDATE attendance SET check_out = ?, work_hours = ?, status = ?, ot_hours = ? WHERE id = ?').run(now, +hours.toFixed(2), status, ot, row.id);
+    await db.prepare('UPDATE attendance SET check_out = ?, work_hours = ?, status = ?, ot_hours = ? WHERE id = ?').run(now, +hours.toFixed(2), status, ot, row.id);
     res.json({ ok: true, checkOut: now, workHours: +hours.toFixed(2), status, otHours: ot });
   } catch (err) {
     console.error('Error checking out:', err);
@@ -127,7 +131,7 @@ router.post('/check-out', requireLogin, (req, res) => {
 });
 
 // Logged-in employee's history.
-router.get('/my', requireLogin, (req, res) => {
+router.get('/my', requireLogin, async (req, res) => {
   try {
     const empId = myEmpId(req, res); if (!empId) return;
     const month = req.query.month;
@@ -138,10 +142,10 @@ router.get('/my', requireLogin, (req, res) => {
     }
 
     const rows = month
-      ? db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date LIKE ? ORDER BY date DESC').all(empId, `${month}-%`)
-      : db.prepare('SELECT * FROM attendance WHERE employee_id = ? ORDER BY date DESC LIMIT 60').all(empId);
+      ? await db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date LIKE ? ORDER BY date DESC').all(empId, `${month}-%`)
+      : await db.prepare('SELECT * FROM attendance WHERE employee_id = ? ORDER BY date DESC LIMIT 60').all(empId);
     // Attach the mood/happiness marked on each date (captured with attendance).
-    const moods = db.prepare('SELECT date, score, note FROM mood_checkins WHERE employee_id = ?').all(empId);
+    const moods = await db.prepare('SELECT date, score, note FROM mood_checkins WHERE employee_id = ?').all(empId);
     const moodByDate = {}; for (const m of moods) moodByDate[m.date] = m;
     for (const r of rows) { const m = moodByDate[r.date]; r.mood_score = m ? m.score : null; r.mood_note = m ? m.note : null; }
     res.json({ attendance: rows });
@@ -152,7 +156,8 @@ router.get('/my', requireLogin, (req, res) => {
 });
 
 // Who is present / absent / on leave for a date (HR/Finance/Super = all; Manager = team).
-router.get('/day', requireLogin, (req, res) => {
+router.get('/day', requireLogin, async (req, res) => {
+  try {
   const role = req.session.user.role;
   const viewAll = can(role, 'attendance:viewAll');
   const viewTeam = can(role, 'attendance:viewTeam');
@@ -160,19 +165,19 @@ router.get('/day', requireLogin, (req, res) => {
 
   const date = req.query.date || todayStr();
   let employees;
-  if (viewAll) employees = db.prepare("SELECT * FROM employees WHERE status='active' ORDER BY name").all();
+  if (viewAll) employees = await db.prepare("SELECT * FROM employees WHERE status='active' ORDER BY name").all();
   else {
-    const ids = teamEmployeeIds(req);
-    employees = ids.length ? db.prepare(`SELECT * FROM employees WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY name`).all(...ids) : [];
+    const ids = await teamEmployeeIds(req);
+    employees = ids.length ? await db.prepare(`SELECT * FROM employees WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY name`).all(...ids) : [];
   }
 
-  const att = db.prepare('SELECT * FROM attendance WHERE date = ?').all(date);
+  const att = await db.prepare('SELECT * FROM attendance WHERE date = ?').all(date);
   const attMap = {}; for (const a of att) attMap[a.employee_id] = a;
-  const leaves = db.prepare("SELECT employee_id FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(date, date);
+  const leaves = await db.prepare("SELECT employee_id FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(date, date);
   const onLeave = new Set(leaves.map((l) => l.employee_id));
-  const holiday = db.prepare('SELECT name FROM holidays WHERE date = ?').get(date);
+  const holiday = await db.prepare('SELECT name FROM holidays WHERE date = ?').get(date);
   // Mood/happiness marked for this date, keyed by employee.
-  const moods = db.prepare('SELECT employee_id, score, note FROM mood_checkins WHERE date = ?').all(date);
+  const moods = await db.prepare('SELECT employee_id, score, note FROM mood_checkins WHERE date = ?').all(date);
   const moodMap = {}; for (const m of moods) moodMap[m.employee_id] = m;
 
   const list = employees.map((e) => {
@@ -188,10 +193,13 @@ router.get('/day', requireLogin, (req, res) => {
   const summary = { present: 0, half: 0, leave: 0, absent: 0, holiday: 0 };
   for (const l of list) summary[l.status] = (summary[l.status] || 0) + 1;
   res.json({ date, summary, list, holiday: holiday ? holiday.name : null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Analyse one month for a fixed set of employees. Returns rich aggregates.
-function analyseMonth(month, employees) {
+async function analyseMonth(month, employees) {
   const [y, mo] = month.split('-').map(Number);
   const daysInMonth = new Date(y, mo, 0).getDate();
   const todayISO = todayStr();
@@ -201,9 +209,9 @@ function analyseMonth(month, employees) {
 
   const monthStart = `${month}-01`;
   const monthEnd = `${month}-${pad(daysInMonth)}`;
-  const att = db.prepare('SELECT employee_id, date, status, check_in, work_hours, late_minutes FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
-  const leaves = db.prepare("SELECT employee_id, from_date, to_date FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(monthEnd, monthStart);
-  const holidays = db.prepare('SELECT date, name FROM holidays WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const att = await db.prepare('SELECT employee_id, date, status, check_in, work_hours, late_minutes FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const leaves = await db.prepare("SELECT employee_id, from_date, to_date FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(monthEnd, monthStart);
+  const holidays = await db.prepare('SELECT date, name FROM holidays WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
   const holidayByDate = {}; for (const h of holidays) holidayByDate[h.date] = h.name;
 
   const attByDate = {};
@@ -301,7 +309,8 @@ function analyseMonth(month, employees) {
 
 // Monthly attendance insights: calendar + rich analytics.
 // ?month=YYYY-MM  (HR/Super = all; Manager = own team)
-router.get('/insights', requireLogin, (req, res) => {
+router.get('/insights', requireLogin, async (req, res) => {
+  try {
   const role = req.session.user.role;
   const viewAll = can(role, 'attendance:viewAll');
   const viewTeam = can(role, 'attendance:viewTeam');
@@ -310,19 +319,19 @@ router.get('/insights', requireLogin, (req, res) => {
   const month = req.query.month && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : todayStr().slice(0, 7);
 
   let employees;
-  if (viewAll) employees = db.prepare("SELECT id, name, emp_code, department FROM employees WHERE status='active'").all();
+  if (viewAll) employees = await db.prepare("SELECT id, name, emp_code, department FROM employees WHERE status='active'").all();
   else {
-    const ids = teamEmployeeIds(req);
-    employees = ids.length ? db.prepare(`SELECT id, name, emp_code, department FROM employees WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) : [];
+    const ids = await teamEmployeeIds(req);
+    employees = ids.length ? await db.prepare(`SELECT id, name, emp_code, department FROM employees WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) : [];
   }
 
-  const cur = analyseMonth(month, employees);
+  const cur = await analyseMonth(month, employees);
 
   // Previous month (for trend comparison).
   const [py, pmo] = month.split('-').map(Number);
   const prevD = new Date(py, pmo - 2, 1);
   const prevMonth = `${prevD.getFullYear()}-${pad(prevD.getMonth() + 1)}`;
-  const prev = analyseMonth(prevMonth, employees);
+  const prev = await analyseMonth(prevMonth, employees);
 
   // Best/worst day.
   const wd = cur.days.filter((x) => x.type === 'working' && x.rate != null);
@@ -379,15 +388,18 @@ router.get('/insights', requireLogin, (req, res) => {
     topAttendees,
     topAbsentees,
   });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Create or edit an attendance record (HR/Super; Manager for own team).
 // Accepts optional check_in / check_out as "HH:MM".
-router.post('/mark', requirePerm('attendance:correct'), (req, res) => {
+router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
   try {
     const { employee_id, date, status } = req.body || {};
     if (!employee_id || !date || !status) return res.status(400).json({ error: 'employee_id, date, status required' });
-    if (!canActOnEmployee(req, employee_id)) return res.status(403).json({ error: 'Not in your team.' });
+    if (!(await canActOnEmployee(req, employee_id))) return res.status(403).json({ error: 'Not in your team.' });
 
     // Validate date format (YYYY-MM-DD)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -400,21 +412,16 @@ router.post('/mark', requirePerm('attendance:correct'), (req, res) => {
     if (ci && co) hours = +(((new Date(co) - new Date(ci)) / 36e5) || 0).toFixed(2);
 
     // Atomic read-modify-write (node:sqlite has no db.transaction(); use BEGIN/COMMIT).
-    db.exec('BEGIN');
-    try {
-      const existing = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(employee_id, date);
+    await db.withTransaction(async (tx) => {
+      const existing = await tx.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(employee_id, date);
       if (existing) {
-        db.prepare('UPDATE attendance SET status = ?, check_in = ?, check_out = ?, work_hours = ? WHERE id = ?')
+        await tx.prepare('UPDATE attendance SET status = ?, check_in = ?, check_out = ?, work_hours = ? WHERE id = ?')
           .run(status, ci, co, hours, existing.id);
       } else {
-        db.prepare('INSERT INTO attendance (employee_id, date, status, check_in, check_out, work_hours) VALUES (?, ?, ?, ?, ?, ?)')
+        await tx.prepare('INSERT INTO attendance (employee_id, date, status, check_in, check_out, work_hours) VALUES (?, ?, ?, ?, ?, ?)')
           .run(employee_id, date, status, ci, co, hours);
       }
-      db.exec('COMMIT');
-    } catch (txErr) {
-      db.exec('ROLLBACK');
-      throw txErr;
-    }
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('Error marking attendance:', err);
@@ -423,18 +430,18 @@ router.post('/mark', requirePerm('attendance:correct'), (req, res) => {
 });
 
 // Delete an attendance record.
-router.post('/delete', requirePerm('attendance:correct'), (req, res) => {
+router.post('/delete', requirePerm('attendance:correct'), async (req, res) => {
   try {
     const { employee_id, date } = req.body || {};
     if (!employee_id || !date) return res.status(400).json({ error: 'employee_id and date required' });
-    if (!canActOnEmployee(req, employee_id)) return res.status(403).json({ error: 'Not in your team.' });
+    if (!(await canActOnEmployee(req, employee_id))) return res.status(403).json({ error: 'Not in your team.' });
 
     // Validate date format
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
     }
 
-    db.prepare('DELETE FROM attendance WHERE employee_id = ? AND date = ?').run(employee_id, date);
+    await db.prepare('DELETE FROM attendance WHERE employee_id = ? AND date = ?').run(employee_id, date);
     res.json({ ok: true });
   } catch (err) {
     console.error('Error deleting attendance:', err);
@@ -445,7 +452,7 @@ router.post('/delete', requirePerm('attendance:correct'), (req, res) => {
 // Sync attendance from a Google Sheet / CSV link.
 router.post('/sync', requirePerm('attendance:viewAll'), async (req, res) => {
   try {
-    if (req.body && req.body.url) saveSettings({ attendanceSheetUrl: String(req.body.url).trim() });
+    if (req.body && req.body.url) await saveSettings({ attendanceSheetUrl: String(req.body.url).trim() });
     const result = await syncFromUrl(req.body && req.body.url);
     res.json(result);
   } catch (e) {
@@ -473,10 +480,10 @@ router.get('/slack-preview', requirePerm('attendance:viewAll'), (req, res) => {
 });
 
 // Sync attendance from an uploaded Excel/CSV file.
-router.post('/sync-file', requirePerm('attendance:viewAll'), memoryUpload.single('file'), (req, res) => {
+router.post('/sync-file', requirePerm('attendance:viewAll'), memoryUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    const result = syncFromBuffer(req.file.buffer);
+    const result = await syncFromBuffer(req.file.buffer);
     res.json(result);
   } catch (e) {
     res.status(400).json({ error: 'Could not read the file. Please upload an .xlsx, .xls or .csv file. (' + e.message + ')' });
@@ -497,6 +504,7 @@ const CORRECTION_TYPES = {
 
 // Employee submits a correction request.
 router.post('/correction', requireLogin, async (req, res) => {
+  try {
   const empId = myEmpId(req, res); if (!empId) return;
   const { type, requested_status, requested_in, requested_out, reason } = req.body || {};
   // Attendance requests can only be raised for the present day.
@@ -508,23 +516,23 @@ router.post('/correction', requireLogin, async (req, res) => {
   if (!reason || !reason.trim()) return res.status(400).json({ error: 'Reason is required.' });
 
   // Don't allow duplicate pending requests for today
-  const existing = db.prepare("SELECT id FROM attendance_corrections WHERE employee_id = ? AND date = ? AND status = 'pending'").get(empId, date);
+  const existing = await db.prepare("SELECT id FROM attendance_corrections WHERE employee_id = ? AND date = ? AND status = 'pending'").get(empId, date);
   if (existing) return res.status(400).json({ error: 'You already have a pending request for today.' });
 
   const corrType = CORRECTION_TYPES[type] ? type : 'regularization';
-  const r = db.prepare(
+  const r = await db.prepare(
     'INSERT INTO attendance_corrections (employee_id, date, type, requested_status, requested_in, requested_out, reason) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(empId, date, corrType, requested_status, requested_in || null, requested_out || null, reason.trim());
 
   // Notify approver
-  const emp = db.prepare('SELECT name, email, manager_id FROM employees WHERE id = ?').get(empId);
+  const emp = await db.prepare('SELECT name, email, manager_id FROM employees WHERE id = ?').get(empId);
   const typeInfo = CORRECTION_TYPES[corrType];
   let approverEmails = [];
   if (emp && emp.manager_id) {
-    const mgr = db.prepare('SELECT email FROM employees WHERE id = ?').get(emp.manager_id);
+    const mgr = await db.prepare('SELECT email FROM employees WHERE id = ?').get(emp.manager_id);
     if (mgr && mgr.email) approverEmails.push(mgr.email);
   }
-  const hrAdmins = db.prepare("SELECT u.email FROM users u WHERE u.role IN ('SUPER_ADMIN','HR_ADMIN') AND u.email IS NOT NULL").all();
+  const hrAdmins = await db.prepare("SELECT u.email FROM users u WHERE u.role IN ('SUPER_ADMIN','HR_ADMIN') AND u.email IS NOT NULL").all();
   for (const a of hrAdmins) if (a.email && !approverEmails.includes(a.email)) approverEmails.push(a.email);
 
   if (approverEmails.length) {
@@ -547,65 +555,81 @@ router.post('/correction', requireLogin, async (req, res) => {
   }
 
   res.json({ id: r.lastInsertRowid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Employee cancels their own PENDING request.
-router.delete('/corrections/:id', requireLogin, (req, res) => {
+router.delete('/corrections/:id', requireLogin, async (req, res) => {
+  try {
   const empId = req.session.user.employeeId;
   if (!empId) return res.status(403).json({ error: 'No employee profile.' });
-  const c = db.prepare('SELECT * FROM attendance_corrections WHERE id = ?').get(req.params.id);
+  const c = await db.prepare('SELECT * FROM attendance_corrections WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Not found.' });
   if (c.employee_id !== empId) return res.status(403).json({ error: 'Not your request.' });
   if (c.status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be cancelled.' });
-  db.prepare('DELETE FROM attendance_corrections WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM attendance_corrections WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Employee's own correction requests.
-router.get('/corrections/my', requireLogin, (req, res) => {
-  const empId = myEmpId(req, res); if (!empId) return;
-  res.json({ corrections: db.prepare('SELECT * FROM attendance_corrections WHERE employee_id = ? ORDER BY applied_at DESC LIMIT 30').all(empId) });
+router.get('/corrections/my', requireLogin, async (req, res) => {
+  try {
+    const empId = myEmpId(req, res); if (!empId) return;
+    res.json({ corrections: await db.prepare('SELECT * FROM attendance_corrections WHERE employee_id = ? ORDER BY applied_at DESC LIMIT 30').all(empId) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Pending/all corrections for approvers (HR/Super = all; Manager = team).
-router.get('/corrections', requirePerm('attendance:correct'), (req, res) => {
+router.get('/corrections', requirePerm('attendance:correct'), async (req, res) => {
+  try {
   const role = req.session.user.role;
   const base = `SELECT c.*, e.name AS employee_name, e.emp_code, e.department FROM attendance_corrections c JOIN employees e ON e.id = c.employee_id`;
   let rows;
   if (role === 'MANAGER') {
-    const ids = teamEmployeeIds(req);
-    rows = ids.length ? db.prepare(base + ` WHERE c.employee_id IN (${ids.map(() => '?').join(',')}) ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.applied_at DESC`).all(...ids) : [];
+    const ids = await teamEmployeeIds(req);
+    rows = ids.length ? await db.prepare(base + ` WHERE c.employee_id IN (${ids.map(() => '?').join(',')}) ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.applied_at DESC`).all(...ids) : [];
   } else {
-    rows = db.prepare(base + " ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.applied_at DESC").all();
+    rows = await db.prepare(base + " ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.applied_at DESC").all();
   }
   res.json({ corrections: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Approve / reject a correction.
 router.post('/corrections/:id/decision', requirePerm('attendance:correct'), async (req, res) => {
+  try {
   const { decision, comment } = req.body || {};
   if (!['approved', 'rejected'].includes(decision)) return res.status(400).json({ error: 'decision must be approved or rejected' });
-  const c = db.prepare('SELECT * FROM attendance_corrections WHERE id = ?').get(req.params.id);
+  const c = await db.prepare('SELECT * FROM attendance_corrections WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Not found' });
-  if (!canActOnEmployee(req, c.employee_id)) return res.status(403).json({ error: 'Not in your team.' });
+  if (!(await canActOnEmployee(req, c.employee_id))) return res.status(403).json({ error: 'Not in your team.' });
 
   // Approvals are same-day only: a request can only be approved on its own day.
   if (decision === 'approved' && c.date !== todayStr()) {
     return res.status(400).json({ error: `This request was for ${c.date} and can only be approved on the same day. It has expired — please reject it.` });
   }
 
-  db.prepare("UPDATE attendance_corrections SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
+  await db.prepare("UPDATE attendance_corrections SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
     .run(decision, comment || '', req.session.user.id, c.id);
 
   if (decision === 'approved') {
-    const existing = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(c.employee_id, c.date);
+    const existing = await db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(c.employee_id, c.date);
     const ci = c.requested_in ? `${c.date}T${c.requested_in}:00` : (existing ? existing.check_in : null);
     const co = c.requested_out ? `${c.date}T${c.requested_out}:00` : (existing ? existing.check_out : null);
-    if (existing) db.prepare('UPDATE attendance SET status = ?, check_in = ?, check_out = ? WHERE id = ?').run(c.requested_status, ci, co, existing.id);
-    else db.prepare('INSERT INTO attendance (employee_id, date, status, check_in, check_out) VALUES (?, ?, ?, ?, ?)').run(c.employee_id, c.date, c.requested_status, ci, co);
+    if (existing) await db.prepare('UPDATE attendance SET status = ?, check_in = ?, check_out = ? WHERE id = ?').run(c.requested_status, ci, co, existing.id);
+    else await db.prepare('INSERT INTO attendance (employee_id, date, status, check_in, check_out) VALUES (?, ?, ?, ?, ?)').run(c.employee_id, c.date, c.requested_status, ci, co);
   }
 
-  const emp = db.prepare('SELECT name, email FROM employees WHERE id = ?').get(c.employee_id);
+  const emp = await db.prepare('SELECT name, email FROM employees WHERE id = ?').get(c.employee_id);
   const typeInfo = CORRECTION_TYPES[c.type] || CORRECTION_TYPES.regularization;
   if (emp && emp.email) {
     const isApproved = decision === 'approved';
@@ -626,6 +650,9 @@ router.post('/corrections/:id/decision', requirePerm('attendance:correct'), asyn
     });
   }
   res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
