@@ -49,21 +49,43 @@ function translate(sql) {
   text = text.replace(/datetime\(\s*'now'\s*\)/gi, `to_char(${NOW}, ${FMT})`);
   text = text.replace(/date\(\s*'now'\s*\)/gi, `to_char(${NOW}, 'YYYY-MM-DD')`);
 
-  // Named params (@foo) -> $n, recording the order of keys.
-  let order = null;
-  if (/@[a-zA-Z_]/.test(text)) {
-    order = [];
-    text = text.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, (_, name) => {
-      order.push(name);
-      return '$' + order.length;
-    });
-  } else {
-    // Positional ? -> $n
-    let i = 0;
-    text = text.replace(/\?/g, () => '$' + (++i));
-  }
+  return placeholderize(text);
+}
 
-  return { text, order };
+// Convert ? (positional) or @named placeholders to Postgres $1..$n, while
+// IGNORING any ? or @ that appears inside a single-quoted string literal
+// (e.g. an email address or a '%@x%' pattern). A statement uses either named
+// or positional placeholders, never both.
+function placeholderize(sql) {
+  const isWord = (ch) => ch && /[a-zA-Z0-9_]/.test(ch);
+  // 1) Detect "named" mode: a bare @word that is OUTSIDE any string literal.
+  let named = false;
+  for (let i = 0, inStr = false; i < sql.length; i++) {
+    const c = sql[i];
+    if (inStr) { if (c === "'") { if (sql[i + 1] === "'") { i++; continue; } inStr = false; } continue; }
+    if (c === "'") { inStr = true; continue; }
+    if (c === '@' && /[a-zA-Z_]/.test(sql[i + 1] || '')) { named = true; break; }
+  }
+  const order = named ? [] : null;
+  // 2) Replace placeholders outside string literals.
+  let out = '', n = 0, inStr = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (inStr) {
+      out += c;
+      if (c === "'") { if (sql[i + 1] === "'") { out += "'"; i++; continue; } inStr = false; }
+      continue;
+    }
+    if (c === "'") { inStr = true; out += c; continue; }
+    if (named && c === '@' && /[a-zA-Z_]/.test(sql[i + 1] || '')) {
+      let j = i + 1, name = '';
+      while (j < sql.length && isWord(sql[j])) { name += sql[j]; j++; }
+      order.push(name); out += '$' + (++n); i = j - 1; continue;
+    }
+    if (!named && c === '?') { out += '$' + (++n); continue; }
+    out += c;
+  }
+  return { text: out, order };
 }
 
 // Tables whose primary key is NOT an `id` column — never append RETURNING id.
