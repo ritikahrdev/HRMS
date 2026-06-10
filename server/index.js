@@ -88,6 +88,13 @@ app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/recruitment', require('./routes/recruitment'));
 app.use('/api/webhook', require('./routes/webhook'));
 app.use('/api/mood', require('./routes/mood'));
+app.use('/api/preboard', require('./routes/preboard'));
+
+// Public pre-boarding portal page (no login). A candidate opens this with a
+// private token to fill their joining form & upload documents before Day 1.
+app.get('/preboard/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'preboard.html'));
+});
 
 // Serve uploaded logo (read-only) for branding.
 // Includes path traversal protection.

@@ -11,18 +11,34 @@ const FIELDS = [
   'education', 'experience', 'blood_group', 'slack_id',
 ];
 
+// Fields a new hire / candidate may fill in themselves (self-service form and
+// the pre-boarding link). Excludes salary, role, department, manager, status.
+const SELF_ONBOARDING_FIELDS = [
+  'phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
+  'nationality', 'languages_known', 'emergency_name', 'emergency_phone',
+  'address', 'current_address', 'permanent_address',
+  'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'aadhaar',
+  'education', 'experience',
+];
+
 function normaliseRole(role) {
   const r = String(role || '').toUpperCase().replace(/[\s-]+/g, '_');
   return ROLES.includes(r) ? r : 'EMPLOYEE';
 }
 
 function nextEmpCode() {
-  const row = db.prepare('SELECT emp_code FROM employees WHERE emp_code LIKE ? ORDER BY id DESC').get('EMP%');
-  let n = 1;
-  if (row && row.emp_code) {
-    const m = row.emp_code.match(/(\d+)$/);
-    if (m) n = parseInt(m[1], 10) + 1;
+  // Use the true maximum numeric suffix across all EMP codes (not the
+  // last-inserted row, whose code may be lower after imports), then guarantee
+  // uniqueness in case of gaps or non-standard codes.
+  const rows = db.prepare("SELECT emp_code FROM employees WHERE emp_code LIKE 'EMP%'").all();
+  let max = 0;
+  for (const r of rows) {
+    const m = (r.emp_code || '').match(/(\d+)$/);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
   }
+  let n = max + 1;
+  const exists = db.prepare('SELECT 1 FROM employees WHERE emp_code = ?');
+  while (exists.get('EMP' + String(n).padStart(4, '0'))) n++;
   return 'EMP' + String(n).padStart(4, '0');
 }
 
@@ -78,4 +94,4 @@ function makeTempPassword() {
   return 'Welcome@' + Math.floor(1000 + Math.random() * 9000);
 }
 
-module.exports = { createEmployee, FIELDS, nextEmpCode, makeTempPassword, normaliseRole };
+module.exports = { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, nextEmpCode, makeTempPassword, normaliseRole };

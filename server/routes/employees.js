@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../db');
 const config = require('../config');
 const { requireLogin, requirePerm, requireSuperAdmin, canActOnEmployee, teamEmployeeIds } = require('../middleware/auth');
-const { createEmployee, FIELDS, makeTempPassword, normaliseRole } = require('../services/employees');
+const { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, makeTempPassword, normaliseRole } = require('../services/employees');
 const { upload, memoryUpload } = require('../services/upload');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
@@ -16,17 +16,6 @@ const { can } = require('../services/permissions');
 const { syncAutomatedTasks } = require('../services/onboardingJourney');
 
 const router = express.Router();
-
-// Fields a new hire may fill in on their own self-service onboarding form.
-// Deliberately excludes salary, role, department, manager, status, emp_code —
-// those stay HR-controlled.
-const SELF_ONBOARDING_FIELDS = [
-  'phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
-  'nationality', 'languages_known', 'emergency_name', 'emergency_phone',
-  'address', 'current_address', 'permanent_address',
-  'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'aadhaar',
-  'education', 'experience',
-];
 
 const LIST_SQL = `
   SELECT e.*, u.role AS role,

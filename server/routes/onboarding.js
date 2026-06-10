@@ -1,12 +1,21 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../db');
+const config = require('../config');
 const { requireLogin, requirePerm, canActOnEmployee } = require('../middleware/auth');
 const { provisionAccountsForOnboarding, accountsForDepartment } = require('../services/accountSetup');
+const { createEmployee } = require('../services/employees');
 const {
   OWNERS, STAGES, buildJourney, rebuildJourney, syncAutomatedTasks, sendReminders,
 } = require('../services/onboardingJourney');
 
 const router = express.Router();
+
+// Build the public pre-boarding URL for a token.
+function preboardUrl(req, token) {
+  const base = (config.publicUrl || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  return `${base}/preboard/${token}`;
+}
 
 // Onboarding overview: every active employee with their checklist progress,
 // newest joiners first. Powers the dedicated Onboarding section. Auto-keyed
@@ -47,13 +56,70 @@ router.post('/bulk-complete', requirePerm('employees:write'), (req, res) => {
   res.json({ ok: true, count });
 });
 
+// Create a pre-hire (a candidate, with NO company login yet), build their
+// onboarding journey, and hand back a private pre-boarding link to share.
+// Defined before '/:employeeId' so "preboard" isn't read as an id.
+router.post('/preboard', requirePerm('employees:write'), (req, res) => {
+  const b = req.body || {};
+  const name = (b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Candidate name is required.' });
+  try {
+    const { employee } = createEmployee({
+      name,
+      department: b.department || '',
+      designation: b.designation || '',
+      date_of_joining: b.date_of_joining || '',
+    }, { createLogin: false });
+    const extra = {};
+    if (b.personal_email) extra.personal_email = String(b.personal_email).trim();
+    if (b.phone) extra.phone = String(b.phone).trim();
+    if (Object.keys(extra).length) {
+      const setClause = Object.keys(extra).map((k) => `${k} = @${k}`).join(', ');
+      db.prepare(`UPDATE employees SET ${setClause} WHERE id = @id`).run({ ...extra, id: employee.id });
+    }
+    db.prepare('UPDATE employees SET onboarded = 0, onboarded_at = NULL, onboarding_submitted = 0, onboarding_submitted_at = NULL WHERE id = ?').run(employee.id);
+    buildJourney(employee.id);
+    const token = crypto.randomBytes(24).toString('hex');
+    db.prepare('UPDATE employees SET preboard_token = ? WHERE id = ?').run(token, employee.id);
+    res.json({ ok: true, employeeId: employee.id, url: preboardUrl(req, token) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Generate (or return) a pre-boarding link for an existing employee record.
+router.post('/:employeeId/preboard-link', requirePerm('employees:write'), (req, res) => {
+  const emp = db.prepare('SELECT id, preboard_token FROM employees WHERE id = ?').get(req.params.employeeId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+  let token = emp.preboard_token;
+  if (!token || (req.body && req.body.regenerate)) {
+    token = crypto.randomBytes(24).toString('hex');
+    db.prepare('UPDATE employees SET preboard_token = ? WHERE id = ?').run(token, emp.id);
+  }
+  res.json({ ok: true, token, url: preboardUrl(req, token) });
+});
+
+// Revoke the pre-boarding link (the URL stops working immediately).
+router.post('/:employeeId/preboard-revoke', requirePerm('employees:write'), (req, res) => {
+  db.prepare('UPDATE employees SET preboard_token = NULL WHERE id = ?').run(req.params.employeeId);
+  res.json({ ok: true });
+});
+
 // View an employee's onboarding journey (self or manager/HR). Runs the
 // automation first so self-completing tasks reflect the latest state.
 router.get('/:employeeId', requireLogin, (req, res) => {
   if (!canActOnEmployee(req, req.params.employeeId)) return res.status(403).json({ error: 'No access.' });
   try { syncAutomatedTasks(req.params.employeeId); } catch (e) { /* non-fatal */ }
   const tasks = db.prepare('SELECT * FROM onboarding_tasks WHERE employee_id = ? ORDER BY position, id').all(req.params.employeeId);
-  res.json({ tasks, owners: OWNERS, stages: STAGES });
+  const emp = db.prepare('SELECT preboard_token, onboarding_submitted FROM employees WHERE id = ?').get(req.params.employeeId);
+  // Only HR/managers (write access) get the actual link back, not the employee.
+  const canManage = req.session.user.role !== 'EMPLOYEE';
+  const preboard = {
+    hasLink: !!(emp && emp.preboard_token),
+    url: (canManage && emp && emp.preboard_token) ? preboardUrl(req, emp.preboard_token) : null,
+    submitted: !!(emp && emp.onboarding_submitted),
+  };
+  res.json({ tasks, owners: OWNERS, stages: STAGES, preboard });
 });
 
 // Run the automation on demand and report what it ticked off.

@@ -2843,6 +2843,7 @@ const AdminViews = {
           <option value="inprogress">In progress</option>
           <option value="done">Onboarded / done</option>
         </select>
+        <button class="btn" id="obPreboard">➕ Pre-board new hire</button>
         <button class="btn secondary" id="obMarkAll">✓ Mark all as onboarded</button>
       </div>
       <p class="muted" style="margin-top:-4px">Track every new hire's checklist and account setup in one place. Click any card below to filter. Open a person to tick tasks or notify managers/IT to create their accounts.</p>
@@ -2855,6 +2856,8 @@ const AdminViews = {
       <div id="obTable"></div>`;
 
     const reload = () => AdminViews.onboarding(c);
+    const preboardBtn = document.getElementById('obPreboard');
+    if (preboardBtn) preboardBtn.onclick = () => AdminViews.preboardNewModal(reload);
     const markAll = document.getElementById('obMarkAll');
     if (markAll) markAll.onclick = async () => {
       const pending = employees.filter((e) => !e.onboarded).length;
@@ -2931,6 +2934,50 @@ const AdminViews = {
     renderTable();
   },
 
+  // ---------------- Pre-board a new hire (candidate, no login) ----------------
+  preboardNewModal(reload) {
+    const m = UI.modal({
+      title: '➕ Pre-board a new hire',
+      bodyHtml: `
+        <p class="muted" style="font-size:13px;margin-top:0">Create a candidate record and get a private link to send them — with your intent-of-hiring or offer email. They fill their details and upload documents <b>before Day 1, with no company login</b>. Everything lands straight in the HRMS.</p>
+        <div class="form-grid">
+          <div class="field"><label>Full Name *</label><input id="pbName" /></div>
+          <div class="field"><label>Personal Email</label><input id="pbEmail" type="email" /></div>
+          <div class="field"><label>Department</label><input id="pbDept" /></div>
+          <div class="field"><label>Designation</label><input id="pbDesig" /></div>
+          <div class="field"><label>Date of Joining</label><input id="pbDoj" type="date" /></div>
+        </div>
+        <div id="pbResult" style="margin-top:12px"></div>`,
+      footHtml: `<button class="btn secondary" data-close-btn>Close</button><button class="btn" id="pbCreate">Create & get link</button>`,
+    });
+    const close = () => { m.close(); if (reload) reload(); };
+    m.root.querySelector('[data-close-btn]').onclick = close;
+    m.root.querySelector('[data-close]').onclick = close;
+    m.root.querySelector('#pbCreate').onclick = async () => {
+      const name = m.root.querySelector('#pbName').value.trim();
+      if (!name) return UI.toast('Candidate name is required.', 'error');
+      try {
+        const r = await api.post('/onboarding/preboard', {
+          name,
+          personal_email: m.root.querySelector('#pbEmail').value.trim(),
+          department: m.root.querySelector('#pbDept').value.trim(),
+          designation: m.root.querySelector('#pbDesig').value.trim(),
+          date_of_joining: m.root.querySelector('#pbDoj').value,
+        });
+        m.root.querySelector('#pbResult').innerHTML = `
+          <div class="card" style="border-left:4px solid #16a34a">
+            <b>✓ Candidate created.</b> Share this private link with them:
+            <div class="btn-row mt" style="align-items:center"><input id="pbNewUrl" readonly value="${UI.esc(r.url)}" style="flex:1" /><button class="btn sm" id="pbNewCopy">Copy</button></div>
+            <p class="muted" style="font-size:11px;margin:6px 0 0">Tip: paste this into your intent/offer email (or Leegality flow). It works with no login.</p>
+          </div>`;
+        m.root.querySelector('#pbNewCopy').onclick = async () => {
+          try { await navigator.clipboard.writeText(r.url); UI.toast('Link copied.', 'success'); } catch { UI.toast('Copy failed — select the text manually.', 'error'); }
+        };
+        UI.toast('Candidate pre-boarding created.', 'success');
+      } catch (e) { UI.toast(e.message, 'error'); }
+    };
+  },
+
   // ---------------- Onboarding journey (modal) ----------------
   async onboardingModal(employeeId, name, onClose) {
     const m = UI.modal({
@@ -2948,8 +2995,9 @@ const AdminViews = {
     const today = new Date().toISOString().slice(0, 10);
 
     const load = async () => {
-      const { tasks, stages } = await api.get('/onboarding/' + employeeId);
+      const { tasks, stages, preboard } = await api.get('/onboarding/' + employeeId);
       const body = m.root.querySelector('#ob');
+      const pb = preboard || {};
 
       if (!tasks.length) {
         body.innerHTML = `<div class="empty" style="padding:18px">No onboarding journey yet.</div>
@@ -3002,6 +3050,19 @@ const AdminViews = {
         </div>`;
       }).join('');
 
+      const preboardCard = `
+        <div class="card" style="margin-bottom:14px;border-left:4px solid #6366f1">
+          <div class="section-title" style="font-size:14px">🔗 Pre-boarding link <span class="muted" style="font-weight:400;font-size:12px">— for candidates who don't have a company login yet</span></div>
+          ${pb.hasLink ? `
+            <div class="btn-row" style="align-items:center"><input id="pbUrl" readonly value="${UI.esc(pb.url || '')}" style="flex:1" /><button class="btn sm" id="pbCopy">Copy</button></div>
+            <div class="muted" style="font-size:11px;margin-top:6px">Send this private link to the candidate (e.g. with the intent/offer email). They fill details & upload documents — no login needed.${pb.submitted ? ' <b style="color:#16a34a">· Candidate has submitted ✓</b>' : ''}</div>
+            <div class="btn-row mt"><button class="btn sm secondary" id="pbRegen">Regenerate</button><button class="btn sm red" id="pbRevoke">Revoke</button></div>
+          ` : `
+            <p class="muted" style="font-size:12px;margin:4px 0 8px">Generate a secure link the candidate can use before Day 1 — no company credentials required.</p>
+            <button class="btn sm" id="pbGen">Generate pre-boarding link</button>
+          `}
+        </div>`;
+
       body.innerHTML = `
         <div class="card" style="background:#f8fafc;margin-bottom:14px">
           <div style="display:flex;align-items:center;gap:12px">
@@ -3017,8 +3078,18 @@ const AdminViews = {
             <button class="btn sm secondary" id="rebuild" title="Reset to the standard journey">↻ Rebuild</button>
           </div>
         </div>
+        ${preboardCard}
         ${stageBlocks}
         <div class="btn-row mt"><input id="newtask" placeholder="Add a custom step" /><button class="btn secondary" id="addtask">Add</button></div>`;
+
+      const pbCopy = body.querySelector('#pbCopy');
+      if (pbCopy) pbCopy.onclick = async () => { try { await navigator.clipboard.writeText(body.querySelector('#pbUrl').value); UI.toast('Link copied.', 'success'); } catch { UI.toast('Copy failed — select the text manually.', 'error'); } };
+      const pbGen = body.querySelector('#pbGen');
+      if (pbGen) pbGen.onclick = async () => { try { await api.post('/onboarding/' + employeeId + '/preboard-link'); UI.toast('Pre-boarding link generated.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); } };
+      const pbRegen = body.querySelector('#pbRegen');
+      if (pbRegen) pbRegen.onclick = async () => { if (!confirm('Generate a new link? The old one will stop working immediately.')) return; try { await api.post('/onboarding/' + employeeId + '/preboard-link', { regenerate: true }); UI.toast('New link generated.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); } };
+      const pbRevoke = body.querySelector('#pbRevoke');
+      if (pbRevoke) pbRevoke.onclick = async () => { if (!confirm('Revoke this link? The candidate will no longer be able to access it.')) return; try { await api.post('/onboarding/' + employeeId + '/preboard-revoke'); UI.toast('Link revoked.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); } };
 
       body.querySelectorAll('[data-task]').forEach((el) => el.onchange = async () => {
         try { await api.put('/onboarding/task/' + el.dataset.task, { done: el.checked }); load(); } catch (e) { UI.toast(e.message, 'error'); }
