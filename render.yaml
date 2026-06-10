@@ -7,7 +7,7 @@ services:
     runtime: docker
     plan: free
     region: singapore
-    branch: supabase-migration
+    branch: main
     envVars:
       - key: DATABASE_URL
         sync: false   # set in dashboard: your Supabase connection string (with password)
