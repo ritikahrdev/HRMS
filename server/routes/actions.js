@@ -1,4 +1,5 @@
 const express = require('express');
+const config = require('../config');
 const { verifyToken } = require('../services/tokens');
 const { applyLeaveDecision, applyReimbursementDecision } = require('../services/decisions');
 
@@ -6,6 +7,7 @@ const router = express.Router();
 
 function page(title, message, ok) {
   const color = ok ? '#16a34a' : '#dc2626';
+  const portal = `${config.publicUrl}/#/leave-approvals`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${title}</title></head>
     <body style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f4f6fb;margin:0;padding:40px;text-align:center;color:#1f2937">
@@ -13,6 +15,7 @@ function page(title, message, ok) {
         <div style="font-size:40px;color:${color}">${ok ? '&#10003;' : '&#9888;'}</div>
         <h2 style="margin:8px 0">${title}</h2>
         <p style="color:#6b7280">${message}</p>
+        <a href="${portal}" style="display:inline-block;margin-top:14px;background:#6366f1;color:#fff;text-decoration:none;padding:10px 22px;border-radius:9px;font-weight:600">Open HR Portal</a>
       </div>
     </body></html>`;
 }
