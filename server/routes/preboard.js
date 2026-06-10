@@ -43,6 +43,7 @@ router.get('/:token', (req, res) => {
     requiredDocs: s.requiredDocs || [],
     joiningDate: emp.date_of_joining || '',
     submitted: !!emp.onboarding_submitted,
+    expiresAt: emp.preboard_expires ? emp.preboard_expires.replace(' ', 'T') + 'Z' : null,
     details,
     documents,
   });

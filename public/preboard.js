@@ -8,6 +8,33 @@
   let toastTimer;
   function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200); }
 
+  // Live countdown of the time left to complete the form before the link expires.
+  let countdownTimer;
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function startCountdown(expiresAt) {
+    const el = $('timer');
+    clearInterval(countdownTimer);
+    if (!expiresAt) { el.classList.add('hide'); return; }
+    el.classList.remove('hide');
+    const end = new Date(expiresAt).getTime();
+    const tick = () => {
+      const ms = end - Date.now();
+      if (ms <= 0) {
+        clearInterval(countdownTimer);
+        el.classList.remove('urgent'); el.classList.add('expired');
+        el.textContent = '⏳ This link has expired.';
+        $('content').innerHTML = '<div class="card center"><h2>Link expired</h2><p class="muted">The time to complete this form has passed. Please contact your HR team for a new link.</p></div>';
+        return;
+      }
+      const s = Math.floor(ms / 1000);
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      el.textContent = '⏳ Time left to complete this form: ' + (h > 0 ? h + 'h ' : '') + pad(m) + 'm ' + pad(sec) + 's';
+      el.classList.toggle('urgent', ms < 15 * 60 * 1000);
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
   const FIELDS = [
     { section: 'Personal' },
     { id: 'phone', label: 'Phone' },
@@ -121,8 +148,9 @@
   }
 
   async function load() {
-    try { DATA = await api('GET', ''); render(); }
+    try { DATA = await api('GET', ''); render(); startCountdown(DATA.expiresAt); }
     catch (e) {
+      clearInterval(countdownTimer); $('timer').classList.add('hide');
       $('content').innerHTML = '<div class="card center"><h2>Link not valid</h2><p class="muted">' + esc(e.message) + '</p></div>';
     }
   }

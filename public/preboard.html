@@ -40,6 +40,9 @@
     .muted { color: var(--muted); font-size: 13px; }
     .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#0f172a; color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; opacity:0; transition:opacity .2s; z-index:50; }
     .toast.show { opacity:1; }
+    .timer-bar { position:sticky; top:0; z-index:10; background:#eef2ff; color:#3730a3; text-align:center; padding:9px 12px; border-radius:10px; font-weight:700; font-size:14px; margin-bottom:8px; }
+    .timer-bar.urgent { background:#fff7ed; color:#c2410c; }
+    .timer-bar.expired { background:#fee2e2; color:#991b1b; }
     .hide { display:none; }
     @media (max-width:560px){ .grid{ grid-template-columns:1fr; } }
   </style>
@@ -52,10 +55,11 @@
       <p id="company"></p>
       <p>Pre-boarding · <b>no login needed</b></p>
     </div>
+    <div id="timer" class="timer-bar hide"></div>
     <div id="content"><div class="card center muted">Loading…</div></div>
   </div>
   <div class="toast" id="toast"></div>
 
-  <script src="/preboard.js?v=1"></script>
+  <script src="/preboard.js?v=2"></script>
 </body>
 </html>
