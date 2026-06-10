@@ -53,6 +53,10 @@ async function loginHandler(req, res) {
     }
 
     req.session.user = await buildSessionUser(user);
+    // Explicitly persist the session BEFORE responding. The Postgres session
+    // store is async — without this, a request fired immediately after login
+    // can arrive before the session row exists and get a 401.
+    await new Promise((resolve, reject) => req.session.save((err) => (err ? reject(err) : resolve())));
     res.json({ user: req.session.user });
   } catch (e) {
     res.status(500).json({ error: e.message });

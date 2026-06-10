@@ -1,5 +1,6 @@
 const db = require('./../db');
 const { sendMail } = require('./email');
+const { notifyUsers } = require('./notify');
 
 // Applies an approve/reject decision to a leave request. Idempotent-ish:
 // if already decided, returns the current state without re-notifying.
@@ -27,7 +28,16 @@ async function applyLeaveDecision(id, decision, comment, approverUserId) {
     }
   }
 
-  const emp = await db.prepare('SELECT name, email FROM employees WHERE id = ?').get(lr.employee_id);
+  const emp = await db.prepare('SELECT name, email, user_id FROM employees WHERE id = ?').get(lr.employee_id);
+  // In-app bell notification (works even when email is not configured).
+  if (emp && emp.user_id) {
+    await notifyUsers([emp.user_id], {
+      type: 'leave',
+      title: `Leave ${decision} ${decision === 'approved' ? '✅' : '❌'}`,
+      body: `Your ${lr.type} leave from ${lr.from_date} to ${lr.to_date} (${lr.days} day(s)) was ${decision}.${comment ? ' Comment: ' + comment : ''}`,
+      link: '#/my-leave',
+    });
+  }
   if (emp && emp.email) {
     await sendMail({
       to: emp.email,
@@ -46,7 +56,16 @@ async function applyReimbursementDecision(id, decision, comment, approverUserId)
   await db.prepare("UPDATE reimbursements SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
     .run(decision, comment || '', approverUserId || null, row.id);
 
-  const emp = await db.prepare('SELECT name, email FROM employees WHERE id = ?').get(row.employee_id);
+  const emp = await db.prepare('SELECT name, email, user_id FROM employees WHERE id = ?').get(row.employee_id);
+  // In-app bell notification (works even when email is not configured).
+  if (emp && emp.user_id) {
+    await notifyUsers([emp.user_id], {
+      type: 'reimbursement',
+      title: `Reimbursement ${decision} ${decision === 'approved' ? '✅' : '❌'}`,
+      body: `Your reimbursement "${row.title}" of ${row.amount} was ${decision}.${comment ? ' Comment: ' + comment : ''}`,
+      link: '#/my-reimb',
+    });
+  }
   if (emp && emp.email) {
     await sendMail({
       to: emp.email,
