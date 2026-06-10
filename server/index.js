@@ -9,6 +9,10 @@ require('./db'); // initialise schema + seed
 
 const app = express();
 
+// Behind a hosting proxy (Railway/Render/Fly), trust the first proxy hop so
+// req.ip, rate limiting, and secure cookies use the real client connection.
+app.set('trust proxy', 1);
+
 // ============ Security Middleware ============
 // Helmet: sets security headers (X-Frame-Options, X-Content-Type-Options, etc.)
 app.use(helmet());
