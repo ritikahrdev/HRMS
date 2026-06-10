@@ -27,6 +27,14 @@ function byToken(token) {
 
 const INVALID = { error: 'This link is invalid or has expired. Please contact HR for a new link.' };
 
+// Every field shown on the candidate form is mandatory before they can submit.
+const REQUIRED_FIELDS = [
+  'phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
+  'nationality', 'languages_known', 'current_address', 'permanent_address',
+  'emergency_name', 'emergency_phone', 'bank_holder_name', 'bank_name',
+  'bank_account', 'ifsc', 'pan', 'aadhaar', 'education', 'experience',
+];
+
 // What the candidate sees: their name, company branding, required documents,
 // their own previously-entered details, and what they have uploaded so far.
 router.get('/:token', (req, res) => {
@@ -100,6 +108,23 @@ router.delete('/:token/documents/:docId', (req, res) => {
 router.post('/:token/submit', (req, res) => {
   const emp = byToken(req.params.token);
   if (!emp) return res.status(404).json(INVALID);
+
+  // Enforce: every field filled + every required document uploaded.
+  const missingFields = REQUIRED_FIELDS.filter((f) => !String(emp[f] == null ? '' : emp[f]).trim());
+  const requiredDocs = getSettings().requiredDocs || [];
+  const haveTypes = new Set(
+    db.prepare('SELECT doc_type FROM employee_documents WHERE employee_id = ?').all(emp.id)
+      .filter((d) => d.doc_type).map((d) => d.doc_type)
+  );
+  const missingDocs = requiredDocs.filter((t) => !haveTypes.has(t));
+  if (missingFields.length || missingDocs.length) {
+    return res.status(400).json({
+      error: 'Please complete all fields and upload all required documents before submitting.',
+      missingFields,
+      missingDocs,
+    });
+  }
+
   db.prepare("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now') WHERE id = ?").run(emp.id);
   try { syncAutomatedTasks(emp.id); } catch (e) { /* non-fatal */ }
   const recipients = new Set();

@@ -21,7 +21,10 @@
     .field { display:flex; flex-direction:column; gap:4px; }
     .field.full { grid-column: 1/-1; }
     label { font-size: 12px; color: var(--muted); font-weight:600; }
+    label .req { color:#dc2626; }
     input, select, textarea { padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:14px; font-family:inherit; width:100%; }
+    .field.bad input, .field.bad select, .field.bad textarea { border-color:#dc2626; background:#fff5f5; }
+    .field.bad label { color:#dc2626; }
     textarea { resize: vertical; }
     .btn { background:var(--brand); color:#fff; border:0; border-radius:9px; padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer; }
     .btn:disabled { opacity:.5; cursor:not-allowed; }
@@ -60,6 +63,6 @@
   </div>
   <div class="toast" id="toast"></div>
 
-  <script src="/preboard.js?v=2"></script>
+  <script src="/preboard.js?v=3"></script>
 </body>
 </html>

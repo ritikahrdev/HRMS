@@ -80,21 +80,31 @@
   function fieldHtml(f, val) {
     if (f.section) return '<div class="sub">' + esc(f.section) + '</div>';
     const id = 'f-' + f.id;
+    const lbl = esc(f.label) + ' <span class="req">*</span>';
     if (f.type === 'select') {
-      return '<div class="field"><label>' + esc(f.label) + '</label><select id="' + id + '"><option value="">—</option>'
+      return '<div class="field" data-fid="' + f.id + '"><label>' + lbl + '</label><select id="' + id + '"><option value="">—</option>'
         + f.options.map((o) => '<option ' + (val === o ? 'selected' : '') + '>' + esc(o) + '</option>').join('') + '</select></div>';
     }
     if (f.type === 'textarea') {
-      return '<div class="field full"><label>' + esc(f.label) + '</label><textarea id="' + id + '" rows="2">' + esc(val) + '</textarea></div>';
+      return '<div class="field full" data-fid="' + f.id + '"><label>' + lbl + '</label><textarea id="' + id + '" rows="2">' + esc(val) + '</textarea></div>';
     }
     const v = f.type === 'date' ? esc((val || '').slice(0, 10)) : esc(val);
-    return '<div class="field"><label>' + esc(f.label) + '</label><input id="' + id + '" type="' + (f.type || 'text') + '" value="' + v + '" /></div>';
+    return '<div class="field" data-fid="' + f.id + '"><label>' + lbl + '</label><input id="' + id + '" type="' + (f.type || 'text') + '" value="' + v + '" /></div>';
   }
 
   function collect() {
     const p = {};
     FIELD_IDS.forEach((id) => { const el = $('f-' + id); if (el) p[id] = el.value; });
     return p;
+  }
+
+  // Every field is mandatory. Returns the ids of fields left blank.
+  function missingFieldIds() {
+    return FIELD_IDS.filter((id) => { const el = $('f-' + id); return el && !el.value.trim(); });
+  }
+  function clearBadMarks() { document.querySelectorAll('.field.bad').forEach((x) => x.classList.remove('bad')); }
+  function markBad(ids) {
+    ids.forEach((id) => { const el = $('f-' + id); if (el && el.closest('.field')) el.closest('.field').classList.add('bad'); });
   }
 
   function render() {
@@ -129,12 +139,14 @@
       + '<div class="card"><h2>2. Upload your documents <span class="muted">(' + uploaded + '/' + required.length + ')</span></h2>'
       + (required.length ? docRows : '<div class="muted">No documents required.</div>') + '</div>'
       + '<div class="card"><h2>3. Submit</h2>'
-      + '<p class="muted">When your details are filled and all documents are uploaded, submit. Your HR team will be notified.</p>'
-      + '<button class="btn" id="submitBtn" ' + (allDocs ? '' : 'disabled') + '>Submit pre-boarding</button>'
-      + (allDocs ? '' : '<span class="muted" style="margin-left:8px">Upload all documents to enable.</span>') + '</div>';
+      + '<p class="muted"><b>All fields and all documents are required.</b> Fill everything above, then submit. Your HR team will be notified.</p>'
+      + '<button class="btn" id="submitBtn">Submit pre-boarding</button></div>';
+
+    // Clear the red mark on a field as soon as the candidate fills it.
+    FIELD_IDS.forEach((id) => { const el = $('f-' + id); if (el) el.addEventListener('input', () => { const w = el.closest('.field'); if (w) w.classList.remove('bad'); }); });
 
     $('saveBtn').onclick = async () => {
-      try { await api('PUT', '', collect()); toast('Details saved ✓'); } catch (e) { toast(e.message); }
+      try { await api('PUT', '', collect()); toast('Progress saved ✓'); } catch (e) { toast(e.message); }
     };
     document.querySelectorAll('.up').forEach((inp) => inp.onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
@@ -142,6 +154,19 @@
       try { await api('POST', '/documents', fd, true); toast('Uploaded ✓'); await load(); } catch (err) { toast(err.message); }
     });
     $('submitBtn').onclick = async () => {
+      clearBadMarks();
+      const missing = missingFieldIds();
+      const missDocs = required.filter((t) => !byType[t]);
+      if (missing.length || missDocs.length) {
+        markBad(missing);
+        const first = missing.length ? $('f-' + missing[0]) : null;
+        if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const parts = [];
+        if (missing.length) parts.push(missing.length + ' field' + (missing.length > 1 ? 's' : '') + ' left');
+        if (missDocs.length) parts.push(missDocs.length + ' document' + (missDocs.length > 1 ? 's' : '') + ' missing');
+        toast('Please complete everything — ' + parts.join(' and ') + '.');
+        return;
+      }
       if (!confirm('Submit your pre-boarding? Your HR team will be notified to review. You can still make changes afterwards.')) return;
       try { await api('PUT', '', collect()); await api('POST', '/submit'); toast('Submitted 🎉'); await load(); } catch (e) { toast(e.message); }
     };
