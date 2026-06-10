@@ -363,6 +363,7 @@ const AdminViews = {
           <div class="field"><label>Name *</label><input id="name" value="${f('name')}" /></div>
           <div class="field"><label>Employee Code</label><input id="emp_code" value="${f('emp_code')}" placeholder="auto if blank" /></div>
           <div class="field"><label>Email (login)</label><input id="email" value="${f('email')}" /></div>
+          <div class="field"><label>Personal Email</label><input id="personal_email" value="${f('personal_email')}" /></div>
           <div class="field"><label>Phone</label><input id="phone" value="${f('phone')}" /></div>
           <div class="field"><label>Role</label><select id="role">${ROLES.map((r) => `<option value="${r[0]}" ${curRole === r[0] ? 'selected' : ''}>${r[1]}</option>`).join('')}</select></div>
           <div class="field"><label>Reporting Manager</label><select id="manager_id">${mgrOptions}</select></div>
@@ -370,19 +371,26 @@ const AdminViews = {
           <div class="field"><label>Designation</label><input id="designation" value="${f('designation')}" /></div>
           <div class="field"><label>Date of Joining</label><input id="date_of_joining" type="date" value="${f('date_of_joining')}" /></div>
           <div class="field"><label>Monthly Salary</label><input id="monthly_salary" type="number" step="0.01" value="${emp ? emp.monthly_salary : ''}" /></div>
+          <div class="field"><label>Account Holder Name</label><input id="bank_holder_name" value="${f('bank_holder_name')}" /></div>
+          <div class="field"><label>Bank Name</label><input id="bank_name" value="${f('bank_name')}" /></div>
           <div class="field"><label>Bank Account</label><input id="bank_account" value="${f('bank_account')}" /></div>
           <div class="field"><label>IFSC</label><input id="ifsc" value="${f('ifsc')}" /></div>
           <div class="field"><label>PAN</label><input id="pan" value="${f('pan')}" /></div>
           <div class="field"><label>Aadhaar / ID Proof</label><input id="aadhaar" value="${f('aadhaar')}" /></div>
           <div class="field"><label>Date of Birth</label><input type="date" id="dob" value="${f('dob')}" /></div>
           <div class="field"><label>Gender</label><select id="gender"><option value=""></option><option value="Male" ${emp && emp.gender === 'Male' ? 'selected' : ''}>Male</option><option value="Female" ${emp && emp.gender === 'Female' ? 'selected' : ''}>Female</option><option value="Other" ${emp && emp.gender === 'Other' ? 'selected' : ''}>Other</option></select></div>
+          <div class="field"><label>Marital Status</label><select id="marital_status"><option value=""></option>${['Single', 'Married', 'Other'].map((o) => `<option ${emp && emp.marital_status === o ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
           <div class="field"><label>Blood Group</label><input id="blood_group" value="${f('blood_group')}" /></div>
+          <div class="field"><label>Nationality</label><input id="nationality" value="${f('nationality')}" /></div>
+          <div class="field"><label>Languages Known</label><input id="languages_known" value="${f('languages_known')}" /></div>
           <div class="field"><label>Emergency Contact Name</label><input id="emergency_name" value="${f('emergency_name')}" /></div>
           <div class="field"><label>Emergency Contact Phone</label><input id="emergency_phone" value="${f('emergency_phone')}" /></div>
           <div class="field full"><label>Education</label><input id="education" value="${f('education')}" /></div>
           <div class="field full"><label>Previous Experience</label><input id="experience" value="${f('experience')}" /></div>
           <div class="field"><label>Slack Member ID (for attendance sync)</label><input id="slack_id" value="${f('slack_id')}" placeholder="U0XXXXXXX (optional)" /></div>
           <div class="field full"><label>Address</label><textarea id="address" rows="2">${f('address')}</textarea></div>
+          <div class="field full"><label>Current Address</label><textarea id="current_address" rows="2">${f('current_address')}</textarea></div>
+          <div class="field full"><label>Permanent Address</label><textarea id="permanent_address" rows="2">${f('permanent_address')}</textarea></div>
           ${emp ? `<div class="field"><label>Status</label><select id="status"><option value="active" ${emp.status === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${emp.status === 'inactive' ? 'selected' : ''}>inactive</option></select></div>` : ''}
         </div>
         <p class="muted" style="font-size:12px">Tip: set role to <b>Manager</b> and assign team members' Reporting Manager to this person so they can approve their team.</p>`,
@@ -390,7 +398,7 @@ const AdminViews = {
     });
     m.root.querySelector('[data-close-btn]').onclick = m.close;
     m.root.querySelector('#save').onclick = async () => {
-      const ids = ['name', 'emp_code', 'email', 'phone', 'role', 'manager_id', 'department', 'designation', 'date_of_joining', 'monthly_salary', 'bank_account', 'ifsc', 'pan', 'address', 'aadhaar', 'dob', 'gender', 'blood_group', 'emergency_name', 'emergency_phone', 'education', 'experience', 'slack_id'];
+      const ids = ['name', 'emp_code', 'email', 'phone', 'personal_email', 'role', 'manager_id', 'department', 'designation', 'date_of_joining', 'monthly_salary', 'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'address', 'current_address', 'permanent_address', 'aadhaar', 'dob', 'gender', 'marital_status', 'blood_group', 'nationality', 'languages_known', 'emergency_name', 'emergency_phone', 'education', 'experience', 'slack_id'];
       const data = {};
       ids.forEach((id) => data[id] = m.root.querySelector('#' + id).value);
       if (emp) data.status = m.root.querySelector('#status').value;

@@ -9,6 +9,9 @@ const FIELDS = [
   // Core HR extended profile
   'dob', 'gender', 'emergency_name', 'emergency_phone', 'aadhaar',
   'education', 'experience', 'blood_group', 'slack_id',
+  // Extra joining details (also collected via the pre-boarding / self-service form)
+  'personal_email', 'marital_status', 'nationality', 'languages_known',
+  'current_address', 'permanent_address', 'bank_holder_name', 'bank_name',
 ];
 
 // Fields a new hire / candidate may fill in themselves (self-service form and
