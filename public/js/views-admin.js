@@ -2830,7 +2830,7 @@ const AdminViews = {
     const inProg = employees.filter((e) => statusOf(e) === 'inprogress').length;
     const notStarted = employees.filter((e) => statusOf(e) === 'notstarted').length;
     const completed = employees.filter((e) => statusOf(e) === 'done').length;
-    const tile = (label, val, color) => `<div class="card" style="flex:1;min-width:120px;text-align:center;margin:0"><div style="font-size:26px;font-weight:700;color:${color}">${val}</div><div class="muted" style="font-size:12px">${label}</div></div>`;
+    const tile = (label, val, color, filter) => `<div class="card ob-tile" data-tile="${filter}" title="Click to show these" style="flex:1;min-width:120px;text-align:center;margin:0;cursor:pointer;transition:box-shadow .15s,transform .1s"><div style="font-size:26px;font-weight:700;color:${color}">${val}</div><div class="muted" style="font-size:12px">${label}</div></div>`;
 
     c.innerHTML = `
       <div class="toolbar"><div class="section-title" style="margin:0">🚀 Onboarding</div><div class="spacer"></div>
@@ -2838,18 +2838,19 @@ const AdminViews = {
         <select id="obFilter">
           <option value="attention">Needs attention</option>
           <option value="all">All employees</option>
+          <option value="recent">Joined this month</option>
           <option value="notstarted">Not started</option>
           <option value="inprogress">In progress</option>
           <option value="done">Onboarded / done</option>
         </select>
         <button class="btn secondary" id="obMarkAll">✓ Mark all as onboarded</button>
       </div>
-      <p class="muted" style="margin-top:-4px">Track every new hire's checklist and account setup in one place. Open a person to tick tasks or notify managers/IT to create their accounts. Use <b>Mark all as onboarded</b> for staff who joined before you started using the system.</p>
+      <p class="muted" style="margin-top:-4px">Track every new hire's checklist and account setup in one place. Click any card below to filter. Open a person to tick tasks or notify managers/IT to create their accounts.</p>
       <div class="btn-row" style="gap:10px;margin:12px 0 16px;align-items:stretch">
-        ${tile('Joined this month', newThisMonth, '#2563eb')}
-        ${tile('In progress', inProg, '#d97706')}
-        ${tile('Not started', notStarted, '#dc2626')}
-        ${tile('Onboarded', completed, '#16a34a')}
+        ${tile('Joined this month', newThisMonth, '#2563eb', 'recent')}
+        ${tile('In progress', inProg, '#d97706', 'inprogress')}
+        ${tile('Not started', notStarted, '#dc2626', 'notstarted')}
+        ${tile('Onboarded', completed, '#16a34a', 'done')}
       </div>
       <div id="obTable"></div>`;
 
@@ -2882,6 +2883,12 @@ const AdminViews = {
       else if (f === 'inprogress') rows = rows.filter((e) => statusOf(e) === 'inprogress');
       else if (f === 'done') rows = rows.filter((e) => statusOf(e) === 'done');
       else if (f === 'attention') rows = rows.filter((e) => statusOf(e) !== 'done');
+      else if (f === 'recent') rows = rows.filter((e) => daysSince(e.date_of_joining) <= 31);
+      document.querySelectorAll('.ob-tile').forEach((el) => {
+        const on = el.dataset.tile === f;
+        el.style.boxShadow = on ? '0 0 0 2px #6366f1' : '';
+        el.style.transform = on ? 'translateY(-1px)' : '';
+      });
       document.getElementById('obTable').innerHTML = UI.table([
         { key: 'name', label: 'Employee', sticky: true, render: (e) => `<b>${UI.esc(e.name)}</b>${e.designation ? `<br><span class="muted" style="font-size:11px">${UI.esc(e.designation)}</span>` : ''}` },
         { key: 'department', label: 'Department', render: (e) => UI.esc(e.department || '—') },
@@ -2917,6 +2924,10 @@ const AdminViews = {
     };
     document.getElementById('obSearch').oninput = renderTable;
     document.getElementById('obFilter').onchange = renderTable;
+    document.querySelectorAll('.ob-tile').forEach((el) => el.onclick = () => {
+      document.getElementById('obFilter').value = el.dataset.tile;
+      renderTable();
+    });
     renderTable();
   },
 
