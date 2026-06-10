@@ -21,14 +21,9 @@ const allowedDocMimes = [
   'text/plain',
 ];
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, config.paths.uploads),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const safe = file.fieldname.replace(/[^a-z0-9]/gi, '');
-    cb(null, `${safe}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
-  },
-});
+// In-memory storage: files are kept in req.file.buffer and persisted to
+// Postgres (services/filestore) by each route, so nothing touches the disk.
+const storage = multer.memoryStorage();
 
 // Validate file type and extension for logo uploads
 const logoFileFilter = (req, file, cb) => {

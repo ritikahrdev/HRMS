@@ -5,6 +5,7 @@ const db = require('../db');
 const config = require('../config');
 const { requirePerm } = require('../middleware/auth');
 const { upload } = require('../services/upload');
+const { saveFile, getFile, deleteFile, sendFile } = require('../services/filestore');
 const { createEmployee } = require('../services/employees');
 const { provisionAccountsForOnboarding } = require('../services/accountSetup');
 const { buildJourney, syncAutomatedTasks } = require('../services/onboardingJourney');
@@ -105,7 +106,7 @@ router.post('/jobs/:id/applicants', P, upload.single('resume'), async (req, res)
     const score = scoreApplicant(app, job);
     const r = await db.prepare(
       'INSERT INTO applicants (job_id, name, email, phone, experience_years, skills, resume_file, source, score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(job.id, app.name, app.email, app.phone, app.experience_years, app.skills, req.file ? req.file.filename : null, app.source, score);
+    ).run(job.id, app.name, app.email, app.phone, app.experience_years, app.skills, req.file ? await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname) : null, app.source, score);
     res.json({ id: r.lastInsertRowid, score });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -138,9 +139,7 @@ router.get('/applicants/:id/resume', P, async (req, res) => {
   try {
     const a = await db.prepare('SELECT * FROM applicants WHERE id = ?').get(req.params.id);
     if (!a || !a.resume_file) return res.status(404).send('No resume');
-    const fp = path.join(config.paths.uploads, a.resume_file);
-    if (!fs.existsSync(fp)) return res.status(404).send('File missing');
-    res.sendFile(fp);
+    return await sendFile(res, a.resume_file, { download: true });
   } catch (e) {
     res.status(500).send(e.message);
   }

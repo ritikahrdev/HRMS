@@ -367,6 +367,14 @@ CREATE TABLE IF NOT EXISTS mood_checkins (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS mood_checkins_emp_date ON mood_checkins(employee_id, date);
 
+CREATE TABLE IF NOT EXISTS file_store (
+  id TEXT PRIMARY KEY,
+  mime TEXT,
+  filename TEXT,
+  data BYTEA NOT NULL,
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
+
 CREATE TABLE IF NOT EXISTS inventory (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,

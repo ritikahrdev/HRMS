@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const db = require('./db'); // Postgres adapter — schema/seed run via db.init() at startup
+const { sendFile } = require('./services/filestore');
 
 const app = express();
 
@@ -103,19 +104,8 @@ app.get('/preboard/:token', (req, res) => {
 
 // Serve uploaded logo (read-only) for branding.
 // Includes path traversal protection.
-app.get('/uploads/:file', (req, res) => {
-  const name = path.basename(req.params.file);
-  const filePath = path.resolve(path.join(config.paths.uploads, name));
-
-  // Verify the resolved path is within the uploads directory
-  const uploadsDir = path.resolve(config.paths.uploads);
-  if (!filePath.startsWith(uploadsDir + path.sep) && filePath !== uploadsDir) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
-
-  res.sendFile(filePath, (err) => {
-    if (err) res.status(404).end();
-  });
+app.get('/uploads/:file', async (req, res) => {
+  await sendFile(res, req.params.file);
 });
 
 // Frontend (no build step). Disable caching so code updates always load fresh.

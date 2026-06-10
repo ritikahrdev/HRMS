@@ -5,6 +5,7 @@ const db = require('../db');
 const config = require('../config');
 const { requireLogin, requirePerm, teamEmployeeIds, canActOnEmployee } = require('../middleware/auth');
 const { upload } = require('../services/upload');
+const { saveFile, getFile, deleteFile, sendFile } = require('../services/filestore');
 const { sendMail } = require('../services/email');
 const { applyReimbursementDecision, approverEmailsFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
@@ -23,10 +24,10 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
     const empId = myEmpId(req, res); if (!empId) return;
     const { title, amount, category } = req.body || {};
     if (!title || !amount) return res.status(400).json({ error: 'Title and amount are required.' });
-    const billFile = req.file ? req.file.filename : null;
+    const billKey = req.file ? await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname) : null;
     const r = await db.prepare(
       'INSERT INTO reimbursements (employee_id, title, category, amount, bill_file) VALUES (?, ?, ?, ?, ?)'
-    ).run(empId, title, category || '', Number(amount) || 0, billFile);
+    ).run(empId, title, category || '', Number(amount) || 0, billKey);
 
     const id = r.lastInsertRowid;
     const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
@@ -91,15 +92,7 @@ router.get('/:id/bill', requireLogin, async (req, res) => {
     if (!row || !row.bill_file) return res.status(404).send('No bill');
     if (!(await canActOnEmployee(req, row.employee_id))) return res.status(403).send('Forbidden');
 
-    // Path traversal protection: verify resolved path is within uploads directory
-    const filePath = path.resolve(path.join(config.paths.uploads, row.bill_file));
-    const uploadsDir = path.resolve(config.paths.uploads);
-    if (!filePath.startsWith(uploadsDir + path.sep) && filePath !== uploadsDir) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    if (!fs.existsSync(filePath)) return res.status(404).send('File missing');
-    res.sendFile(filePath);
+    return await sendFile(res, row.bill_file, { download: true });
   } catch (err) {
     console.error('Error retrieving bill:', err);
     res.status(500).json({ error: 'Failed to retrieve bill' });

@@ -6,7 +6,8 @@ const db = require('../db');
 const config = require('../config');
 const { requireLogin, requirePerm, requireSuperAdmin, canActOnEmployee, teamEmployeeIds } = require('../middleware/auth');
 const { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, ONBOARDING_REQUIRED_FIELDS, makeTempPassword, normaliseRole } = require('../services/employees');
-const { upload, memoryUpload } = require('../services/upload');
+const { upload, documentUpload, memoryUpload } = require('../services/upload');
+const { saveFile, getFile, deleteFile, sendFile } = require('../services/filestore');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
 const { validatePAN, validateAadhaar, validateIFSC } = require('../services/verify');
@@ -408,8 +409,7 @@ router.post('/:id/aadhaar-verify', requirePerm('employees:write'), memoryUpload.
 
     // If genuinely signed by UIDAI, store the file as a verified mandatory document.
     if (result.signatureValid === true) {
-      const fname = `aadhaar-ekyc-${emp.id}-${Date.now()}.xml`;
-      fs.writeFileSync(path.join(config.paths.uploads, fname), req.file.buffer);
+      const fname = await saveFile(req.file.buffer, 'application/xml', 'aadhaar-ekyc.xml');
       const docType = 'Government-issued ID (Aadhaar & PAN, or Passport)';
       await db.prepare("INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by, status, verify_note, verified_at) VALUES (?, ?, ?, ?, ?, 'verified', ?, datetime('now'))")
         .run(emp.id, 'Aadhaar (UIDAI Offline e-KYC — verified)', docType, fname, req.session.user.id,
@@ -435,14 +435,15 @@ router.post('/:id/documents/:docId/verify', requirePerm('employees:write'), asyn
   }
 });
 
-router.post('/:id/documents', requireLogin, upload.single('file'), async (req, res) => {
+router.post('/:id/documents', requireLogin, documentUpload.single('file'), async (req, res) => {
   try {
     if (!(await canManageDocs(req, req.params.id))) return res.status(403).json({ error: 'No access.' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     const docType = (req.body && req.body.doc_type) || '';
     const title = (req.body && req.body.title) || docType || req.file.originalname;
+    const key = await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname);
     const r = await db.prepare('INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by) VALUES (?, ?, ?, ?, ?)')
-      .run(req.params.id, title, docType, req.file.filename, req.session.user.id);
+      .run(req.params.id, title, docType, key, req.session.user.id);
     res.json({ id: r.lastInsertRowid });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -455,15 +456,7 @@ router.get('/:id/documents/:docId/file', requireLogin, async (req, res) => {
     const doc = await db.prepare('SELECT * FROM employee_documents WHERE id = ? AND employee_id = ?').get(req.params.docId, req.params.id);
     if (!doc) return res.status(404).send('Not found');
 
-    // Path traversal protection: verify resolved path is within uploads directory
-    const fp = path.resolve(path.join(config.paths.uploads, doc.file));
-    const uploadsDir = path.resolve(config.paths.uploads);
-    if (!fp.startsWith(uploadsDir + path.sep) && fp !== uploadsDir) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    if (!fs.existsSync(fp)) return res.status(404).send('File missing');
-    res.sendFile(fp);
+    return await sendFile(res, doc.file);
   } catch (err) {
     console.error('Error retrieving document:', err);
     res.status(500).json({ error: 'Failed to retrieve document' });

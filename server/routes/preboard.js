@@ -4,6 +4,7 @@ const fs = require('fs');
 const db = require('../db');
 const config = require('../config');
 const { documentUpload } = require('../services/upload');
+const { saveFile, getFile, deleteFile, sendFile } = require('../services/filestore');
 const { getSettings } = require('../services/settings');
 const { SELF_ONBOARDING_FIELDS, ONBOARDING_REQUIRED_FIELDS } = require('../services/employees');
 const { notifyUsers } = require('../services/notify');
@@ -80,7 +81,7 @@ router.post('/:token/documents', documentUpload.single('file'), async (req, res)
     const docType = (req.body && req.body.doc_type) || '';
     const title = (req.body && req.body.title) || docType || req.file.originalname;
     const r = await db.prepare('INSERT INTO employee_documents (employee_id, title, doc_type, file, uploaded_by) VALUES (?, ?, ?, ?, NULL)')
-      .run(emp.id, title, docType, req.file.filename);
+      .run(emp.id, title, docType, await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname));
     res.json({ id: r.lastInsertRowid });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -94,11 +95,7 @@ router.get('/:token/documents/:docId/file', async (req, res) => {
     if (!emp) return res.status(404).send('Invalid link');
     const doc = await db.prepare('SELECT * FROM employee_documents WHERE id = ? AND employee_id = ?').get(req.params.docId, emp.id);
     if (!doc) return res.status(404).send('Not found');
-    const fp = path.resolve(path.join(config.paths.uploads, doc.file));
-    const uploadsDir = path.resolve(config.paths.uploads);
-    if (!fp.startsWith(uploadsDir + path.sep) && fp !== uploadsDir) return res.status(403).send('Denied');
-    if (!fs.existsSync(fp)) return res.status(404).send('Missing');
-    res.sendFile(fp);
+    return await sendFile(res, doc.file);
   } catch (e) {
     res.status(500).send(e.message);
   }

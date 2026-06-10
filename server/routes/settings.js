@@ -3,6 +3,7 @@ const db = require('../db');
 const { requirePerm, requireSuperAdmin } = require('../middleware/auth');
 const { getSettings, saveSettings } = require('../services/settings');
 const { upload } = require('../services/upload');
+const { saveFile, getFile, deleteFile, sendFile } = require('../services/filestore');
 const { ROLES, ROLE_LABELS, ALL_PERMISSIONS, effectivePermissions } = require('../services/permissions');
 
 const router = express.Router();
@@ -57,7 +58,8 @@ router.put('/', requirePerm('settings:manage'), async (req, res) => {
 // Logo upload.
 router.post('/logo', requirePerm('settings:manage'), upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  const s = await saveSettings({ logoFile: req.file.filename });
+  const key = await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname);
+  const s = await saveSettings({ logoFile: key });
   res.json({ logoFile: s.logoFile });
 });
 
