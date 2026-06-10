@@ -528,6 +528,9 @@ async function init() {
     console.log(`Default admin ready: ${admin.email}`);
   }
 
+  // Warm the in-memory settings cache so getSettings() can stay synchronous.
+  await require('./services/settings').loadSettings();
+
   initialized = true;
   console.log('✅ Postgres schema ready (Supabase).');
 }
