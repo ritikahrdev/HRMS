@@ -2,6 +2,11 @@ const nodemailer = require('nodemailer');
 const config = require('../config');
 const db = require('../db');
 
+// Brevo HTTPS API key (preferred transport). Free hosts (Render free tier)
+// block outbound SMTP ports, but HTTPS (443) is always open — so when
+// BREVO_API_KEY is set, mail goes via Brevo's REST API instead of SMTP.
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+
 let transporter = null;
 
 function getTransporter() {
@@ -15,6 +20,41 @@ function getTransporter() {
     auth: { user: e.user, pass: e.pass },
   });
   return transporter;
+}
+
+// "HR Team <hr@x.com>" -> { name: 'HR Team', email: 'hr@x.com' }
+function parseFrom(from) {
+  const m = String(from || '').match(/^(.*)<([^>]+)>\s*$/);
+  if (m) return { name: m[1].trim().replace(/^"|"$/g, '') || undefined, email: m[2].trim() };
+  return { email: String(from || '').trim() };
+}
+
+async function sendViaBrevoApi({ from, to, subject, html, text, attachments }) {
+  const payload = {
+    sender: parseFrom(from),
+    to: String(to).split(',').map((s) => ({ email: s.trim() })).filter((x) => x.email),
+    subject: subject || '(no subject)',
+  };
+  if (html) payload.htmlContent = html;
+  if (text || !html) payload.textContent = text || ' ';
+  if (attachments && attachments.length) {
+    const fs = require('fs');
+    payload.attachment = attachments.map((a) => ({
+      name: a.filename || 'attachment',
+      content: a.content
+        ? Buffer.from(a.content).toString('base64')
+        : fs.readFileSync(a.path).toString('base64'),
+    }));
+  }
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`Brevo API ${r.status}: ${body.slice(0, 200)}`);
+  }
 }
 
 /**
@@ -31,6 +71,19 @@ async function sendMail({ to, subject, html, text, attachments }) {
   if (!to) {
     await logStmt.run('', subject || '', 'error', 'No recipient', '');
     return { ok: false, reason: 'no-recipient' };
+  }
+
+  // Preferred: Brevo HTTPS API (works on hosts that block SMTP ports).
+  if (BREVO_API_KEY) {
+    try {
+      await sendViaBrevoApi({ from: e.from || e.user, to, subject, html, text, attachments });
+      await logStmt.run(to, subject || '', 'sent', null, text || html || '');
+      return { ok: true };
+    } catch (err) {
+      await logStmt.run(to, subject || '', 'error', String(err.message || err), '');
+      console.error('Email send failed (Brevo API):', err.message);
+      return { ok: false, reason: 'error', error: err.message };
+    }
   }
 
   const t = getTransporter();
