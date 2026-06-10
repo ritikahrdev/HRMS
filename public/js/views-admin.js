@@ -2822,7 +2822,7 @@ const AdminViews = {
   async onboarding(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { employees } = await api.get('/onboarding');
-    const statusOf = (e) => (e.total === 0 ? 'notstarted' : (e.done >= e.total ? 'done' : 'inprogress'));
+    const statusOf = (e) => (e.onboarded ? 'done' : (e.total === 0 ? 'notstarted' : (e.done >= e.total ? 'done' : 'inprogress')));
     const pct = (e) => (e.total ? Math.round((e.done / e.total) * 100) : 0);
     const now = new Date();
     const daysSince = (d) => { if (!d) return Infinity; return Math.floor((now - new Date(d + 'T00:00:00')) / 86400000); };
@@ -2840,26 +2840,37 @@ const AdminViews = {
           <option value="all">All employees</option>
           <option value="notstarted">Not started</option>
           <option value="inprogress">In progress</option>
-          <option value="done">Completed</option>
+          <option value="done">Onboarded / done</option>
         </select>
+        <button class="btn secondary" id="obMarkAll">✓ Mark all as onboarded</button>
       </div>
-      <p class="muted" style="margin-top:-4px">Track every new hire's checklist and account setup in one place. Open a person to tick tasks or notify managers/IT to create their accounts.</p>
+      <p class="muted" style="margin-top:-4px">Track every new hire's checklist and account setup in one place. Open a person to tick tasks or notify managers/IT to create their accounts. Use <b>Mark all as onboarded</b> for staff who joined before you started using the system.</p>
       <div class="btn-row" style="gap:10px;margin:12px 0 16px;align-items:stretch">
         ${tile('Joined this month', newThisMonth, '#2563eb')}
         ${tile('In progress', inProg, '#d97706')}
         ${tile('Not started', notStarted, '#dc2626')}
-        ${tile('Completed', completed, '#16a34a')}
+        ${tile('Onboarded', completed, '#16a34a')}
       </div>
       <div id="obTable"></div>`;
 
     const reload = () => AdminViews.onboarding(c);
+    const markAll = document.getElementById('obMarkAll');
+    if (markAll) markAll.onclick = async () => {
+      const pending = employees.filter((e) => !e.onboarded).length;
+      if (!pending) return UI.toast('Everyone is already marked onboarded.', 'success');
+      if (!confirm(`Mark ${pending} employee(s) who aren't onboarded yet as already onboarded? Use this for staff who joined before you started using the system.`)) return;
+      try { const r = await api.post('/onboarding/bulk-complete', { all: true }); UI.toast(`Marked ${r.count} employee(s) as onboarded.`, 'success'); reload(); }
+      catch (err) { UI.toast(err.message, 'error'); }
+    };
     const badge = (e) => {
+      if (e.onboarded) return '<span class="tag" style="background:#dcfce7;color:#166534">✓ Onboarded</span>';
       const s = statusOf(e);
       if (s === 'done') return '<span class="tag" style="background:#dcfce7;color:#166534">Completed</span>';
       if (s === 'inprogress') return '<span class="tag" style="background:#fef3c7;color:#92400e">In progress</span>';
       return '<span class="tag" style="background:#fee2e2;color:#991b1b">Not started</span>';
     };
     const bar = (e) => {
+      if (e.onboarded && e.total === 0) return '<span class="muted" style="font-size:11px">— already onboarded —</span>';
       const p = pct(e);
       return `<div style="display:flex;align-items:center;gap:8px;min-width:150px"><div style="flex:1;height:8px;background:#e5e7eb;border-radius:6px;overflow:hidden"><div style="width:${p}%;height:100%;background:${p === 100 ? '#16a34a' : '#2563eb'}"></div></div><span class="muted" style="font-size:11px;white-space:nowrap">${e.done}/${e.total || 0}</span></div>`;
     };
@@ -2877,9 +2888,14 @@ const AdminViews = {
         { key: 'doj', label: 'Joined', render: (e) => (e.date_of_joining ? UI.esc(e.date_of_joining) : '—') },
         { key: 'progress', label: 'Progress', render: bar },
         { key: 'status', label: 'Status', render: badge },
-        { key: 'actions', label: '', render: (e) => (e.total === 0
-          ? `<button class="btn sm" data-start="${e.id}">Start onboarding</button>`
-          : `<button class="btn sm secondary" data-open="${e.id}">Open checklist</button>`) },
+        { key: 'actions', label: '', render: (e) => {
+          const btns = [];
+          if (e.total === 0 && !e.onboarded) btns.push(`<button class="btn sm" data-start="${e.id}">Start onboarding</button>`);
+          else btns.push(`<button class="btn sm secondary" data-open="${e.id}">Open checklist</button>`);
+          if (e.onboarded) btns.push(`<button class="btn sm secondary" data-reopen="${e.id}" title="Mark as not onboarded">Reopen</button>`);
+          else btns.push(`<button class="btn sm" data-mark="${e.id}">Mark onboarded</button>`);
+          return `<div class="btn-row" style="gap:6px;justify-content:flex-end">${btns.join('')}</div>`;
+        } },
       ], rows, 'No employees match this filter.');
       document.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => {
         const e = employees.find((x) => x.id == b.dataset.open);
@@ -2888,6 +2904,14 @@ const AdminViews = {
       document.querySelectorAll('[data-start]').forEach((b) => b.onclick = async () => {
         const e = employees.find((x) => x.id == b.dataset.start);
         try { await api.post('/onboarding/' + e.id + '/template'); UI.toast('Onboarding started — checklist added & managers notified.', 'success'); reload(); }
+        catch (err) { UI.toast(err.message, 'error'); }
+      });
+      document.querySelectorAll('[data-mark]').forEach((b) => b.onclick = async () => {
+        try { await api.post('/onboarding/' + b.dataset.mark + '/complete'); UI.toast('Marked as onboarded.', 'success'); reload(); }
+        catch (err) { UI.toast(err.message, 'error'); }
+      });
+      document.querySelectorAll('[data-reopen]').forEach((b) => b.onclick = async () => {
+        try { await api.post('/onboarding/' + b.dataset.reopen + '/reopen'); UI.toast('Onboarding reopened.', 'success'); reload(); }
         catch (err) { UI.toast(err.message, 'error'); }
       });
     };

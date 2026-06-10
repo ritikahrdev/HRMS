@@ -20,6 +20,7 @@ const DEFAULT_TASKS = [
 router.get('/', requirePerm('employees:write'), (req, res) => {
   const rows = db.prepare(`
     SELECT e.id, e.name, e.department, e.designation, e.date_of_joining, e.status,
+      e.onboarded, e.onboarded_at,
       (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id) AS total,
       (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id AND t.done = 1) AS done
     FROM employees e
@@ -27,6 +28,25 @@ router.get('/', requirePerm('employees:write'), (req, res) => {
     ORDER BY (e.date_of_joining IS NULL), e.date_of_joining DESC, e.id DESC
   `).all();
   res.json({ employees: rows });
+});
+
+// Mark several employees as already onboarded in one go. Body: { all: true }
+// marks every active employee not yet onboarded; or { ids: [..] } for a subset.
+// Defined before '/:employeeId' so "bulk-complete" isn't read as an id.
+router.post('/bulk-complete', requirePerm('employees:write'), (req, res) => {
+  const body = req.body || {};
+  let ids;
+  if (Array.isArray(body.ids) && body.ids.length) {
+    ids = body.ids.map(Number).filter((n) => Number.isInteger(n));
+  } else if (body.all) {
+    ids = db.prepare("SELECT id FROM employees WHERE status = 'active' AND COALESCE(onboarded,0) = 0").all().map((r) => r.id);
+  } else {
+    return res.status(400).json({ error: 'Provide { all: true } or { ids: [...] }.' });
+  }
+  const upd = db.prepare("UPDATE employees SET onboarded = 1, onboarded_at = datetime('now') WHERE id = ?");
+  let count = 0;
+  for (const id of ids) count += upd.run(id).changes;
+  res.json({ ok: true, count });
 });
 
 // View an employee's onboarding checklist (self or manager/HR).
@@ -69,6 +89,19 @@ router.post('/:employeeId/account-setup', requirePerm('employees:write'), (req, 
   const result = provisionAccountsForOnboarding(req.params.employeeId, req.session.user.id);
   if (!result.ok) return res.status(404).json(result);
   res.json(result);
+});
+
+// Mark a single employee as onboarded (complete) or reopen onboarding.
+router.post('/:employeeId/complete', requirePerm('employees:write'), (req, res) => {
+  const r = db.prepare("UPDATE employees SET onboarded = 1, onboarded_at = datetime('now') WHERE id = ?").run(req.params.employeeId);
+  if (!r.changes) return res.status(404).json({ error: 'Employee not found.' });
+  res.json({ ok: true });
+});
+
+router.post('/:employeeId/reopen', requirePerm('employees:write'), (req, res) => {
+  const r = db.prepare('UPDATE employees SET onboarded = 0, onboarded_at = NULL WHERE id = ?').run(req.params.employeeId);
+  if (!r.changes) return res.status(404).json({ error: 'Employee not found.' });
+  res.json({ ok: true });
 });
 
 // Toggle a task done (self or HR).

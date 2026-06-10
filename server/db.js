@@ -379,6 +379,15 @@ for (const col of [
 for (const col of ['leave_earned', 'leave_casual', 'leave_comp_off']) {
   if (!hasColumn('employees', col)) db.exec(`ALTER TABLE employees ADD COLUMN ${col} REAL`);
 }
+// Onboarding completion flag. When the column is first introduced, every
+// employee already in the system predates the onboarding feature, so they are
+// backfilled as "already onboarded" (one-time). Employees added later start at
+// 0 and are tracked through the Onboarding section.
+if (!hasColumn('employees', 'onboarded')) {
+  db.exec('ALTER TABLE employees ADD COLUMN onboarded INTEGER NOT NULL DEFAULT 0');
+  db.exec('ALTER TABLE employees ADD COLUMN onboarded_at TEXT');
+  db.exec("UPDATE employees SET onboarded = 1, onboarded_at = datetime('now')");
+}
 // Attendance correction enhancements
 if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
 // Work-from-home flag (set when attendance comes from a Slack "WFH" message)
