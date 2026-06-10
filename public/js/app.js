@@ -29,6 +29,7 @@ const App = {
       push('Me', '#/my-leave', 'My Leave', () => EmployeeViews.leave(c()));
       if (this.modOn('reimbursement')) push('Me', '#/my-reimb', 'My Reimbursements', () => EmployeeViews.reimbursement(c()));
       push('Me', '#/my-payslips', 'My Payslips', () => EmployeeViews.payslips(c()));
+      push('Me', '#/my-onboarding', 'My Onboarding', () => EmployeeViews.onboardingForm(c()));
     }
     push('Me', '#/profile', 'My Profile', () => EmployeeViews.profile(c()));
 
@@ -74,7 +75,7 @@ const App = {
 
   NAV_ICONS: {
     '#/': '🏠', '#/my-attendance': '🕒', '#/my-leave': '🌴', '#/my-reimb': '🧾',
-    '#/my-payslips': '💸', '#/profile': '👤',
+    '#/my-payslips': '💸', '#/my-onboarding': '📋', '#/profile': '👤',
     '#/directory': '📒', '#/notices': '📢', '#/holidays': '📅', '#/recognition': '🏆',
     '#/performance': '🎯', '#/surveys': '📝', '#/helpdesk': '🎧',
     '#/employees': '👥', '#/team': '🧑‍🤝‍🧑', '#/import': '📥', '#/onboarding': '🚀', '#/attendance': '🕒',

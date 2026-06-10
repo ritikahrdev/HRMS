@@ -68,6 +68,17 @@ const EmployeeViews = {
       try { await api.post('/attendance/check-in'); UI.toast('Attendance marked!', 'success'); this.dashboard(c); }
       catch (e) { UI.toast(e.message, 'error'); this.dashboard(c); }
     };
+
+    // Nudge new hires who haven't completed their joining form yet.
+    api.get('/employees/me').then(({ employee }) => {
+      if (!employee || employee.onboarding_submitted) return;
+      const banner = document.createElement('div');
+      banner.className = 'card';
+      banner.style.cssText = 'border-left:4px solid #2563eb;margin-bottom:14px;cursor:pointer';
+      banner.innerHTML = '<b>📋 Complete your onboarding</b><div class="muted" style="font-size:13px">Fill in your joining details and upload your documents so HR can finish setting you up. Click here to start.</div>';
+      banner.onclick = () => { location.hash = '#/my-onboarding'; };
+      c.insertBefore(banner, c.firstChild);
+    }).catch(() => {});
   },
 
   async attendance(c) {
@@ -679,6 +690,133 @@ const EmployeeViews = {
           : '<div class="empty">No assets assigned to you.</div>';
       }).catch(() => {});
     }
+  },
+
+  // ---------------- Self-service onboarding / joining form ----------------
+  async onboardingForm(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    const { employee } = await api.get('/employees/me');
+    if (!employee) { c.innerHTML = '<div class="empty">No employee record is linked to your login yet. Please contact HR.</div>'; return; }
+    const required = App.requiredDocs || [];
+    const submitted = !!employee.onboarding_submitted;
+
+    const SELF_FIELDS = ['phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
+      'nationality', 'languages_known', 'emergency_name', 'emergency_phone', 'address', 'current_address',
+      'permanent_address', 'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'aadhaar',
+      'education', 'experience'];
+    const collect = () => { const p = {}; SELF_FIELDS.forEach((f) => { const el = document.getElementById('of-' + f); if (el) p[f] = el.value; }); return p; };
+
+    const val = (id) => UI.esc(employee[id] || '');
+    const F = (id, label, type) => `<div class="field"><label>${label}</label><input id="of-${id}" type="${type || 'text'}" value="${type === 'date' ? UI.esc((employee[id] || '').slice(0, 10)) : val(id)}" /></div>`;
+    const FA = (id, label) => `<div class="field" style="grid-column:1/-1"><label>${label}</label><textarea id="of-${id}" rows="2">${val(id)}</textarea></div>`;
+    const SEL = (id, label, options) => `<div class="field"><label>${label}</label><select id="of-${id}"><option value="">—</option>${options.map((o) => `<option ${(employee[id] || '') === o ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    const sub = (t) => `<div style="grid-column:1/-1;font-weight:650;color:#475569;margin:6px 0 -2px;font-size:13px">${t}</div>`;
+
+    c.innerHTML = `
+      <div class="toolbar"><div class="section-title" style="margin:0">📋 My Onboarding</div></div>
+      ${submitted
+        ? `<div class="card" style="border-left:4px solid #16a34a;max-width:760px"><b>✓ Your onboarding form is submitted${employee.onboarding_submitted_at ? ' on ' + UI.date(employee.onboarding_submitted_at) : ''}.</b><div class="muted" style="font-size:13px">HR is reviewing your documents. You can still update details or replace documents below.</div></div>`
+        : `<div class="card" style="border-left:4px solid #2563eb;max-width:760px"><b>Welcome aboard! 👋</b><div class="muted" style="font-size:13px">Fill in your details and upload your documents below. Everything saves straight into HR records — no email attachments needed.</div></div>`}
+
+      <div class="card mt" style="max-width:760px">
+        <div class="section-title">1. Your details</div>
+        <div class="form-grid">
+          ${sub('Personal')}
+          ${F('phone', 'Phone')}
+          ${F('personal_email', 'Personal Email', 'email')}
+          ${F('dob', 'Date of Birth', 'date')}
+          ${SEL('gender', 'Gender', ['Male', 'Female', 'Other', 'Prefer not to say'])}
+          ${SEL('blood_group', 'Blood Group', ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'])}
+          ${SEL('marital_status', 'Marital Status', ['Single', 'Married', 'Other'])}
+          ${F('nationality', 'Nationality')}
+          ${F('languages_known', 'Languages Known')}
+          ${sub('Address')}
+          ${FA('current_address', 'Current Address')}
+          ${FA('permanent_address', 'Permanent Address')}
+          ${sub('Emergency contact')}
+          ${F('emergency_name', 'Contact Name')}
+          ${F('emergency_phone', 'Contact Phone')}
+          ${sub('Bank details (for salary)')}
+          ${F('bank_holder_name', 'Account Holder Name')}
+          ${F('bank_name', 'Bank Name')}
+          ${F('bank_account', 'Account Number')}
+          ${F('ifsc', 'IFSC Code')}
+          ${sub('Identity')}
+          ${F('pan', 'PAN')}
+          ${F('aadhaar', 'Aadhaar / National ID')}
+          ${sub('Background')}
+          ${F('education', 'Highest Education')}
+          ${F('experience', 'Total Experience')}
+        </div>
+        <div class="btn-row mt"><button class="btn" id="ofSave">Save details</button></div>
+      </div>
+
+      <div class="card mt" style="max-width:760px">
+        <div class="section-title">2. Upload your documents</div>
+        <div id="ofDocs" class="muted">Loading…</div>
+      </div>
+
+      <div class="card mt" style="max-width:760px">
+        <div class="section-title">3. Submit</div>
+        <p class="muted" style="font-size:13px;margin-top:2px">When your details are filled and all required documents are uploaded, submit your onboarding. HR will be notified to verify.</p>
+        <div id="ofSubmitWrap"></div>
+      </div>`;
+
+    document.getElementById('ofSave').onclick = async () => {
+      try { await api.put('/employees/me/onboarding', collect()); UI.toast('Details saved ✓', 'success'); }
+      catch (e) { UI.toast(e.message, 'error'); }
+    };
+
+    const uploadDoc = async (file, docType) => {
+      const fd = new FormData(); fd.append('file', file); fd.append('doc_type', docType || ''); fd.append('title', docType || file.name);
+      try { await api.upload(`/employees/${employee.id}/documents`, fd); UI.toast('Uploaded ✓', 'success'); loadDocs(); }
+      catch (e) { UI.toast(e.message, 'error'); }
+    };
+    const stChip = (d) => d.status === 'verified' ? '<span class="tag approved">✓ Verified</span>'
+      : (d.status === 'rejected' ? '<span class="tag rejected">✗ Rejected — please re-upload</span>' : '<span class="tag pending">⏳ Pending review</span>');
+
+    const loadDocs = async () => {
+      const { documents } = await api.get(`/employees/${employee.id}/documents`);
+      const byType = {}; documents.forEach((d) => { if (d.doc_type) byType[d.doc_type] = d; });
+      const done = required.filter((t) => byType[t]).length;
+      const checklist = required.map((t) => {
+        const doc = byType[t];
+        if (!doc) return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div><span class="tag rejected">Not uploaded</span></div><div class="doc-act"><label class="btn sm">Upload<input type="file" class="ofreq" data-type="${UI.esc(t)}" style="display:none"/></label></div></div>`;
+        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${stChip(doc)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employee.id}/documents/${doc.id}/file" target="_blank">View</a> <label class="btn sm secondary">Replace<input type="file" class="ofreq" data-type="${UI.esc(t)}" style="display:none"/></label></div></div>`;
+      }).join('');
+      const others = documents.filter((d) => !required.includes(d.doc_type));
+      const otherRows = others.map((d) => `<div class="doc-row"><div class="doc-name">${UI.esc(d.title || d.doc_type || 'Document')}</div><div>${stChip(d)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employee.id}/documents/${d.id}/file" target="_blank">View</a></div></div>`).join('');
+
+      document.getElementById('ofDocs').innerHTML = `
+        <div class="muted" style="margin-bottom:8px">${done}/${required.length} required documents uploaded</div>
+        <div class="doc-list">${checklist || '<div class="muted" style="padding:10px">No required documents configured.</div>'}</div>
+        ${otherRows ? `<div style="font-weight:650;color:#475569;margin:14px 0 6px;font-size:13px">Other documents</div><div class="doc-list">${otherRows}</div>` : ''}
+        <div class="btn-row mt"><label class="btn secondary">+ Upload another document<input type="file" id="ofOther" style="display:none"/></label><input id="ofOtherTitle" placeholder="Document name (optional)" style="width:auto"/></div>`;
+
+      document.querySelectorAll('.ofreq').forEach((inp) => inp.onchange = (e) => { const f = e.target.files[0]; if (f) uploadDoc(f, inp.dataset.type); });
+      const other = document.getElementById('ofOther');
+      if (other) other.onchange = (e) => { const f = e.target.files[0]; if (!f) return; const t = (document.getElementById('ofOtherTitle').value || '').trim(); uploadDoc(f, t || f.name); };
+
+      const allDocs = required.length === 0 || done >= required.length;
+      const wrap = document.getElementById('ofSubmitWrap');
+      if (submitted) {
+        wrap.innerHTML = '<span class="tag approved">✓ Submitted</span> <span class="muted" style="font-size:13px">Need to resend? Update anything above and use Save details.</span>';
+      } else {
+        wrap.innerHTML = `<button class="btn" id="ofSubmit" ${allDocs ? '' : 'disabled'}>Submit my onboarding</button>${allDocs ? '' : '<span class="muted" style="margin-left:8px;font-size:13px">Upload all required documents to enable.</span>'}`;
+        const sb = document.getElementById('ofSubmit');
+        if (sb) sb.onclick = async () => {
+          if (!confirm('Submit your onboarding form? HR will be notified to review your documents. You can still make changes afterwards.')) return;
+          try {
+            await api.put('/employees/me/onboarding', collect());
+            await api.post('/employees/me/onboarding/submit');
+            UI.toast('🎉 Onboarding submitted! HR has been notified.', 'success');
+            if (UI.celebrate) UI.celebrate();
+            EmployeeViews.onboardingForm(c);
+          } catch (e) { UI.toast(e.message, 'error'); }
+        };
+      }
+    };
+    loadDocs();
   },
 
   // Read-only holidays calendar for employees

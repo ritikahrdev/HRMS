@@ -11,8 +11,21 @@ const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
 const { validatePAN, validateAadhaar, validateIFSC } = require('../services/verify');
 const aadhaarOffline = require('../services/aadhaarOffline');
+const { notifyUsers } = require('../services/notify');
+const { can } = require('../services/permissions');
 
 const router = express.Router();
+
+// Fields a new hire may fill in on their own self-service onboarding form.
+// Deliberately excludes salary, role, department, manager, status, emp_code —
+// those stay HR-controlled.
+const SELF_ONBOARDING_FIELDS = [
+  'phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
+  'nationality', 'languages_known', 'emergency_name', 'emergency_phone',
+  'address', 'current_address', 'permanent_address',
+  'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'aadhaar',
+  'education', 'experience',
+];
 
 const LIST_SQL = `
   SELECT e.*, u.role AS role,
@@ -89,6 +102,46 @@ router.get('/me', requireLogin, (req, res) => {
   if (!empId) return res.json({ employee: null });
   const emp = db.prepare(LIST_SQL + ' WHERE e.id = ?').get(empId);
   res.json({ employee: emp });
+});
+
+// Self-service onboarding form: a new hire saves their own personal/joining
+// details straight into HRMS (whitelisted fields only). Documents are uploaded
+// through the existing /:id/documents endpoint (self-upload is allowed).
+router.put('/me/onboarding', requireLogin, (req, res) => {
+  const empId = req.session.user.employeeId;
+  if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
+  const updates = {};
+  for (const f of SELF_ONBOARDING_FIELDS) {
+    if (f in req.body) updates[f] = req.body[f] == null ? null : String(req.body[f]).trim();
+  }
+  const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+  if (setClause) db.prepare(`UPDATE employees SET ${setClause} WHERE id = @id`).run({ ...updates, id: empId });
+  res.json({ employee: db.prepare(LIST_SQL + ' WHERE e.id = ?').get(empId) });
+});
+
+// The new hire submits the completed form -> notify HR + their manager so the
+// documents can be reviewed/verified.
+router.post('/me/onboarding/submit', requireLogin, (req, res) => {
+  const empId = req.session.user.employeeId;
+  if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
+  const emp = db.prepare('SELECT id, name, manager_id FROM employees WHERE id = ?').get(empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+  db.prepare("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now') WHERE id = ?").run(empId);
+
+  const recipients = new Set();
+  if (emp.manager_id) {
+    const mu = db.prepare('SELECT user_id FROM employees WHERE id = ?').get(emp.manager_id);
+    if (mu && mu.user_id) recipients.add(mu.user_id);
+  }
+  for (const u of db.prepare('SELECT id, role FROM users').all()) if (can(u.role, 'employees:write')) recipients.add(u.id);
+  recipients.delete(req.session.user.id);
+  notifyUsers([...recipients], {
+    type: 'onboarding',
+    title: `Onboarding form submitted: ${emp.name}`,
+    body: `${emp.name} has completed their joining form and uploaded their documents. Please review and verify.`,
+    link: '#/onboarding',
+  });
+  res.json({ ok: true });
 });
 
 // Single employee.

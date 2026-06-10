@@ -2890,7 +2890,7 @@ const AdminViews = {
         el.style.transform = on ? 'translateY(-1px)' : '';
       });
       document.getElementById('obTable').innerHTML = UI.table([
-        { key: 'name', label: 'Employee', sticky: true, render: (e) => `<b>${UI.esc(e.name)}</b>${e.designation ? `<br><span class="muted" style="font-size:11px">${UI.esc(e.designation)}</span>` : ''}` },
+        { key: 'name', label: 'Employee', sticky: true, render: (e) => `<b>${UI.esc(e.name)}</b>${e.designation ? `<br><span class="muted" style="font-size:11px">${UI.esc(e.designation)}</span>` : ''}${(e.onboarding_submitted && !e.onboarded) ? '<br><span class="tag" style="background:#dbeafe;color:#1e40af;font-size:10px">📋 Form submitted — review docs</span>' : ''}` },
         { key: 'department', label: 'Department', render: (e) => UI.esc(e.department || '—') },
         { key: 'doj', label: 'Joined', render: (e) => (e.date_of_joining ? UI.esc(e.date_of_joining) : '—') },
         { key: 'progress', label: 'Progress', render: bar },

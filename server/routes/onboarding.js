@@ -20,7 +20,7 @@ const DEFAULT_TASKS = [
 router.get('/', requirePerm('employees:write'), (req, res) => {
   const rows = db.prepare(`
     SELECT e.id, e.name, e.department, e.designation, e.date_of_joining, e.status,
-      e.onboarded, e.onboarded_at,
+      e.onboarded, e.onboarded_at, e.onboarding_submitted, e.onboarding_submitted_at,
       (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id) AS total,
       (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id AND t.done = 1) AS done
     FROM employees e

@@ -388,6 +388,13 @@ if (!hasColumn('employees', 'onboarded')) {
   db.exec('ALTER TABLE employees ADD COLUMN onboarded_at TEXT');
   db.exec("UPDATE employees SET onboarded = 1, onboarded_at = datetime('now')");
 }
+// Self-service joining form: tracks when a new hire submits their details +
+// documents. Existing employees are treated as already submitted.
+if (!hasColumn('employees', 'onboarding_submitted')) {
+  db.exec('ALTER TABLE employees ADD COLUMN onboarding_submitted INTEGER NOT NULL DEFAULT 0');
+  db.exec('ALTER TABLE employees ADD COLUMN onboarding_submitted_at TEXT');
+  db.exec("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now')");
+}
 // Attendance correction enhancements
 if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
 // Work-from-home flag (set when attendance comes from a Slack "WFH" message)
