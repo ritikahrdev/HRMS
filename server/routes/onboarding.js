@@ -5,6 +5,7 @@ const config = require('../config');
 const { requireLogin, requirePerm, canActOnEmployee } = require('../middleware/auth');
 const { provisionAccountsForOnboarding, accountsForDepartment } = require('../services/accountSetup');
 const { createEmployee } = require('../services/employees');
+const { getSettings } = require('../services/settings');
 const {
   OWNERS, STAGES, buildJourney, rebuildJourney, syncAutomatedTasks, sendReminders,
 } = require('../services/onboardingJourney');
@@ -15,6 +16,23 @@ const router = express.Router();
 function preboardUrl(req, token) {
   const base = (config.publicUrl || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
   return `${base}/preboard/${token}`;
+}
+
+// How long a pre-boarding link stays valid (hours), from Settings.
+function linkHours() {
+  const h = Number(getSettings().preboardLinkHours);
+  return (h > 0 && h <= 720) ? h : 4;
+}
+
+// SQLite "YYYY-MM-DD HH:MM:SS" (UTC) -> ISO so the browser can localise it.
+function toIso(s) { return s ? s.replace(' ', 'T') + 'Z' : null; }
+
+// Generate a fresh token + expiry for an employee and return it.
+function issuePreboardToken(employeeId) {
+  const token = require('crypto').randomBytes(24).toString('hex');
+  db.prepare("UPDATE employees SET preboard_token = ?, preboard_expires = datetime('now', ?) WHERE id = ?")
+    .run(token, '+' + linkHours() + ' hours', employeeId);
+  return token;
 }
 
 // Onboarding overview: every active employee with their checklist progress,
@@ -79,24 +97,26 @@ router.post('/preboard', requirePerm('employees:write'), (req, res) => {
     }
     db.prepare('UPDATE employees SET onboarded = 0, onboarded_at = NULL, onboarding_submitted = 0, onboarding_submitted_at = NULL WHERE id = ?').run(employee.id);
     buildJourney(employee.id);
-    const token = crypto.randomBytes(24).toString('hex');
-    db.prepare('UPDATE employees SET preboard_token = ? WHERE id = ?').run(token, employee.id);
-    res.json({ ok: true, employeeId: employee.id, url: preboardUrl(req, token) });
+    const token = issuePreboardToken(employee.id);
+    const exp = db.prepare('SELECT preboard_expires FROM employees WHERE id = ?').get(employee.id).preboard_expires;
+    res.json({ ok: true, employeeId: employee.id, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours() });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
 // Generate (or return) a pre-boarding link for an existing employee record.
+// A fresh link is issued if none exists, if asked to regenerate, or if the
+// current one has already expired — so "Generate" always yields a working link.
 router.post('/:employeeId/preboard-link', requirePerm('employees:write'), (req, res) => {
-  const emp = db.prepare('SELECT id, preboard_token FROM employees WHERE id = ?').get(req.params.employeeId);
+  const emp = db.prepare("SELECT id, preboard_token, (preboard_expires IS NOT NULL AND preboard_expires <= datetime('now')) AS expired FROM employees WHERE id = ?").get(req.params.employeeId);
   if (!emp) return res.status(404).json({ error: 'Employee not found.' });
   let token = emp.preboard_token;
-  if (!token || (req.body && req.body.regenerate)) {
-    token = crypto.randomBytes(24).toString('hex');
-    db.prepare('UPDATE employees SET preboard_token = ? WHERE id = ?').run(token, emp.id);
+  if (!token || (req.body && req.body.regenerate) || emp.expired) {
+    token = issuePreboardToken(emp.id);
   }
-  res.json({ ok: true, token, url: preboardUrl(req, token) });
+  const exp = db.prepare('SELECT preboard_expires FROM employees WHERE id = ?').get(emp.id).preboard_expires;
+  res.json({ ok: true, token, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours() });
 });
 
 // Revoke the pre-boarding link (the URL stops working immediately).
@@ -111,13 +131,15 @@ router.get('/:employeeId', requireLogin, (req, res) => {
   if (!canActOnEmployee(req, req.params.employeeId)) return res.status(403).json({ error: 'No access.' });
   try { syncAutomatedTasks(req.params.employeeId); } catch (e) { /* non-fatal */ }
   const tasks = db.prepare('SELECT * FROM onboarding_tasks WHERE employee_id = ? ORDER BY position, id').all(req.params.employeeId);
-  const emp = db.prepare('SELECT preboard_token, onboarding_submitted FROM employees WHERE id = ?').get(req.params.employeeId);
+  const emp = db.prepare("SELECT preboard_token, preboard_expires, onboarding_submitted, (preboard_expires IS NOT NULL AND preboard_expires <= datetime('now')) AS expired FROM employees WHERE id = ?").get(req.params.employeeId);
   // Only HR/managers (write access) get the actual link back, not the employee.
   const canManage = req.session.user.role !== 'EMPLOYEE';
   const preboard = {
     hasLink: !!(emp && emp.preboard_token),
     url: (canManage && emp && emp.preboard_token) ? preboardUrl(req, emp.preboard_token) : null,
     submitted: !!(emp && emp.onboarding_submitted),
+    expiresAt: toIso(emp && emp.preboard_expires),
+    expired: !!(emp && emp.expired),
   };
   res.json({ tasks, owners: OWNERS, stages: STAGES, preboard });
 });

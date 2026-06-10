@@ -1508,6 +1508,11 @@ const AdminViews = {
         <div class="field">
           <textarea id="departmentAccounts" rows="9" style="font-family:monospace;font-size:12px;white-space:pre">${UI.esc(daText)}</textarea>
         </div>
+        <div class="field" style="max-width:280px;margin-top:10px">
+          <label>Pre-boarding link validity (hours)</label>
+          <input id="preboardLinkHours" type="number" min="1" max="720" value="${UI.esc(s.preboardLinkHours != null ? s.preboardLinkHours : 4)}" />
+          <p class="muted" style="font-size:11px;margin:4px 0 0">How long a candidate's pre-boarding link stays usable after it's generated. After this it stops working and HR regenerates it.</p>
+        </div>
       </div>
 
       <div class="card mt" style="max-width:760px">
@@ -1635,6 +1640,7 @@ const AdminViews = {
           });
           return out;
         })(),
+        preboardLinkHours: Number(val('preboardLinkHours')) || 4,
         payroll: {
           perDayBasis: val('perDayBasis'),
           deductAbsent: document.getElementById('deductAbsent').checked,
@@ -2964,11 +2970,12 @@ const AdminViews = {
           designation: m.root.querySelector('#pbDesig').value.trim(),
           date_of_joining: m.root.querySelector('#pbDoj').value,
         });
+        const when = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '';
         m.root.querySelector('#pbResult').innerHTML = `
           <div class="card" style="border-left:4px solid #16a34a">
             <b>✓ Candidate created.</b> Share this private link with them:
             <div class="btn-row mt" style="align-items:center"><input id="pbNewUrl" readonly value="${UI.esc(r.url)}" style="flex:1" /><button class="btn sm" id="pbNewCopy">Copy</button></div>
-            <p class="muted" style="font-size:11px;margin:6px 0 0">Tip: paste this into your intent/offer email (or Leegality flow). It works with no login.</p>
+            <p class="muted" style="font-size:11px;margin:6px 0 0">⏳ Active for ${r.hours || 4} hours${when ? ` — until <b>${UI.esc(when)}</b>` : ''}. Paste it into your intent/offer email (or Leegality flow). It works with no login.</p>
           </div>`;
         m.root.querySelector('#pbNewCopy').onclick = async () => {
           try { await navigator.clipboard.writeText(r.url); UI.toast('Link copied.', 'success'); } catch { UI.toast('Copy failed — select the text manually.', 'error'); }
@@ -3050,17 +3057,23 @@ const AdminViews = {
         </div>`;
       }).join('');
 
-      const preboardCard = `
-        <div class="card" style="margin-bottom:14px;border-left:4px solid #6366f1">
-          <div class="section-title" style="font-size:14px">🔗 Pre-boarding link <span class="muted" style="font-weight:400;font-size:12px">— for candidates who don't have a company login yet</span></div>
-          ${pb.hasLink ? `
+      const pbWhen = pb.expiresAt ? new Date(pb.expiresAt).toLocaleString() : '';
+      const pbInner = (pb.hasLink && !pb.expired) ? `
             <div class="btn-row" style="align-items:center"><input id="pbUrl" readonly value="${UI.esc(pb.url || '')}" style="flex:1" /><button class="btn sm" id="pbCopy">Copy</button></div>
-            <div class="muted" style="font-size:11px;margin-top:6px">Send this private link to the candidate (e.g. with the intent/offer email). They fill details & upload documents — no login needed.${pb.submitted ? ' <b style="color:#16a34a">· Candidate has submitted ✓</b>' : ''}</div>
+            <div class="muted" style="font-size:11px;margin-top:6px">Send this private link to the candidate (e.g. with the intent/offer email). They fill details & upload documents — no login needed.${pbWhen ? ` <b>· Active until ${UI.esc(pbWhen)}</b>` : ''}${pb.submitted ? ' <b style="color:#16a34a">· Submitted ✓</b>' : ''}</div>
             <div class="btn-row mt"><button class="btn sm secondary" id="pbRegen">Regenerate</button><button class="btn sm red" id="pbRevoke">Revoke</button></div>
+          ` : (pb.hasLink && pb.expired) ? `
+            <div class="tag" style="background:#fee2e2;color:#991b1b">⏳ Link expired${pbWhen ? ' on ' + UI.esc(pbWhen) : ''}</div>
+            <p class="muted" style="font-size:11px;margin:6px 0 8px">The candidate can no longer open it. Generate a new one to reactivate access.</p>
+            <div class="btn-row"><button class="btn sm" id="pbGen">Generate new link</button><button class="btn sm red" id="pbRevoke">Revoke</button></div>
           ` : `
             <p class="muted" style="font-size:12px;margin:4px 0 8px">Generate a secure link the candidate can use before Day 1 — no company credentials required.</p>
             <button class="btn sm" id="pbGen">Generate pre-boarding link</button>
-          `}
+          `;
+      const preboardCard = `
+        <div class="card" style="margin-bottom:14px;border-left:4px solid #6366f1">
+          <div class="section-title" style="font-size:14px">🔗 Pre-boarding link <span class="muted" style="font-weight:400;font-size:12px">— for candidates who don't have a company login yet</span></div>
+          ${pbInner}
         </div>`;
 
       body.innerHTML = `

@@ -19,10 +19,13 @@ const router = express.Router();
 // ---------------------------------------------------------------------------
 function byToken(token) {
   if (!token || typeof token !== 'string' || token.length < 24) return null;
-  return db.prepare('SELECT * FROM employees WHERE preboard_token = ?').get(token) || null;
+  // A link is only valid while it has not passed its expiry time.
+  return db.prepare(
+    "SELECT * FROM employees WHERE preboard_token = ? AND (preboard_expires IS NULL OR preboard_expires > datetime('now'))"
+  ).get(token) || null;
 }
 
-const INVALID = { error: 'This link is invalid or has expired. Please contact HR.' };
+const INVALID = { error: 'This link is invalid or has expired. Please contact HR for a new link.' };
 
 // What the candidate sees: their name, company branding, required documents,
 // their own previously-entered details, and what they have uploaded so far.

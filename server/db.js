@@ -402,8 +402,12 @@ if (!hasColumn('employees', 'onboarding_submitted')) {
 }
 // Pre-boarding link token: lets a candidate fill their joining form & upload
 // documents BEFORE they have a company login, via a private secure URL.
+// preboard_expires makes the link time-limited (stops working after it passes).
 if (!hasColumn('employees', 'preboard_token')) {
   db.exec('ALTER TABLE employees ADD COLUMN preboard_token TEXT');
+}
+if (!hasColumn('employees', 'preboard_expires')) {
+  db.exec('ALTER TABLE employees ADD COLUMN preboard_expires TEXT');
 }
 // Attendance correction enhancements
 if (!hasColumn('attendance_corrections', 'type')) db.exec('ALTER TABLE attendance_corrections ADD COLUMN type TEXT DEFAULT "regularization"');
@@ -510,6 +514,9 @@ const defaultSettings = {
   // Attendance webhook secret (auto-generated; trusted systems send it in the
   // X-Webhook-Secret header). Override with the ATTENDANCE_WEBHOOK_SECRET env var.
   webhookSecret: require('crypto').randomBytes(24).toString('hex'),
+  // How many hours a pre-boarding (candidate) link stays usable after it is
+  // generated. After this it stops working and HR must regenerate it.
+  preboardLinkHours: 4,
   // Company
   companyName: 'My Company',
   legalName: '',
