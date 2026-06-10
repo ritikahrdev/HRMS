@@ -5,6 +5,10 @@ config.json
 .env
 .env.local
 .env.*.local
+.env.txt
+.env*.txt
+*.secret
+secrets.*
 *.log
 .DS_Store
 .vscode/
