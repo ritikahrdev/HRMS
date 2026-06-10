@@ -1,5 +1,6 @@
-# Hrika HRMS — production image.
-# Node 22+ is required for the built-in node:sqlite module (no native build step).
+# Hrika HRMS — production image (Postgres/Supabase build).
+# Stateless: the database AND uploaded files live in Postgres (Supabase), so
+# no persistent disk/volume is required — runs on free tiers (Render free, etc).
 FROM node:22-slim
 
 WORKDIR /app
@@ -11,12 +12,12 @@ RUN npm install --omit=dev
 # App source.
 COPY . .
 
-# Runtime config. DATA_DIR points at the mounted persistent volume so the
-# SQLite database and uploaded files survive restarts/redeploys.
 ENV NODE_ENV=production
+# The host (Render/Railway) injects PORT; the app reads process.env.PORT.
 ENV PORT=8080
-ENV DATA_DIR=/app/data
-
 EXPOSE 8080
 
+# Required at runtime (set these as environment variables on the host):
+#   DATABASE_URL    postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres
+#   SESSION_SECRET  a long random string
 CMD ["node", "server/index.js"]

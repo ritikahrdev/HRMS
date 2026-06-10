@@ -1,0 +1,17 @@
+# Render Blueprint — deploys the HRMS as a free web service.
+# Stateless (DB + files in Supabase Postgres), so NO paid disk is needed.
+# After importing this blueprint, set the two secret env vars in the dashboard.
+services:
+  - type: web
+    name: hrms
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: supabase-migration
+    envVars:
+      - key: DATABASE_URL
+        sync: false   # set in dashboard: your Supabase connection string (with password)
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production

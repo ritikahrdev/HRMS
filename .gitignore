@@ -13,3 +13,7 @@ secrets.*
 .DS_Store
 .vscode/
 .idea/
+
+# build/runtime logs
+pgsrv.log
+pgsrv.err
