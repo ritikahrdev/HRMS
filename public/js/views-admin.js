@@ -2931,53 +2931,119 @@ const AdminViews = {
     renderTable();
   },
 
-  // ---------------- Onboarding checklist (modal) ----------------
+  // ---------------- Onboarding journey (modal) ----------------
   async onboardingModal(employeeId, name, onClose) {
     const m = UI.modal({
-      title: 'Onboarding — ' + (name || ''),
-      bodyHtml: `<div id="ob" class="muted">Loading...</div>
-        <div class="btn-row mt"><input id="newtask" placeholder="New task" /><button class="btn secondary" id="addtask">Add</button><button class="btn secondary" id="template">Use default checklist</button></div>
-        <div id="acctSetup" class="card" style="margin-top:14px;background:#f8fafc">
-          <div class="section-title" style="font-size:14px">🔐 Account provisioning</div>
-          <div id="acctList" class="muted" style="font-size:12px">Loading department accounts…</div>
-          <div class="btn-row mt"><button class="btn" id="notifyAccounts">📨 Notify managers to create accounts</button></div>
-          <p class="muted" style="font-size:11px;margin:6px 0 0">Sends the new hire's manager and HR/IT an in-app alert listing the accounts to create, and adds them to the checklist above. Set up by department in <b>Settings → Account provisioning</b>.</p>
-        </div>`,
+      title: '🚀 Onboarding journey — ' + (name || ''),
+      bodyHtml: `<div id="ob" class="muted">Loading…</div>`,
       footHtml: `<button class="btn secondary" data-close-btn>Close</button>`,
     });
-    // Run onClose (e.g. refresh the Onboarding list) on every way of closing.
     const closeAnd = () => { m.close(); if (onClose) onClose(); };
     m.root.querySelector('[data-close-btn]').onclick = closeAnd;
     m.root.querySelector('[data-close]').onclick = closeAnd;
     const overlay = m.root.querySelector('[data-overlay]');
     if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay && onClose) onClose(); });
+
+    const OWNER = { employee: { l: 'New hire', i: '👤', c: '#6366f1' }, hr: { l: 'HR', i: '🧑‍💼', c: '#0ea5e9' }, it: { l: 'IT', i: '💻', c: '#8b5cf6' }, manager: { l: 'Manager', i: '👔', c: '#f59e0b' } };
+    const today = new Date().toISOString().slice(0, 10);
+
     const load = async () => {
-      const { tasks } = await api.get('/onboarding/' + employeeId);
+      const { tasks, stages } = await api.get('/onboarding/' + employeeId);
+      const body = m.root.querySelector('#ob');
+
+      if (!tasks.length) {
+        body.innerHTML = `<div class="empty" style="padding:18px">No onboarding journey yet.</div>
+          <div class="btn-row"><button class="btn" id="startJourney">🚀 Start automated onboarding</button></div>`;
+        body.querySelector('#startJourney').onclick = async () => {
+          try { await api.post('/onboarding/' + employeeId + '/template'); UI.toast('Automated onboarding journey started.', 'success'); load(); }
+          catch (e) { UI.toast(e.message, 'error'); }
+        };
+        return;
+      }
+
       const done = tasks.filter((t) => t.done).length;
-      m.root.querySelector('#ob').innerHTML = (tasks.length ? `<div class="muted">${done}/${tasks.length} completed</div>` : '') + (tasks.length ? tasks.map((t) => `
-        <label class="checkbox-row" style="padding:4px 0"><input type="checkbox" data-task="${t.id}" ${t.done ? 'checked' : ''}/> ${UI.esc(t.title)} <button class="btn sm red" data-tdel="${t.id}" style="margin-left:auto">✕</button></label>`).join('') : '<div class="empty">No tasks yet. Add some or use the default checklist.</div>');
-      m.root.querySelectorAll('[data-task]').forEach((el) => el.onchange = async () => { try { await api.put('/onboarding/task/' + el.dataset.task, { done: el.checked }); load(); } catch (e) { UI.toast(e.message, 'error'); } });
-      m.root.querySelectorAll('[data-tdel]').forEach((b) => b.onclick = async () => { try { await api.request('DELETE', '/onboarding/task/' + b.dataset.tdel); load(); } catch (e) { UI.toast(e.message, 'error'); } });
-    };
-    const loadAccounts = async () => {
-      try {
-        const { department, accounts } = await api.get('/onboarding/' + employeeId + '/account-setup');
-        m.root.querySelector('#acctList').innerHTML = `Department: <b>${UI.esc(department)}</b><br/>Accounts required: ${accounts.length ? accounts.map((a) => `<span class="tag" style="margin:2px 2px 0 0">${UI.esc(a)}</span>`).join('') : '<i>none configured</i>'}`;
-      } catch (e) { m.root.querySelector('#acctList').textContent = e.message; }
-    };
-    m.root.querySelector('#addtask').onclick = async () => {
-      const title = m.root.querySelector('#newtask').value.trim(); if (!title) return;
-      try { await api.post('/onboarding/' + employeeId, { title }); m.root.querySelector('#newtask').value = ''; load(); } catch (e) { UI.toast(e.message, 'error'); }
-    };
-    m.root.querySelector('#template').onclick = async () => {
-      try { await api.post('/onboarding/' + employeeId + '/template'); UI.toast('Default checklist added & managers notified.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); }
-    };
-    m.root.querySelector('#notifyAccounts').onclick = async () => {
-      try { const r = await api.post('/onboarding/' + employeeId + '/account-setup'); UI.toast(`Notified ${r.notified} manager(s)/admin(s) · ${r.tasksAdded} task(s) added.`, 'success'); load(); }
-      catch (e) { UI.toast(e.message, 'error'); }
+      const pctAll = Math.round((done / tasks.length) * 100);
+      const autoDone = tasks.filter((t) => t.done && t.done_by === 'system').length;
+      const order = (stages && stages.length) ? stages : ['Pre-boarding', 'Day 1', 'Week 1', 'First 30 Days'];
+      const groups = {};
+      tasks.forEach((t) => { (groups[t.stage || 'Other'] = groups[t.stage || 'Other'] || []).push(t); });
+      const stageOrder = [...order.filter((s) => groups[s]), ...Object.keys(groups).filter((s) => !order.includes(s))];
+
+      const taskRow = (t) => {
+        const o = OWNER[t.owner] || { l: t.owner || '', i: '•', c: '#94a3b8' };
+        const overdue = !t.done && t.due_date && t.due_date < today;
+        const auto = t.auto_key
+          ? `<span class="tag" style="background:#ecfeff;color:#0e7490;font-size:10px" title="Completes automatically">⚡ auto</span>`
+          : '';
+        const sysDone = t.done && t.done_by === 'system' ? ' <span class="muted" style="font-size:10px">(auto)</span>' : '';
+        const due = t.due_date ? `<span class="muted" style="font-size:11px;${overdue ? 'color:#dc2626;font-weight:600' : ''}">${overdue ? '⚠ ' : ''}${UI.date(t.due_date)}</span>` : '';
+        return `<div class="doc-row" style="align-items:center">
+          <div style="display:flex;align-items:center;gap:8px;flex:1">
+            <input type="checkbox" data-task="${t.id}" ${t.done ? 'checked' : ''} ${t.auto_key ? 'title="Auto task — completes by itself, but you can override"' : ''}/>
+            <span style="${t.done ? 'text-decoration:line-through;color:#94a3b8' : ''}">${UI.esc(t.title)}${sysDone}</span> ${auto}
+          </div>
+          <span class="tag" style="background:${o.c}22;color:${o.c};font-size:10px">${o.i} ${o.l}</span>
+          <div style="min-width:78px;text-align:right">${due}</div>
+          <button class="btn sm red" data-tdel="${t.id}" title="Remove" style="margin-left:6px">✕</button>
+        </div>`;
+      };
+
+      const stageBlocks = stageOrder.map((s) => {
+        const list = groups[s];
+        const d = list.filter((t) => t.done).length;
+        const p = Math.round((d / list.length) * 100);
+        return `<div style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <div style="font-weight:700">${UI.esc(s)}</div>
+            <div style="flex:1;height:6px;background:#e5e7eb;border-radius:6px;overflow:hidden"><div style="width:${p}%;height:100%;background:${p === 100 ? '#16a34a' : '#2563eb'}"></div></div>
+            <span class="muted" style="font-size:11px">${d}/${list.length}</span>
+          </div>
+          <div class="doc-list">${list.map(taskRow).join('')}</div>
+        </div>`;
+      }).join('');
+
+      body.innerHTML = `
+        <div class="card" style="background:#f8fafc;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="font-size:30px;font-weight:800;color:${pctAll === 100 ? '#16a34a' : '#2563eb'}">${pctAll}%</div>
+            <div style="flex:1">
+              <div style="height:9px;background:#e5e7eb;border-radius:6px;overflow:hidden"><div style="width:${pctAll}%;height:100%;background:${pctAll === 100 ? '#16a34a' : '#2563eb'}"></div></div>
+              <div class="muted" style="font-size:12px;margin-top:4px">${done}/${tasks.length} steps done · ⚡ ${autoDone} completed automatically</div>
+            </div>
+          </div>
+          <div class="btn-row mt">
+            <button class="btn sm" id="runAuto">⚡ Run automation</button>
+            <button class="btn sm secondary" id="remind">🔔 Send reminders</button>
+            <button class="btn sm secondary" id="rebuild" title="Reset to the standard journey">↻ Rebuild</button>
+          </div>
+        </div>
+        ${stageBlocks}
+        <div class="btn-row mt"><input id="newtask" placeholder="Add a custom step" /><button class="btn secondary" id="addtask">Add</button></div>`;
+
+      body.querySelectorAll('[data-task]').forEach((el) => el.onchange = async () => {
+        try { await api.put('/onboarding/task/' + el.dataset.task, { done: el.checked }); load(); } catch (e) { UI.toast(e.message, 'error'); }
+      });
+      body.querySelectorAll('[data-tdel]').forEach((b) => b.onclick = async () => {
+        try { await api.request('DELETE', '/onboarding/task/' + b.dataset.tdel); load(); } catch (e) { UI.toast(e.message, 'error'); }
+      });
+      body.querySelector('#addtask').onclick = async () => {
+        const title = body.querySelector('#newtask').value.trim(); if (!title) return;
+        try { await api.post('/onboarding/' + employeeId, { title }); load(); } catch (e) { UI.toast(e.message, 'error'); }
+      };
+      body.querySelector('#runAuto').onclick = async () => {
+        try { const r = await api.post('/onboarding/' + employeeId + '/sync'); UI.toast(r.autoCompleted ? `⚡ ${r.autoCompleted} step(s) auto-completed.` : 'Nothing new to auto-complete yet.', 'success'); if (r.justOnboarded) UI.celebrate && UI.celebrate(); load(); }
+        catch (e) { UI.toast(e.message, 'error'); }
+      };
+      body.querySelector('#remind').onclick = async () => {
+        try { const r = await api.post('/onboarding/' + employeeId + '/remind'); UI.toast(r.pending ? `🔔 Reminded ${r.notified} owner(s) about ${r.pending} pending step(s).` : 'Nothing pending — no reminders sent.', 'success'); }
+        catch (e) { UI.toast(e.message, 'error'); }
+      };
+      body.querySelector('#rebuild').onclick = async () => {
+        if (!confirm('Reset this person to the standard onboarding journey? Custom steps will be removed.')) return;
+        try { await api.post('/onboarding/' + employeeId + '/rebuild'); UI.toast('Journey rebuilt.', 'success'); load(); } catch (e) { UI.toast(e.message, 'error'); }
+      };
     };
     load();
-    loadAccounts();
   },
 
   // ---------------- Recruitment (ATS): jobs list ----------------

@@ -345,6 +345,11 @@ CREATE TABLE IF NOT EXISTS onboarding_tasks (
 function hasColumn(table, col) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
 }
+// Automated onboarding journey: tasks gain a stage, an owner role, a due date,
+// and an optional auto-key that lets the system tick them off automatically.
+for (const col of ['stage', 'owner', 'due_date', 'auto_key', 'done_at', 'done_by']) {
+  if (!hasColumn('onboarding_tasks', col)) db.exec(`ALTER TABLE onboarding_tasks ADD COLUMN ${col} TEXT`);
+}
 // Extended employee profile fields (Core HR pack).
 for (const col of ['dob', 'gender', 'emergency_name', 'emergency_phone', 'aadhaar', 'education', 'experience', 'blood_group']) {
   if (!hasColumn('employees', col)) db.exec(`ALTER TABLE employees ADD COLUMN ${col} TEXT`);

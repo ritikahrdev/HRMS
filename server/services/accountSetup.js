@@ -54,7 +54,7 @@ function provisionAccountsForOnboarding(employeeId, actorUserId) {
       .map((r) => r.t)
   );
   let pos = db.prepare('SELECT COALESCE(MAX(position),0) m FROM onboarding_tasks WHERE employee_id = ?').get(emp.id).m;
-  const ins = db.prepare('INSERT INTO onboarding_tasks (employee_id, title, position) VALUES (?, ?, ?)');
+  const ins = db.prepare("INSERT INTO onboarding_tasks (employee_id, title, position, stage, owner) VALUES (?, ?, ?, 'Pre-boarding', 'it')");
   let tasksAdded = 0;
   for (const acc of accounts) {
     const title = `Create account: ${acc}`;

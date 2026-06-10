@@ -13,6 +13,7 @@ const { validatePAN, validateAadhaar, validateIFSC } = require('../services/veri
 const aadhaarOffline = require('../services/aadhaarOffline');
 const { notifyUsers } = require('../services/notify');
 const { can } = require('../services/permissions');
+const { syncAutomatedTasks } = require('../services/onboardingJourney');
 
 const router = express.Router();
 
@@ -127,6 +128,7 @@ router.post('/me/onboarding/submit', requireLogin, (req, res) => {
   const emp = db.prepare('SELECT id, name, manager_id FROM employees WHERE id = ?').get(empId);
   if (!emp) return res.status(404).json({ error: 'Employee not found.' });
   db.prepare("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now') WHERE id = ?").run(empId);
+  try { syncAutomatedTasks(empId); } catch (e) { /* non-fatal */ }
 
   const recipients = new Set();
   if (emp.manager_id) {

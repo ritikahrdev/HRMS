@@ -2,27 +2,25 @@ const express = require('express');
 const db = require('../db');
 const { requireLogin, requirePerm, canActOnEmployee } = require('../middleware/auth');
 const { provisionAccountsForOnboarding, accountsForDepartment } = require('../services/accountSetup');
+const {
+  OWNERS, STAGES, buildJourney, rebuildJourney, syncAutomatedTasks, sendReminders,
+} = require('../services/onboardingJourney');
 
 const router = express.Router();
 
-const DEFAULT_TASKS = [
-  'Sign offer letter & policies',
-  'Submit ID & address proof',
-  'Submit bank & PAN details',
-  'Set up work email & accounts',
-  'Assign workstation / laptop',
-  'Introduction to the team',
-  'Read employee handbook',
-];
-
 // Onboarding overview: every active employee with their checklist progress,
-// newest joiners first. Powers the dedicated Onboarding section.
+// newest joiners first. Powers the dedicated Onboarding section. Auto-keyed
+// tasks are synced for in-flight hires so the numbers are always live.
 router.get('/', requirePerm('employees:write'), (req, res) => {
+  for (const e of db.prepare("SELECT id FROM employees WHERE status='active' AND COALESCE(onboarded,0)=0").all()) {
+    try { syncAutomatedTasks(e.id); } catch (err) { /* keep overview resilient */ }
+  }
   const rows = db.prepare(`
     SELECT e.id, e.name, e.department, e.designation, e.date_of_joining, e.status,
       e.onboarded, e.onboarded_at, e.onboarding_submitted, e.onboarding_submitted_at,
       (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id) AS total,
-      (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id AND t.done = 1) AS done
+      (SELECT COUNT(*) FROM onboarding_tasks t WHERE t.employee_id = e.id AND t.done = 1) AS done,
+      (SELECT stage FROM onboarding_tasks t WHERE t.employee_id = e.id AND t.done = 0 ORDER BY t.position LIMIT 1) AS current_stage
     FROM employees e
     WHERE e.status = 'active'
     ORDER BY (e.date_of_joining IS NULL), e.date_of_joining DESC, e.id DESC
@@ -49,10 +47,31 @@ router.post('/bulk-complete', requirePerm('employees:write'), (req, res) => {
   res.json({ ok: true, count });
 });
 
-// View an employee's onboarding checklist (self or manager/HR).
+// View an employee's onboarding journey (self or manager/HR). Runs the
+// automation first so self-completing tasks reflect the latest state.
 router.get('/:employeeId', requireLogin, (req, res) => {
   if (!canActOnEmployee(req, req.params.employeeId)) return res.status(403).json({ error: 'No access.' });
-  res.json({ tasks: db.prepare('SELECT * FROM onboarding_tasks WHERE employee_id = ? ORDER BY position, id').all(req.params.employeeId) });
+  try { syncAutomatedTasks(req.params.employeeId); } catch (e) { /* non-fatal */ }
+  const tasks = db.prepare('SELECT * FROM onboarding_tasks WHERE employee_id = ? ORDER BY position, id').all(req.params.employeeId);
+  res.json({ tasks, owners: OWNERS, stages: STAGES });
+});
+
+// Run the automation on demand and report what it ticked off.
+router.post('/:employeeId/sync', requirePerm('employees:write'), (req, res) => {
+  res.json(syncAutomatedTasks(req.params.employeeId));
+});
+
+// Nudge each task owner about their pending onboarding tasks.
+router.post('/:employeeId/remind', requirePerm('employees:write'), (req, res) => {
+  res.json(sendReminders(req.params.employeeId, req.session.user.id));
+});
+
+// Rebuild the journey from scratch (wipes existing tasks).
+router.post('/:employeeId/rebuild', requirePerm('employees:write'), (req, res) => {
+  const added = rebuildJourney(req.params.employeeId);
+  provisionAccountsForOnboarding(req.params.employeeId, req.session.user.id);
+  syncAutomatedTasks(req.params.employeeId);
+  res.json({ ok: true, added });
 });
 
 // Add a task (HR/employee-write).
@@ -64,15 +83,15 @@ router.post('/:employeeId', requirePerm('employees:write'), (req, res) => {
   res.json({ id: r.lastInsertRowid });
 });
 
-// Apply the default onboarding template (HR). This is the onboarding kickoff,
-// so it also notifies managers/IT to create the department's required accounts.
+// Start onboarding (HR): build the full automated journey, provision the
+// department's accounts, and run the automation once.
 router.post('/:employeeId/template', requirePerm('employees:write'), (req, res) => {
   const existing = db.prepare('SELECT COUNT(*) c FROM onboarding_tasks WHERE employee_id = ?').get(req.params.employeeId).c;
-  if (existing) return res.status(400).json({ error: 'Checklist already exists for this employee.' });
-  const ins = db.prepare('INSERT INTO onboarding_tasks (employee_id, title, position) VALUES (?, ?, ?)');
-  DEFAULT_TASKS.forEach((t, i) => ins.run(req.params.employeeId, t, i + 1));
+  if (existing) return res.status(400).json({ error: 'An onboarding journey already exists for this employee.' });
+  const added = buildJourney(req.params.employeeId);
   const setup = provisionAccountsForOnboarding(req.params.employeeId, req.session.user.id);
-  res.json({ ok: true, added: DEFAULT_TASKS.length, accountSetup: setup });
+  syncAutomatedTasks(req.params.employeeId);
+  res.json({ ok: true, added, accountSetup: setup });
 });
 
 // What accounts does this employee's department require? (for the UI preview)

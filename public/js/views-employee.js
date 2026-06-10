@@ -718,6 +718,8 @@ const EmployeeViews = {
         ? `<div class="card" style="border-left:4px solid #16a34a;max-width:760px"><b>✓ Your onboarding form is submitted${employee.onboarding_submitted_at ? ' on ' + UI.date(employee.onboarding_submitted_at) : ''}.</b><div class="muted" style="font-size:13px">HR is reviewing your documents. You can still update details or replace documents below.</div></div>`
         : `<div class="card" style="border-left:4px solid #2563eb;max-width:760px"><b>Welcome aboard! 👋</b><div class="muted" style="font-size:13px">Fill in your details and upload your documents below. Everything saves straight into HR records — no email attachments needed.</div></div>`}
 
+      <div class="card mt" id="ofTasks" style="max-width:760px;display:none"></div>
+
       <div class="card mt" style="max-width:760px">
         <div class="section-title">1. Your details</div>
         <div class="form-grid">
@@ -763,8 +765,31 @@ const EmployeeViews = {
       </div>`;
 
     document.getElementById('ofSave').onclick = async () => {
-      try { await api.put('/employees/me/onboarding', collect()); UI.toast('Details saved ✓', 'success'); }
+      try { await api.put('/employees/me/onboarding', collect()); UI.toast('Details saved ✓', 'success'); loadTasks(); }
       catch (e) { UI.toast(e.message, 'error'); }
+    };
+
+    // The new hire's own slice of the onboarding journey (auto steps tick
+    // themselves; manual steps they can check off).
+    const loadTasks = async () => {
+      const host = document.getElementById('ofTasks');
+      try {
+        const { tasks } = await api.get('/onboarding/' + employee.id);
+        const mine = tasks.filter((t) => t.owner === 'employee');
+        if (!mine.length) { host.style.display = 'none'; return; }
+        const done = mine.filter((t) => t.done).length;
+        host.style.display = '';
+        host.innerHTML = `<div class="section-title">Your onboarding checklist <span class="muted" style="font-weight:400;font-size:12px">(${done}/${mine.length} done)</span></div>`
+          + mine.map((t) => `<label class="checkbox-row" style="padding:5px 0;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" data-mtask="${t.id}" ${t.done ? 'checked' : ''} ${t.auto_key ? 'disabled title="This completes automatically once you finish the related step"' : ''}/>
+              <span style="${t.done ? 'text-decoration:line-through;color:#94a3b8' : ''}">${UI.esc(t.title)}</span>
+              ${t.auto_key ? '<span class="tag" style="background:#ecfeff;color:#0e7490;font-size:10px">⚡ auto</span>' : ''}
+            </label>`).join('');
+        host.querySelectorAll('[data-mtask]').forEach((el) => el.onchange = async () => {
+          try { await api.put('/onboarding/task/' + el.dataset.mtask, { done: el.checked }); loadTasks(); }
+          catch (e) { UI.toast(e.message, 'error'); }
+        });
+      } catch (e) { host.style.display = 'none'; }
     };
 
     const uploadDoc = async (file, docType) => {
@@ -817,6 +842,7 @@ const EmployeeViews = {
       }
     };
     loadDocs();
+    loadTasks();
   },
 
   // Read-only holidays calendar for employees

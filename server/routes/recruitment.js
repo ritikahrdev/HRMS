@@ -7,6 +7,7 @@ const { requirePerm } = require('../middleware/auth');
 const { upload } = require('../services/upload');
 const { createEmployee } = require('../services/employees');
 const { provisionAccountsForOnboarding } = require('../services/accountSetup');
+const { buildJourney, syncAutomatedTasks } = require('../services/onboardingJourney');
 
 const router = express.Router();
 const P = requirePerm('recruitment:manage');
@@ -140,11 +141,7 @@ router.post('/applicants/:id/interviews', P, (req, res) => {
   res.json({ id: r.lastInsertRowid });
 });
 
-// ---- Hire -> create employee + onboarding checklist ----
-const ONBOARDING = [
-  'Sign offer letter & policies', 'Submit ID & address proof', 'Submit bank & PAN details',
-  'Set up work email & accounts', 'Assign workstation / laptop', 'Introduction to the team', 'Read employee handbook',
-];
+// ---- Hire -> create employee + automated onboarding journey ----
 router.post('/applicants/:id/hire', P, (req, res) => {
   const a = db.prepare('SELECT * FROM applicants WHERE id = ?').get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Not found' });
@@ -155,12 +152,13 @@ router.post('/applicants/:id/hire', P, (req, res) => {
       designation: job ? job.title : '', department: job ? job.department : '',
       date_of_joining: new Date().toISOString().slice(0, 10),
     });
-    // Apply onboarding checklist.
-    const ins = db.prepare('INSERT INTO onboarding_tasks (employee_id, title, position) VALUES (?, ?, ?)');
-    ONBOARDING.forEach((t, i) => ins.run(employee.id, t, i + 1));
+    // New hires start NOT onboarded and flow through the automated journey.
+    db.prepare('UPDATE employees SET onboarded = 0, onboarded_at = NULL, onboarding_submitted = 0, onboarding_submitted_at = NULL WHERE id = ?').run(employee.id);
+    buildJourney(employee.id);
     db.prepare("UPDATE applicants SET stage='hired' WHERE id=?").run(a.id);
     // Notify managers/IT to create the department's required accounts.
     const accountSetup = provisionAccountsForOnboarding(employee.id, req.session.user.id);
+    syncAutomatedTasks(employee.id);
     res.json({ ok: true, employeeId: employee.id, tempPassword, accountSetup });
   } catch (e) {
     res.status(400).json({ error: e.message });
