@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../db');
 const config = require('../config');
 const { requireLogin, requirePerm, requireSuperAdmin, canActOnEmployee, teamEmployeeIds } = require('../middleware/auth');
-const { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, makeTempPassword, normaliseRole } = require('../services/employees');
+const { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, ONBOARDING_REQUIRED_FIELDS, makeTempPassword, normaliseRole } = require('../services/employees');
 const { upload, memoryUpload } = require('../services/upload');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
@@ -114,8 +114,25 @@ router.put('/me/onboarding', requireLogin, (req, res) => {
 router.post('/me/onboarding/submit', requireLogin, (req, res) => {
   const empId = req.session.user.employeeId;
   if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
-  const emp = db.prepare('SELECT id, name, manager_id FROM employees WHERE id = ?').get(empId);
+  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
   if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+
+  // Enforce: every field filled + every required document uploaded.
+  const missingFields = ONBOARDING_REQUIRED_FIELDS.filter((f) => !String(emp[f] == null ? '' : emp[f]).trim());
+  const requiredDocs = getSettings().requiredDocs || [];
+  const haveTypes = new Set(
+    db.prepare('SELECT doc_type FROM employee_documents WHERE employee_id = ?').all(empId)
+      .filter((d) => d.doc_type).map((d) => d.doc_type)
+  );
+  const missingDocs = requiredDocs.filter((t) => !haveTypes.has(t));
+  if (missingFields.length || missingDocs.length) {
+    return res.status(400).json({
+      error: 'Please complete all fields and upload all required documents before submitting.',
+      missingFields,
+      missingDocs,
+    });
+  }
+
   db.prepare("UPDATE employees SET onboarding_submitted = 1, onboarding_submitted_at = datetime('now') WHERE id = ?").run(empId);
   try { syncAutomatedTasks(empId); } catch (e) { /* non-fatal */ }
 

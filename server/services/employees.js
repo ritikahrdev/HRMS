@@ -24,6 +24,15 @@ const SELF_ONBOARDING_FIELDS = [
   'education', 'experience',
 ];
 
+// Every field shown on the onboarding / pre-boarding forms — all mandatory
+// before the new hire can submit. (Matches the fields rendered on both forms.)
+const ONBOARDING_REQUIRED_FIELDS = [
+  'phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
+  'nationality', 'languages_known', 'current_address', 'permanent_address',
+  'emergency_name', 'emergency_phone', 'bank_holder_name', 'bank_name',
+  'bank_account', 'ifsc', 'pan', 'aadhaar', 'education', 'experience',
+];
+
 function normaliseRole(role) {
   const r = String(role || '').toUpperCase().replace(/[\s-]+/g, '_');
   return ROLES.includes(r) ? r : 'EMPLOYEE';
@@ -97,4 +106,4 @@ function makeTempPassword() {
   return 'Welcome@' + Math.floor(1000 + Math.random() * 9000);
 }
 
-module.exports = { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, nextEmpCode, makeTempPassword, normaliseRole };
+module.exports = { createEmployee, FIELDS, SELF_ONBOARDING_FIELDS, ONBOARDING_REQUIRED_FIELDS, nextEmpCode, makeTempPassword, normaliseRole };

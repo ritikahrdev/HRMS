@@ -706,10 +706,20 @@ const EmployeeViews = {
       'education', 'experience'];
     const collect = () => { const p = {}; SELF_FIELDS.forEach((f) => { const el = document.getElementById('of-' + f); if (el) p[f] = el.value; }); return p; };
 
+    // Every field on this form is mandatory before the employee can submit.
+    const REQUIRED = ['phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
+      'nationality', 'languages_known', 'current_address', 'permanent_address', 'emergency_name',
+      'emergency_phone', 'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'aadhaar',
+      'education', 'experience'];
+    const missingFields = () => REQUIRED.filter((id) => { const el = document.getElementById('of-' + id); return el && !el.value.trim(); });
+    const clearBad = () => REQUIRED.forEach((id) => { const el = document.getElementById('of-' + id); if (el) el.style.borderColor = ''; });
+    const markBad = (ids) => ids.forEach((id) => { const el = document.getElementById('of-' + id); if (el) el.style.borderColor = '#dc2626'; });
+
+    const req = ' <span style="color:#dc2626">*</span>';
     const val = (id) => UI.esc(employee[id] || '');
-    const F = (id, label, type) => `<div class="field"><label>${label}</label><input id="of-${id}" type="${type || 'text'}" value="${type === 'date' ? UI.esc((employee[id] || '').slice(0, 10)) : val(id)}" /></div>`;
-    const FA = (id, label) => `<div class="field" style="grid-column:1/-1"><label>${label}</label><textarea id="of-${id}" rows="2">${val(id)}</textarea></div>`;
-    const SEL = (id, label, options) => `<div class="field"><label>${label}</label><select id="of-${id}"><option value="">—</option>${options.map((o) => `<option ${(employee[id] || '') === o ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    const F = (id, label, type) => `<div class="field"><label>${label}${req}</label><input id="of-${id}" type="${type || 'text'}" value="${type === 'date' ? UI.esc((employee[id] || '').slice(0, 10)) : val(id)}" /></div>`;
+    const FA = (id, label) => `<div class="field" style="grid-column:1/-1"><label>${label}${req}</label><textarea id="of-${id}" rows="2">${val(id)}</textarea></div>`;
+    const SEL = (id, label, options) => `<div class="field"><label>${label}${req}</label><select id="of-${id}"><option value="">—</option>${options.map((o) => `<option ${(employee[id] || '') === o ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
     const sub = (t) => `<div style="grid-column:1/-1;font-weight:650;color:#475569;margin:6px 0 -2px;font-size:13px">${t}</div>`;
 
     c.innerHTML = `
@@ -764,8 +774,10 @@ const EmployeeViews = {
         <div id="ofSubmitWrap"></div>
       </div>`;
 
+    REQUIRED.forEach((id) => { const el = document.getElementById('of-' + id); if (el) el.addEventListener('input', () => { el.style.borderColor = ''; }); });
+
     document.getElementById('ofSave').onclick = async () => {
-      try { await api.put('/employees/me/onboarding', collect()); UI.toast('Details saved ✓', 'success'); loadTasks(); }
+      try { await api.put('/employees/me/onboarding', collect()); UI.toast('Progress saved ✓', 'success'); loadTasks(); }
       catch (e) { UI.toast(e.message, 'error'); }
     };
 
@@ -822,14 +834,26 @@ const EmployeeViews = {
       const other = document.getElementById('ofOther');
       if (other) other.onchange = (e) => { const f = e.target.files[0]; if (!f) return; const t = (document.getElementById('ofOtherTitle').value || '').trim(); uploadDoc(f, t || f.name); };
 
-      const allDocs = required.length === 0 || done >= required.length;
       const wrap = document.getElementById('ofSubmitWrap');
       if (submitted) {
         wrap.innerHTML = '<span class="tag approved">✓ Submitted</span> <span class="muted" style="font-size:13px">Need to resend? Update anything above and use Save details.</span>';
       } else {
-        wrap.innerHTML = `<button class="btn" id="ofSubmit" ${allDocs ? '' : 'disabled'}>Submit my onboarding</button>${allDocs ? '' : '<span class="muted" style="margin-left:8px;font-size:13px">Upload all required documents to enable.</span>'}`;
+        wrap.innerHTML = '<p class="muted" style="font-size:13px;margin:0 0 8px"><b>All fields and all documents are required.</b></p><button class="btn" id="ofSubmit">Submit my onboarding</button>';
         const sb = document.getElementById('ofSubmit');
         if (sb) sb.onclick = async () => {
+          clearBad();
+          const miss = missingFields();
+          const missDocs = required.filter((t) => !byType[t]);
+          if (miss.length || missDocs.length) {
+            markBad(miss);
+            const first = miss.length ? document.getElementById('of-' + miss[0]) : null;
+            if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const parts = [];
+            if (miss.length) parts.push(miss.length + ' field' + (miss.length > 1 ? 's' : '') + ' left');
+            if (missDocs.length) parts.push(missDocs.length + ' document' + (missDocs.length > 1 ? 's' : '') + ' missing');
+            UI.toast('Please complete everything — ' + parts.join(' and ') + '.', 'error');
+            return;
+          }
           if (!confirm('Submit your onboarding form? HR will be notified to review your documents. You can still make changes afterwards.')) return;
           try {
             await api.put('/employees/me/onboarding', collect());

@@ -5,7 +5,7 @@ const db = require('../db');
 const config = require('../config');
 const { documentUpload } = require('../services/upload');
 const { getSettings } = require('../services/settings');
-const { SELF_ONBOARDING_FIELDS } = require('../services/employees');
+const { SELF_ONBOARDING_FIELDS, ONBOARDING_REQUIRED_FIELDS } = require('../services/employees');
 const { notifyUsers } = require('../services/notify');
 const { can } = require('../services/permissions');
 const { syncAutomatedTasks } = require('../services/onboardingJourney');
@@ -28,12 +28,7 @@ function byToken(token) {
 const INVALID = { error: 'This link is invalid or has expired. Please contact HR for a new link.' };
 
 // Every field shown on the candidate form is mandatory before they can submit.
-const REQUIRED_FIELDS = [
-  'phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
-  'nationality', 'languages_known', 'current_address', 'permanent_address',
-  'emergency_name', 'emergency_phone', 'bank_holder_name', 'bank_name',
-  'bank_account', 'ifsc', 'pan', 'aadhaar', 'education', 'experience',
-];
+const REQUIRED_FIELDS = ONBOARDING_REQUIRED_FIELDS;
 
 // What the candidate sees: their name, company branding, required documents,
 // their own previously-entered details, and what they have uploaded so far.
