@@ -3060,7 +3060,7 @@ const AdminViews = {
       const pbWhen = pb.expiresAt ? new Date(pb.expiresAt).toLocaleString() : '';
       const pbInner = (pb.hasLink && !pb.expired) ? `
             <div class="btn-row" style="align-items:center"><input id="pbUrl" readonly value="${UI.esc(pb.url || '')}" style="flex:1" /><button class="btn sm" id="pbCopy">Copy</button></div>
-            <div class="muted" style="font-size:11px;margin-top:6px">Send this private link to the candidate (e.g. with the intent/offer email). They fill details & upload documents — no login needed.${pbWhen ? ` <b>· Active until ${UI.esc(pbWhen)}</b>` : ''}${pb.submitted ? ' <b style="color:#16a34a">· Submitted ✓</b>' : ''}</div>
+            <div class="muted" style="font-size:11px;margin-top:6px">Send this private link to the candidate (e.g. with the intent/offer email). They fill details & upload documents — no login needed.${pbWhen ? ` <b>· ⏳ Active until ${UI.esc(pbWhen)}</b>` : ' <b>· No time limit set (older link) — click Regenerate to apply the expiry</b>'}${pb.submitted ? ' <b style="color:#16a34a">· Submitted ✓</b>' : ''}</div>
             <div class="btn-row mt"><button class="btn sm secondary" id="pbRegen">Regenerate</button><button class="btn sm red" id="pbRevoke">Revoke</button></div>
           ` : (pb.hasLink && pb.expired) ? `
             <div class="tag" style="background:#fee2e2;color:#991b1b">⏳ Link expired${pbWhen ? ' on ' + UI.esc(pbWhen) : ''}</div>
