@@ -70,7 +70,7 @@ const ASSISTANT_SYSTEM = `You are the friendly in-app HR assistant for an HRMS u
 // ---- Status (any logged-in user) ------------------------------------------
 router.get('/status', requireLogin, (req, res) => {
   const c = ai.aiConfig();
-  res.json({ configured: ai.isConfigured(), enabled: c.enabled, model: c.model, models: ai.MODELS });
+  res.json({ configured: ai.isConfigured(), enabled: c.enabled, provider: c.provider, model: c.model, providers: ai.catalogue() });
 });
 
 // ---- Assistant chat -------------------------------------------------------
@@ -84,7 +84,7 @@ router.post('/chat', requireLogin, async (req, res) => {
     const messages = history.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-10);
     if (question) messages.push({ role: 'user', content: question });
     const system = `${ASSISTANT_SYSTEM}\n\n--- CONTEXT ---\n${context}`;
-    const answer = await ai.callClaude({ system, messages, maxTokens: 1024 });
+    const answer = await ai.callLLM({ system, messages, maxTokens: 1024 });
     res.json({ answer });
   } catch (e) { res.status(e.notConfigured ? 400 : 500).json({ error: e.message }); }
 });

@@ -1589,14 +1589,13 @@ const AdminViews = {
       </div>
       <div class="card mt" style="max-width:760px">
         <div class="section-title">🤖 AI Assistant</div>
-        <p class="muted" style="font-size:12px">Turn on the AI copilot — it answers questions from your HRMS data, drafts announcements & job posts, suggests approve/reject on pending requests, and screens candidates. Paste your own <b>Claude API key</b> from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (you only pay Anthropic for what you use — fractions of a cent per request).</p>
+        <p class="muted" style="font-size:12px">Turn on the AI copilot — it answers questions from your HRMS data, drafts announcements & job posts, suggests approve/reject on pending requests, and screens candidates. Pick a <b>free</b> provider, get a free API key from the link, and paste it below.</p>
         <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="aiEnabled" ${(s.ai || {}).enabled !== false ? 'checked' : ''}/> Enable AI features</label></div>
         <div class="form-grid">
-          <div class="field full"><label>Claude API Key</label><input id="aiKey" type="password" value="${UI.esc((s.ai || {}).apiKey || '')}" placeholder="sk-ant-..." autocomplete="off" /><span class="muted" style="font-size:11px">Stored privately for your company. Used only to call Claude.</span></div>
-          <div class="field full"><label>Model</label><select id="aiModel" style="width:100%">
-            ${[['claude-haiku-4-5', 'Claude Haiku 4.5 — fastest & cheapest (recommended)'], ['claude-sonnet-4-6', 'Claude Sonnet 4.6 — balanced'], ['claude-opus-4-8', 'Claude Opus 4.8 — most capable (priciest)']]
-              .map(([v, l]) => `<option value="${v}" ${((s.ai || {}).model || 'claude-haiku-4-5') === v ? 'selected' : ''}>${l}</option>`).join('')}
-          </select></div>
+          <div class="field"><label>Provider</label><select id="aiProvider" style="width:100%"></select></div>
+          <div class="field"><label>Model</label><select id="aiModel" style="width:100%"></select></div>
+          <div class="field full"><label>API Key</label><input id="aiKey" type="password" value="${UI.esc((s.ai || {}).apiKey || '')}" placeholder="paste your key here" autocomplete="off" />
+            <span class="muted" id="aiKeyHint" style="font-size:11px"></span></div>
         </div>
         <button class="btn sm secondary" id="aiTest" type="button">✨ Test the AI</button>
         <span class="muted" id="aiTestOut" style="font-size:12px;margin-left:8px"></span>
@@ -1819,6 +1818,7 @@ const AdminViews = {
         birthdayEmails: document.getElementById('birthdayEmails').checked,
         ai: {
           enabled: document.getElementById('aiEnabled').checked,
+          provider: val('aiProvider'),
           apiKey: val('aiKey').trim(),
           model: val('aiModel'),
         },
@@ -1882,6 +1882,26 @@ const AdminViews = {
       else autoStatus.textContent = 'Has not run yet — it runs automatically on the first activity each day.';
     };
     if (autoStatus) api.get('/automation/status').then((r) => showAutoStatus(r.state)).catch(() => {});
+    // Populate AI provider + model dropdowns from the live catalogue.
+    (async () => {
+      const provSel = document.getElementById('aiProvider');
+      const modelSel = document.getElementById('aiModel');
+      const hint = document.getElementById('aiKeyHint');
+      if (!provSel) return;
+      let cat;
+      try { cat = (await api.get('/ai/status')).providers; } catch (e) { return; }
+      const curProvider = (s.ai || {}).provider || 'google';
+      const curModel = (s.ai || {}).model;
+      provSel.innerHTML = cat.map((p) => `<option value="${p.id}" ${p.id === curProvider ? 'selected' : ''}>${UI.esc(p.label)}</option>`).join('');
+      const fillModels = (pid, selModel) => {
+        const p = cat.find((x) => x.id === pid) || cat[0];
+        modelSel.innerHTML = p.models.map((m) => `<option value="${m.id}" ${m.id === selModel ? 'selected' : ''}>${UI.esc(m.label)}</option>`).join('');
+        hint.innerHTML = `${UI.esc(p.keyHint)} <a href="${p.keyUrl}" target="_blank" rel="noopener"><b>Get a key →</b></a>`;
+      };
+      fillModels(curProvider, curModel);
+      provSel.onchange = () => fillModels(provSel.value, null);
+    })();
+
     const aiTest = document.getElementById('aiTest');
     if (aiTest) aiTest.onclick = async () => {
       const out = document.getElementById('aiTestOut');

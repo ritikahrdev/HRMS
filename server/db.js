@@ -589,8 +589,9 @@ const defaultSettings = {
   },
   // Server-managed snapshot of the last automation run (read-only in the UI).
   automationState: { lastRunDate: null, lastRunAt: null, results: {} },
-  // AI copilot. The admin pastes their own Claude API key here to switch it on.
-  ai: { enabled: true, apiKey: '', model: 'claude-haiku-4-5' },
+  // AI copilot. Defaults to a FREE provider (Google Gemini); the admin pastes
+  // their own free API key to switch it on. Groq and paid Claude also supported.
+  ai: { enabled: true, provider: 'google', apiKey: '', model: 'gemini-2.0-flash' },
   slack: {
     enabled: false, botToken: '', channelId: '', signingSecret: '',
     presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
