@@ -282,7 +282,15 @@ const App = {
       try {
         const r = await api.post('/ai/chat', { messages: this._aiHistory.slice(0, -1), question: q });
         placeholder.remove();
-        bubble('ai', fmt(r.answer || '(no answer)'));
+        if (r.answer) bubble('ai', fmt(r.answer));
+        // One-click jump to the exact page for the user's request.
+        if (r.navigate && r.navigate.route) {
+          const id = 'aigo' + Date.now();
+          msgs.insertAdjacentHTML('beforeend', `<div style="margin:4px 0 10px"><button id="${id}" class="btn sm" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">→ ${UI.esc(r.navigate.label || 'Open page')}</button></div>`);
+          msgs.scrollTop = msgs.scrollHeight;
+          const go = document.getElementById(id);
+          if (go) go.onclick = () => { location.hash = r.navigate.route; panel.style.display = 'none'; fab.textContent = '✨'; };
+        }
         this._aiHistory.push({ role: 'assistant', content: r.answer || '' });
       } catch (e) {
         placeholder.remove();

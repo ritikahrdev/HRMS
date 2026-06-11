@@ -65,7 +65,60 @@ async function buildContext(req) {
   return lines.join('\n');
 }
 
-const ASSISTANT_SYSTEM = `You are the friendly in-app HR assistant for an HRMS used by a small company. Answer questions using ONLY the context provided about this company and this user. Be concise, warm, and practical. Use the company currency symbol where relevant. If the answer isn't in the context (e.g. a private detail about another employee the user isn't allowed to see, or data the system doesn't track), say so plainly and suggest where in the HRMS they could look. Never invent numbers, names, or policy. Format short lists with bullet points.`;
+const ASSISTANT_SYSTEM = `You are the friendly, proactive in-app HR assistant for an HRMS used by a small company. Your job is to HELP THE USER GET THINGS DONE, not just answer questions.
+
+How to respond:
+- Answer questions using ONLY the context provided about this company and this user. Never invent numbers, names, or policy. If a detail isn't in the context, say so plainly.
+- When the user wants to DO something (apply for leave, submit a reimbursement, mark/fix attendance, download a payslip, raise a ticket, approve requests, update settings, find a colleague, etc.), give a SHORT helpful reply telling them what to do, and then on the FINAL line output exactly one navigation directive so the app can send them straight to the right page:
+  [[GOTO:#/route|Button Label]]
+  Use ONLY a route from the "PAGES" list below — never invent a route. The Button Label should be a short action phrase (e.g. "Apply for Leave", "Open My Payslips"). Only include the directive when going to a page actually helps.
+- Be concise and warm. Use the company currency symbol where relevant. Format short lists as bullets. Do not show the [[GOTO:...]] syntax in your prose — put it alone on the last line.`;
+
+// Pages the current user is allowed to open, scoped by role + enabled modules.
+function buildRouteCatalogue(req) {
+  const role = req.session.user.role;
+  const empId = req.session.user.employeeId;
+  const mods = getSettings().modules || {};
+  const modOn = (k) => mods[k] !== false;
+  const has = (p) => can(role, p);
+  const r = [];
+  const add = (route, label, desc) => r.push({ route, label, desc });
+  if (empId) {
+    add('#/', 'Dashboard', "mark today's attendance, see your leave balance and recent payslips");
+    add('#/my-attendance', 'My Attendance', 'view/mark your attendance, or raise an attendance correction request (missed punch, WFH, half-day, etc.)');
+    add('#/my-leave', 'My Leave', 'apply for leave and view your leave requests and balance');
+    if (modOn('reimbursement')) add('#/my-reimb', 'My Reimbursements', 'submit a reimbursement/expense claim and track it');
+    if (modOn('timesheets')) add('#/my-timesheet', 'My Timesheet', 'log your work hours per project and submit your week');
+    add('#/my-payslips', 'My Payslips', 'view and download your salary slips');
+    add('#/my-onboarding', 'My Onboarding', 'complete your joining form and upload required documents');
+    add('#/profile', 'My Profile', 'your personal details and documents, change password, or submit a resignation');
+  }
+  if (modOn('directory')) add('#/directory', 'Directory', "find a colleague's contact, department, or manager; view the org chart");
+  if (modOn('notices')) add('#/notices', 'Notice Board', 'read company announcements');
+  if (modOn('holidays')) add('#/holidays', 'Holidays', 'see the holiday calendar');
+  if (modOn('recognition')) add('#/recognition', 'Recognition', 'give a shoutout/kudos to a colleague or see recent ones');
+  if (modOn('performance')) add('#/performance', 'Performance', 'your goals and performance reviews');
+  if (modOn('surveys')) add('#/surveys', 'Surveys', 'take an open survey');
+  if (modOn('helpdesk')) add('#/helpdesk', 'Helpdesk', 'raise an IT/HR support ticket');
+  if (has('employees:read')) add('#/employees', 'Employees', 'manage employee records, add/edit/delete employees');
+  if (has('team:view') || role === 'MANAGER') add('#/team', 'My Team', 'view your team members');
+  if (has('employees:write')) add('#/onboarding', 'Onboarding', 'manage new-hire onboarding journeys');
+  if (has('offboarding:manage') && modOn('offboarding')) add('#/offboarding', 'Offboarding', 'start/manage employee exits and full-and-final settlement');
+  if (has('attendance:viewAll') || has('attendance:viewTeam')) add('#/attendance', 'Attendance', "view and edit everyone's/your team's attendance");
+  if (has('attendance:correct')) add('#/corrections', 'Attendance Requests', 'approve/reject attendance correction requests');
+  if (has('leave:approve')) add('#/leave-approvals', 'Leave Approvals', 'approve/reject leave requests and grant comp-off');
+  if (has('leave:approve')) add('#/leave-calendar', 'Leave Calendar', 'see who is on leave across the month');
+  if (has('reimbursement:approve') && modOn('reimbursement')) add('#/reimb-approvals', 'Reimbursement Approvals', 'approve/reject reimbursement claims');
+  if (has('timesheets:approve') && modOn('timesheets')) add('#/timesheet-approvals', 'Timesheets', 'approve timesheets, manage projects, view summaries');
+  if (has('payroll:view')) add('#/payroll', 'Payroll', 'run payroll and view payslips');
+  if (has('payroll:manage') && modOn('loans')) add('#/loans', 'Loans & Advances', 'manage employee loans/advances');
+  if (has('employees:write') && modOn('assets')) add('#/assets', 'Assets', 'assign and track company assets');
+  if (has('settings:manage')) add('#/inventory', 'Inventory', 'manage office inventory');
+  if (has('recruitment:manage') && modOn('recruitment')) add('#/recruitment', 'Recruitment', 'manage job openings and candidates');
+  if (has('reports:view')) add('#/reports', 'Reports', 'attendance, payroll and KPI reports');
+  if (has('settings:manage')) add('#/settings', 'Settings', 'company settings, modules, automation, AI, access control, leave types');
+  return r;
+}
 
 // ---- Status (any logged-in user) ------------------------------------------
 router.get('/status', requireLogin, (req, res) => {
@@ -81,11 +134,23 @@ router.post('/chat', requireLogin, async (req, res) => {
     const question = (req.body && req.body.question || '').toString().trim();
     if (!question && !history.length) return res.status(400).json({ error: 'Ask a question first.' });
     const context = await buildContext(req);
+    const routes = buildRouteCatalogue(req);
+    const routeList = routes.map((x) => `${x.route} — ${x.label}: ${x.desc}`).join('\n');
     const messages = history.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-10);
     if (question) messages.push({ role: 'user', content: question });
-    const system = `${ASSISTANT_SYSTEM}\n\n--- CONTEXT ---\n${context}`;
-    const answer = await ai.callLLM({ system, messages, maxTokens: 1024 });
-    res.json({ answer });
+    const system = `${ASSISTANT_SYSTEM}\n\n--- CONTEXT ---\n${context}\n\n--- PAGES YOU CAN SEND THE USER TO (use ONLY these routes) ---\n${routeList}`;
+    const raw = await ai.callLLM({ system, messages, maxTokens: 900 });
+
+    // Pull out a [[GOTO:#/route|Label]] directive, validate the route, strip it from the text.
+    let answer = raw, navigate = null;
+    const m = raw.match(/\[\[\s*GOTO\s*:\s*(#\/[\w-]*)\s*\|\s*([^\]]+?)\s*\]\]/i);
+    if (m) {
+      const route = m[1].trim();
+      const label = m[2].trim().slice(0, 40);
+      if (routes.some((x) => x.route === route)) navigate = { route, label };
+      answer = raw.replace(m[0], '').trim();
+    }
+    res.json({ answer, navigate });
   } catch (e) { res.status(e.notConfigured ? 400 : 500).json({ error: e.message }); }
 });
 
