@@ -39,7 +39,7 @@ router.get('/attendance', requirePerm('reports:view'), async (req, res) => {
               SUM(CASE WHEN a.status='leave' THEN 1 ELSE 0 END) AS leave_days,
               SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) AS absent,
               SUM(CASE WHEN COALESCE(a.late_minutes,0) > 0 THEN 1 ELSE 0 END) AS late_days,
-              ROUND(COALESCE(SUM(a.ot_hours),0),2) AS ot_hours
+              ROUND(COALESCE(SUM(a.ot_hours),0)::numeric, 2) AS ot_hours
        FROM employees e
        LEFT JOIN attendance a ON a.employee_id = e.id AND a.date LIKE ?
        WHERE e.status='active'
