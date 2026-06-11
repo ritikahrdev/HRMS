@@ -34,9 +34,12 @@ function getHolidayTypeStyle(type) {
   return styles[type] || styles['public'];
 }
 
-// Send notifications for upcoming holidays (next 7 days)
-async function sendHolidayNotifications() {
+// Send notifications for upcoming holidays (next 7 days).
+// opts.onlyNew = true → send each holiday's reminder at most once (for the
+// automation engine, so a daily run doesn't re-spam the same holiday).
+async function sendHolidayNotifications(opts = {}) {
   try {
+    const { claimOnce } = require('./markers');
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -44,14 +47,22 @@ async function sendHolidayNotifications() {
     sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
 
     // Get holidays in the next 7 days
-    const upcomingHolidays = await db.prepare(`
+    let upcomingHolidays = await db.prepare(`
       SELECT * FROM holidays
       WHERE date >= ? AND date <= ?
       ORDER BY date ASC
     `).all(today.toISOString().split('T')[0], sevenDaysLater.toISOString().split('T')[0]);
 
+    // In automation mode, drop any holiday we've already announced.
+    if (opts.onlyNew) {
+      const fresh = [];
+      for (const h of upcomingHolidays) {
+        if (await claimOnce(`holiday:${h.date}`)) fresh.push(h);
+      }
+      upcomingHolidays = fresh;
+    }
+
     if (upcomingHolidays.length === 0) {
-      console.log('No upcoming holidays in the next 7 days');
       return { notified: 0, holidays: [] };
     }
 

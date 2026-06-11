@@ -1553,6 +1553,20 @@ const AdminViews = {
         <span class="muted" id="birthdayToday" style="font-size:12px;margin-left:8px"></span>
       </div>
       <div class="card mt" style="max-width:760px">
+        <div class="section-title">⚙️ Automation <span class="muted" style="font-size:12px">(runs on its own — works even when you're away)</span></div>
+        <p class="muted" style="font-size:12px">These recurring HR jobs run automatically every day — no clicks needed. Switch any off if you'd rather do it manually.</p>
+        <div class="checkbox-row" style="margin-bottom:6px"><label><input type="checkbox" id="autoEnabled" ${(s.automation || {}).enabled !== false ? 'checked' : ''}/> <b>Master switch — run daily automations</b></label></div>
+        <div class="checkbox-row" style="padding-left:18px">
+          <label><input type="checkbox" class="auto-job" value="birthdays" ${(s.automation || {}).birthdays !== false ? 'checked' : ''}/> 🎂 Birthday wishes</label>
+          <label><input type="checkbox" class="auto-job" value="anniversaries" ${(s.automation || {}).anniversaries !== false ? 'checked' : ''}/> 🎊 Work-anniversary wishes</label>
+          <label><input type="checkbox" class="auto-job" value="holidayReminders" ${(s.automation || {}).holidayReminders !== false ? 'checked' : ''}/> 📅 Holiday reminders</label>
+          <label><input type="checkbox" class="auto-job" value="leaveAccrual" ${(s.automation || {}).leaveAccrual !== false ? 'checked' : ''}/> 🌴 Monthly leave accrual + year-end carry-forward</label>
+          <label><input type="checkbox" class="auto-job" value="slackBackupSync" ${(s.automation || {}).slackBackupSync ? 'checked' : ''}/> 💬 Slack attendance backup sync</label>
+        </div>
+        <div class="btn-row mt"><button class="btn sm secondary" id="autoRunNow" type="button">▶ Run automations now</button></div>
+        <div class="muted" id="autoStatus" style="font-size:12px;margin-top:8px"></div>
+      </div>
+      <div class="card mt" style="max-width:760px">
         <div class="section-title">Mandatory Documents</div>
         <p class="muted" style="font-size:12px">One document name per line. These show as a required checklist (✓ uploaded / Missing) on every employee's Documents.</p>
         <textarea id="requiredDocs" rows="8">${(s.requiredDocs || []).join('\n')}</textarea>
@@ -1768,6 +1782,17 @@ const AdminViews = {
           radius: Number(val('geoRadius')) || 200,
         },
         birthdayEmails: document.getElementById('birthdayEmails').checked,
+        automation: (() => {
+          const on = new Set(Array.from(document.querySelectorAll('.auto-job:checked')).map((x) => x.value));
+          return {
+            enabled: document.getElementById('autoEnabled').checked,
+            birthdays: on.has('birthdays'),
+            anniversaries: on.has('anniversaries'),
+            holidayReminders: on.has('holidayReminders'),
+            leaveAccrual: on.has('leaveAccrual'),
+            slackBackupSync: on.has('slackBackupSync'),
+          };
+        })(),
       };
       try { await api.put('/settings', payload); UI.currency = payload.currency || UI.currency; UI.toast('Settings saved. Reloading menu…', 'success'); setTimeout(() => location.reload(), 800); }
       catch (e) { UI.toast(e.message, 'error'); }
@@ -1807,6 +1832,31 @@ const AdminViews = {
     if (bSend) bSend.onclick = async () => {
       try { const r = await api.post('/birthdays/send', {}); UI.toast(r.found ? `🎂 ${r.sent} wish(es) sent, ${r.skipped} already sent.` : 'No birthdays today.', 'success'); }
       catch (e) { UI.toast(e.message, 'error'); }
+    };
+
+    // Automation status + manual run.
+    const autoStatus = document.getElementById('autoStatus');
+    const showAutoStatus = (st) => {
+      if (!autoStatus) return;
+      if (st && st.lastRunAt) autoStatus.innerHTML = `✅ Last run: <b>${UI.esc(String(st.lastRunAt))}</b>` + (st.lastRunDate ? ` <span class="muted">(${UI.esc(st.lastRunDate)})</span>` : '');
+      else autoStatus.textContent = 'Has not run yet — it runs automatically on the first activity each day.';
+    };
+    if (autoStatus) api.get('/automation/status').then((r) => showAutoStatus(r.state)).catch(() => {});
+    const autoRun = document.getElementById('autoRunNow');
+    if (autoRun) autoRun.onclick = async () => {
+      autoRun.disabled = true; autoRun.textContent = '⏳ Running…';
+      try {
+        const r = await api.post('/automation/run', {});
+        const res = r.results || {};
+        const bits = [];
+        if (res.birthdays) bits.push(`🎂 ${res.birthdays.sent || 0} birthday`);
+        if (res.anniversaries) bits.push(`🎊 ${res.anniversaries.sent || 0} anniversary`);
+        if (res.holidays) bits.push(`📅 ${res.holidays.notified || 0} holiday`);
+        if (res.accrual) bits.push(`🌴 ${res.accrual.accrued || 0} accrual`);
+        UI.toast('Automations ran. ' + (bits.join(' · ') || 'Nothing due right now.'), 'success');
+        api.get('/automation/status').then((s) => showAutoStatus(s.state)).catch(() => {});
+      } catch (e) { UI.toast(e.message, 'error'); }
+      autoRun.disabled = false; autoRun.textContent = '▶ Run automations now';
     };
   },
 

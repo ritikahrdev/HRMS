@@ -61,10 +61,17 @@ app.use(
 // Apply general rate limiter to all API routes
 app.use('/api/', apiLimiter);
 
-// Daily birthday-wish tick. Fires on API activity but the service's in-memory
-// date-guard means real work runs at most once per day (free tier has no cron).
-const birthdayWishes = require('./services/birthdayWishes');
-app.use('/api/', (req, res, next) => { birthdayWishes.dailyTick(); next(); });
+// Daily automation tick (birthdays, anniversaries, holiday reminders, leave
+// accrual, year-end carry-forward, optional Slack sync). Fires on API activity
+// but an in-memory date-guard means the real work runs at most once per day
+// (the free tier has no cron).
+const automation = require('./services/automation');
+app.use('/api/', (req, res, next) => { automation.dailyTick(); next(); });
+
+// Public health/heartbeat endpoint — point a free uptime pinger (e.g.
+// cron-job.org) at this to keep the free server awake AND guarantee the daily
+// automations fire even on a day nobody logs in.
+app.get('/api/health', (req, res) => { automation.dailyTick(); res.json({ ok: true, time: new Date().toISOString() }); });
 
 // Middleware to attach loginLimiter to req so auth route can use it
 const attachLoginLimiter = (req, res, next) => {
@@ -103,6 +110,7 @@ app.use('/api/preboard', require('./routes/preboard'));
 app.use('/api/offboarding', require('./routes/offboarding'));
 app.use('/api/timesheets', require('./routes/timesheets'));
 app.use('/api/birthdays', require('./routes/birthdays'));
+app.use('/api/automation', require('./routes/automation'));
 
 // Public pre-boarding portal page (no login). A candidate opens this with a
 // private token to fill their joining form & upload documents before Day 1.
@@ -138,10 +146,9 @@ const port = config.port || 4000;
 (async () => {
   try {
     await db.init();
-    // Best-effort: bring leave accrual up to date for the current year on boot.
-    require('./services/leaveAccrual').autoCatchUp();
-    // Best-effort: send any of today's birthday wishes on boot/wake.
-    require('./services/birthdayWishes').dailyTick();
+    // Best-effort: run the day's automations on boot/wake (birthdays,
+    // anniversaries, holiday reminders, leave accrual, carry-forward, etc.).
+    require('./services/automation').dailyTick();
     app.listen(port, () => {
       console.log('\n==============================================');
       console.log('  HR Software is running!');

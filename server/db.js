@@ -465,6 +465,12 @@ CREATE TABLE IF NOT EXISTS timesheet_entries (
   created_at TEXT NOT NULL DEFAULT ${TS}
 );
 CREATE INDEX IF NOT EXISTS timesheet_emp_date ON timesheet_entries(employee_id, date);
+
+-- One-shot idempotency markers for the daily automation engine.
+CREATE TABLE IF NOT EXISTS automation_markers (
+  marker TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
 `;
 
 // Columns added to pre-existing tables after their first release. Postgres
@@ -571,6 +577,18 @@ const defaultSettings = {
   // controls which calendar day counts as "today" for birthdays.
   birthdayEmails: true,
   timezone: 'Asia/Kolkata',
+  // Daily automation engine — recurring HR chores that run on their own so the
+  // system keeps working when HR is away. Each is individually switchable.
+  automation: {
+    enabled: true,
+    birthdays: true,
+    anniversaries: true,
+    holidayReminders: true,
+    leaveAccrual: true,
+    slackBackupSync: false,
+  },
+  // Server-managed snapshot of the last automation run (read-only in the UI).
+  automationState: { lastRunDate: null, lastRunAt: null, results: {} },
   slack: {
     enabled: false, botToken: '', channelId: '', signingSecret: '',
     presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],

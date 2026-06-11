@@ -89,7 +89,7 @@ function placeholderize(sql) {
 }
 
 // Tables whose primary key is NOT an `id` column — never append RETURNING id.
-const NO_ID_TABLES = new Set(['payroll_runs', 'settings', 'user_sessions']);
+const NO_ID_TABLES = new Set(['payroll_runs', 'settings', 'user_sessions', 'automation_markers']);
 
 // Append RETURNING id to a bare INSERT so we can report lastInsertRowid.
 function withReturning(text) {
