@@ -27,20 +27,48 @@ function firstName(name) {
   return String(name || '').trim().split(/\s+/)[0] || 'there';
 }
 
+// An email-client-safe "poster": table layout + inline styles + emoji art, so
+// it renders fully in every inbox without any blockable external images.
 function wishHtml(emp, companyName) {
   const co = companyName || 'the team';
+  const name = firstName(emp.name);
   return `
-    <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto">
-      <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:28px;border-radius:14px 14px 0 0;text-align:center;color:#fff">
-        <div style="font-size:46px;line-height:1">🎂🎉</div>
-        <h1 style="margin:10px 0 0;font-size:26px">Happy Birthday, ${firstName(emp.name)}!</h1>
-      </div>
-      <div style="background:#fff;border:1px solid #eef1f6;border-top:none;border-radius:0 0 14px 14px;padding:24px;color:#374151;font-size:15px;line-height:1.6">
-        <p>Wishing you a wonderful day filled with happiness and good health. 🥳</p>
-        <p>Thank you for everything you do — we're glad to have you with us. Have a fantastic year ahead!</p>
-        <p style="margin-top:18px">Warm wishes,<br/><b>The ${co} Team</b></p>
-      </div>
-    </div>`;
+  <div style="background:#f3f4f8;padding:26px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto">
+      <tr><td>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:20px;overflow:hidden;box-shadow:0 10px 34px rgba(91,33,182,0.20)">
+          <!-- festive header band -->
+          <tr><td bgcolor="#7c3aed" style="background:linear-gradient(135deg,#7c3aed 0%,#c026d3 55%,#db2777 100%);padding:40px 24px 34px;text-align:center">
+            <div style="font-size:30px;line-height:1.2">🎈&nbsp;&nbsp;🎉&nbsp;&nbsp;🎂&nbsp;&nbsp;🎊&nbsp;&nbsp;🎈</div>
+            <div style="color:#ffffff;font-size:13px;letter-spacing:7px;font-weight:700;margin-top:18px;text-transform:uppercase;opacity:.92">Happy Birthday</div>
+            <div style="color:#ffffff;font-size:42px;font-weight:800;margin-top:8px;line-height:1.1">${name}!</div>
+            <div style="font-size:50px;margin-top:12px">🥳</div>
+          </td></tr>
+          <!-- message -->
+          <tr><td bgcolor="#ffffff" style="background:#ffffff;padding:32px 34px 6px;text-align:center">
+            <p style="color:#1f2937;font-size:17px;line-height:1.7;margin:0 0 16px;font-weight:600">
+              Wishing you a day as bright and wonderful as you are! 🌟
+            </p>
+            <p style="color:#4b5563;font-size:15px;line-height:1.75;margin:0">
+              May this year ahead be filled with happiness, good health,<br/>
+              success, and plenty of reasons to celebrate.
+            </p>
+            <div style="font-size:38px;margin:20px 0 6px;line-height:1">🎁&nbsp;&nbsp;🎂&nbsp;&nbsp;🎈</div>
+            <p style="color:#4b5563;font-size:15px;line-height:1.75;margin:6px 0 0">
+              Thank you for everything you bring to ${co} —<br/>we're so glad to celebrate <b>you</b> today!
+            </p>
+          </td></tr>
+          <!-- sign-off band -->
+          <tr><td bgcolor="#faf5ff" style="background:#faf5ff;padding:22px 30px 30px;text-align:center;border-top:1px solid #f0e7fb">
+            <div style="font-size:20px;letter-spacing:3px;margin-bottom:12px">✨ 🎊 ✨ 🎊 ✨</div>
+            <div style="color:#7c3aed;font-weight:600;font-size:14px">With warm wishes,</div>
+            <div style="color:#1f2937;font-weight:800;font-size:17px;margin-top:2px">The ${co} Team 💜</div>
+          </td></tr>
+        </table>
+        <p style="color:#9ca3af;font-size:11px;text-align:center;margin:16px 0 0">Sent with love from ${co} HR 🎂</p>
+      </td></tr>
+    </table>
+  </div>`;
 }
 
 // Has this employee already received a birthday email this year?
