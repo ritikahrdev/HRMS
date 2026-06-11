@@ -14,7 +14,35 @@ const AdminViews = {
         <button class="btn secondary" onclick="location.hash='#/import'">Import from Excel</button>
         <button class="btn secondary" onclick="location.hash='#/payroll'">Run Payroll</button>
         <button class="btn secondary" onclick="location.hash='#/attendance'">View Attendance</button>
+      </div>
+      <div id="celebrations"></div>`;
+    AdminViews.celebrationsCard(document.getElementById('celebrations'));
+  },
+
+  // Upcoming birthdays & work anniversaries (Keka-style celebrations widget).
+  async celebrationsCard(host) {
+    if (!host) return;
+    try {
+      const { birthdays, anniversaries } = await api.get('/employees/celebrations');
+      if (!birthdays.length && !anniversaries.length) return;
+      const row = (icon, r, extra) => `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed #eef1f6">
+        <span style="font-size:18px">${icon}</span>
+        <span style="flex:1"><b>${UI.esc(r.name)}</b>${r.department ? ` <span class="muted" style="font-size:12px">· ${UI.esc(r.department)}</span>` : ''}</span>
+        <span class="muted" style="font-size:12px">${r.isToday ? '<b style="color:#16a34a">Today!</b>' : UI.date(r.date)}${extra || ''}</span>
       </div>`;
+      host.innerHTML = `
+        <div class="section-title mt">🎉 Celebrations — next 30 days</div>
+        <div class="cards">
+          <div class="card" style="min-width:280px;flex:1">
+            <div style="font-weight:650;margin-bottom:6px">🎂 Birthdays</div>
+            ${birthdays.length ? birthdays.map((b) => row('🎂', b)).join('') : '<div class="muted" style="font-size:13px">None coming up.</div>'}
+          </div>
+          <div class="card" style="min-width:280px;flex:1">
+            <div style="font-weight:650;margin-bottom:6px">🏅 Work Anniversaries</div>
+            ${anniversaries.length ? anniversaries.map((a) => row('🏅', a, ` · ${a.years} yr${a.years > 1 ? 's' : ''}`)).join('') : '<div class="muted" style="font-size:13px">None coming up.</div>'}
+          </div>
+        </div>`;
+    } catch (e) { /* celebrations are decorative — never break the dashboard */ }
   },
 
   // ---------------- Manager dashboard ----------------
@@ -1725,9 +1753,16 @@ const AdminViews = {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { employees } = await api.get('/employees/directory');
     c.innerHTML = `
-      <div class="toolbar"><input id="search" placeholder="Search name / dept / designation..." /><div class="spacer"></div><span class="muted">${employees.length} people</span></div>
+      <div class="toolbar">
+        <input id="search" placeholder="Search name / dept / designation..." />
+        <div class="spacer"></div>
+        <button class="btn sm secondary" id="viewList">☰ List</button>
+        <button class="btn sm secondary" id="viewChart">🌳 Org Chart</button>
+        <span class="muted">${employees.length} people</span>
+      </div>
       <div id="list"></div>`;
-    const render = (rows) => {
+
+    const renderList = (rows) => {
       document.getElementById('list').innerHTML = UI.table([
         { key: 'name', label: 'Name', render: (r) => `<div style="display:flex;align-items:center;gap:10px"><span class="avatar sm">${UI.esc(App.initials(r.name))}</span><span><b>${UI.esc(r.name)}</b><br/><span class="muted" style="font-size:12px">${UI.esc(r.emp_code || '')}</span></span></div>` },
         { key: 'designation', label: 'Designation', render: (r) => UI.esc(r.designation || '-') },
@@ -1737,11 +1772,46 @@ const AdminViews = {
         { key: 'phone', label: 'Phone', render: (r) => UI.esc(r.phone || '-') },
       ], rows, 'No employees.');
     };
-    render(employees);
+
+    // Org chart: nested boxes built from manager_id (roots = no active manager).
+    const renderChart = () => {
+      const byId = {}; employees.forEach((e) => { byId[e.id] = e; });
+      const childrenOf = {}; const roots = [];
+      employees.forEach((e) => {
+        if (e.manager_id && byId[e.manager_id]) (childrenOf[e.manager_id] = childrenOf[e.manager_id] || []).push(e);
+        else roots.push(e);
+      });
+      const node = (e, depth) => {
+        const kids = childrenOf[e.id] || [];
+        return `<div style="margin:6px 0 6px ${depth ? 26 : 0}px;${depth ? 'border-left:2px solid #e2e8f0;padding-left:14px;' : ''}">
+          <div class="card" style="display:inline-flex;align-items:center;gap:10px;padding:9px 14px;margin:0">
+            <span class="avatar sm">${UI.esc(App.initials(e.name))}</span>
+            <span><b>${UI.esc(e.name)}</b> <span class="muted" style="font-size:12px">${UI.esc(e.designation || '')}${e.department ? ' · ' + UI.esc(e.department) : ''}</span>
+            ${kids.length ? `<span class="tag" style="margin-left:6px;font-size:10px">${kids.length} report${kids.length > 1 ? 's' : ''}</span>` : ''}</span>
+          </div>
+          ${kids.map((k) => node(k, depth + 1)).join('')}
+        </div>`;
+      };
+      document.getElementById('list').innerHTML = roots.length
+        ? `<div style="overflow-x:auto;padding:4px">${roots.map((r) => node(r, 0)).join('')}</div>`
+        : '<div class="empty">No employees.</div>';
+    };
+
+    let mode = 'list';
+    const setMode = (m) => {
+      mode = m;
+      document.getElementById('viewList').className = 'btn sm' + (m === 'list' ? '' : ' secondary');
+      document.getElementById('viewChart').className = 'btn sm' + (m === 'chart' ? '' : ' secondary');
+      if (m === 'list') renderList(employees); else renderChart();
+    };
+    document.getElementById('viewList').onclick = () => setMode('list');
+    document.getElementById('viewChart').onclick = () => setMode('chart');
     document.getElementById('search').oninput = (e) => {
       const q = e.target.value.toLowerCase();
-      render(employees.filter((x) => [x.name, x.department, x.designation, x.email, x.emp_code].join(' ').toLowerCase().includes(q)));
+      if (mode !== 'list') setMode('list');
+      renderList(employees.filter((x) => [x.name, x.department, x.designation, x.email, x.emp_code].join(' ').toLowerCase().includes(q)));
     };
+    setMode('list');
   },
 
   // ---------------- Announcements / Notice Board ----------------

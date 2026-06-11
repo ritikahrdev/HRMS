@@ -81,7 +81,7 @@ router.get('/stats', requirePerm('employees:read'), async (req, res) => {
 router.get('/directory', requireLogin, async (req, res) => {
   try {
     const rows = await db.prepare(
-      `SELECT e.id, e.name, e.emp_code, e.department, e.designation, e.email, e.phone,
+      `SELECT e.id, e.name, e.emp_code, e.department, e.designation, e.email, e.phone, e.manager_id,
               (SELECT name FROM employees m WHERE m.id = e.manager_id) AS manager_name
        FROM employees e WHERE e.status = 'active' ORDER BY e.name`
     ).all();
@@ -89,6 +89,41 @@ router.get('/directory', requireLogin, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Upcoming birthdays & work anniversaries (next 30 days) for dashboards.
+router.get('/celebrations', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.prepare(
+      "SELECT name, department, dob, date_of_joining FROM employees WHERE status = 'active'"
+    ).all();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const windowEnd = new Date(today); windowEnd.setDate(windowEnd.getDate() + 30);
+    // Next occurrence of a stored date's month-day; null if unparseable.
+    const nextOccurrence = (iso) => {
+      const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return null;
+      let d = new Date(today.getFullYear(), Number(m[2]) - 1, Number(m[3]));
+      if (d < today) d = new Date(today.getFullYear() + 1, Number(m[2]) - 1, Number(m[3]));
+      return { when: d, origYear: Number(m[1]) };
+    };
+    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const birthdays = [], anniversaries = [];
+    for (const r of rows) {
+      const b = nextOccurrence(r.dob);
+      if (b && b.when <= windowEnd) {
+        birthdays.push({ name: r.name, department: r.department, date: fmt(b.when), isToday: b.when.getTime() === today.getTime() });
+      }
+      const a = nextOccurrence(r.date_of_joining);
+      if (a && a.when <= windowEnd) {
+        const years = a.when.getFullYear() - a.origYear;
+        if (years >= 1) anniversaries.push({ name: r.name, department: r.department, date: fmt(a.when), years, isToday: a.when.getTime() === today.getTime() });
+      }
+    }
+    birthdays.sort((x, y) => x.date.localeCompare(y.date));
+    anniversaries.sort((x, y) => x.date.localeCompare(y.date));
+    res.json({ birthdays, anniversaries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // A manager's direct reports.

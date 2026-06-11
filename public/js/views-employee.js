@@ -43,7 +43,9 @@ const EmployeeViews = {
         payslips.slice(0, 3),
         'No payslips yet.'
       )}
+      <div id="emp-celebrations"></div>
     `;
+    AdminViews.celebrationsCard(document.getElementById('emp-celebrations'));
 
     const tick = () => {
       const el = document.getElementById('clock');
