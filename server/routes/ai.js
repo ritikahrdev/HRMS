@@ -3,11 +3,105 @@ const db = require('../db');
 const { requireLogin, requirePerm } = require('../middleware/auth');
 const { can } = require('../services/permissions');
 const { getSettings } = require('../services/settings');
+const { sendMail } = require('../services/email');
+const { notifyEveryone } = require('../services/notify');
+const { approverEmailsFor } = require('../services/decisions');
+const { actionUrl } = require('../services/tokens');
 const ai = require('../services/ai');
 
 const router = express.Router();
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+function daysBetween(from, to) { return Math.floor((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5) + 1; }
+const ISODATE = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+
+// ===== In-chat actions the assistant can perform (always confirmed first) =====
+// Each: { availability(req)->bool, params hint, summary(p)->text, run(req,p)->msg }.
+const ACTIONS = {
+  apply_leave: {
+    availability: (req) => !!req.session.user.employeeId,
+    paramsHint: '{"type":"<leave type code>","from_date":"YYYY-MM-DD","to_date":"YYYY-MM-DD","reason":"...","half_day":false}',
+    summary: (p) => `Apply for ${p.type || 'leave'} from ${p.from_date}${p.to_date && p.to_date !== p.from_date ? ' to ' + p.to_date : ''}${p.half_day ? ' (half day)' : ''}${p.reason ? ` — "${p.reason}"` : ''}`,
+    run: async (req, p) => {
+      const empId = req.session.user.employeeId;
+      const codes = (getSettings().leaveTypes || []).map((t) => t.code);
+      if (!p.type || !codes.includes(p.type)) throw new Error(`Pick a valid leave type (${codes.join(', ')}).`);
+      if (!ISODATE(p.from_date) || !ISODATE(p.to_date)) throw new Error('Please give valid from/to dates (YYYY-MM-DD).');
+      if (p.to_date < p.from_date) throw new Error('End date cannot be before start date.');
+      const half = !!p.half_day;
+      if (half && p.from_date !== p.to_date) throw new Error('A half-day leave must be a single date.');
+      const days = half ? 0.5 : daysBetween(p.from_date, p.to_date);
+      const r = await db.prepare('INSERT INTO leave_requests (employee_id, type, from_date, to_date, days, reason, half_day) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(empId, p.type, p.from_date, p.to_date, days, p.reason || '', half ? 1 : 0);
+      const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
+      const to = await approverEmailsFor(empId, 'leave');
+      if (to.length) {
+        await sendMail({
+          to: to.join(','),
+          subject: `Leave request from ${emp ? emp.name : 'an employee'}`,
+          html: `<p><b>${emp ? emp.name : 'An employee'}</b> applied for <b>${p.type}</b> leave from <b>${p.from_date}</b> to <b>${p.to_date}</b> (${days} day(s)).</p><p>Reason: ${p.reason || '-'}</p>
+            <p><a href="${actionUrl('leave', r.lastInsertRowid, 'approved')}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
+            <a href="${actionUrl('leave', r.lastInsertRowid, 'rejected')}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a></p>`,
+        }).catch(() => {});
+      }
+      return `✅ Applied for ${days} day(s) of ${p.type} leave (${p.from_date}${p.to_date !== p.from_date ? ' → ' + p.to_date : ''}). Your approver has been notified.`;
+    },
+  },
+  raise_attendance_request: {
+    availability: (req) => !!req.session.user.employeeId,
+    paramsHint: '{"requested_status":"present|half|leave|absent","reason":"..."}  (for TODAY only)',
+    summary: (p) => `Raise an attendance request for today — mark as ${p.requested_status || 'present'}${p.reason ? ` ("${p.reason}")` : ''}`,
+    run: async (req, p) => {
+      const empId = req.session.user.employeeId;
+      if (!p.reason || !p.reason.trim()) throw new Error('Please give a short reason.');
+      const status = ['present', 'half', 'leave', 'absent'].includes(p.requested_status) ? p.requested_status : 'present';
+      const dup = await db.prepare("SELECT id FROM attendance_corrections WHERE employee_id=? AND date=? AND status='pending'").get(empId, todayStr());
+      if (dup) throw new Error('You already have a pending attendance request for today.');
+      await db.prepare('INSERT INTO attendance_corrections (employee_id, date, type, requested_status, reason) VALUES (?, ?, ?, ?, ?)')
+        .run(empId, todayStr(), 'regularization', status, p.reason.trim());
+      return `✅ Raised an attendance request for today (mark as ${status}). Your manager/HR will review it.`;
+    },
+  },
+  submit_reimbursement: {
+    availability: (req) => !!req.session.user.employeeId && (getSettings().modules || {}).reimbursement !== false,
+    paramsHint: '{"title":"...","category":"travel|food|...","amount":1234}',
+    summary: (p) => `Submit a reimbursement: "${p.title}"${p.category ? ' (' + p.category + ')' : ''} for ${getSettings().currency || '₹'}${p.amount}`,
+    run: async (req, p) => {
+      const empId = req.session.user.employeeId;
+      if (!p.title) throw new Error('What is the claim for (title)?');
+      const amount = Number(p.amount);
+      if (!(amount > 0)) throw new Error('Please give an amount greater than 0.');
+      const r = await db.prepare('INSERT INTO reimbursements (employee_id, title, category, amount) VALUES (?, ?, ?, ?)').run(empId, p.title, p.category || '', amount);
+      const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
+      const to = await approverEmailsFor(empId, 'reimbursement');
+      if (to.length) {
+        await sendMail({ to: to.join(','), subject: `Reimbursement request from ${emp ? emp.name : 'an employee'}`,
+          html: `<p><b>${emp ? emp.name : 'An employee'}</b> submitted a reimbursement: <b>${p.title}</b> for <b>${amount}</b>.</p>
+            <p><a href="${actionUrl('reimbursement', r.lastInsertRowid, 'approved')}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
+            <a href="${actionUrl('reimbursement', r.lastInsertRowid, 'rejected')}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a></p>` }).catch(() => {});
+      }
+      return `✅ Submitted reimbursement "${p.title}" for ${getSettings().currency || '₹'}${amount}. Your approver has been notified.`;
+    },
+  },
+  give_kudos: {
+    availability: () => (getSettings().modules || {}).recognition !== false,
+    paramsHint: '{"employee_name":"Full Name","message":"...","badge":"👏"}',
+    summary: (p) => `Give a shoutout to ${p.employee_name}: "${p.message}"`,
+    run: async (req, p) => {
+      if (!p.employee_name || !p.message) throw new Error('Who do you want to recognise, and what for?');
+      const all = await db.prepare("SELECT id, name FROM employees WHERE status='active'").all();
+      const q = String(p.employee_name).toLowerCase().trim();
+      const target = all.find((e) => e.name.toLowerCase() === q) || all.find((e) => e.name.toLowerCase().includes(q));
+      if (!target) throw new Error(`Couldn't find an active employee named "${p.employee_name}".`);
+      await db.prepare('INSERT INTO kudos (from_user, employee_id, badge, message) VALUES (?, ?, ?, ?)').run(req.session.user.id, target.id, p.badge || '👏', p.message);
+      await notifyEveryone(req.session.user.id, { type: 'kudos', title: `${p.badge || '👏'} Shoutout for ${target.name}`, body: `${req.session.user.name || 'Someone'}: ${p.message}`, link: '#/recognition' }).catch(() => {});
+      return `✅ Shoutout sent to ${target.name}! 🎉`;
+    },
+  },
+};
+function availableActions(req) {
+  return Object.entries(ACTIONS).filter(([, a]) => a.availability(req)).map(([name, a]) => ({ name, paramsHint: a.paramsHint }));
+}
 
 // ---- Assemble role-scoped HRMS context for the assistant ------------------
 // An employee only ever sees their own data + public/company info. Staff with
@@ -136,22 +230,63 @@ router.post('/chat', requireLogin, async (req, res) => {
     const context = await buildContext(req);
     const routes = buildRouteCatalogue(req);
     const routeList = routes.map((x) => `${x.route} — ${x.label}: ${x.desc}`).join('\n');
+    const acts = availableActions(req);
+    const leaveCodes = (getSettings().leaveTypes || []).map((t) => `${t.code} (${t.name})`).join(', ');
+    const actList = acts.map((a) => `- ${a.name} — params: ${a.paramsHint}`).join('\n');
     const messages = history.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-10);
     if (question) messages.push({ role: 'user', content: question });
-    const system = `${ASSISTANT_SYSTEM}\n\n--- CONTEXT ---\n${context}\n\n--- PAGES YOU CAN SEND THE USER TO (use ONLY these routes) ---\n${routeList}`;
+    const system = `${ASSISTANT_SYSTEM}
+
+--- CONTEXT ---
+${context}
+
+--- PAGES YOU CAN SEND THE USER TO (use ONLY these routes) ---
+${routeList}
+
+--- ACTIONS YOU CAN PERFORM (the user will tap Confirm before anything runs, so it is safe to propose) ---
+When the user clearly wants to do one of these AND you have the required details, emit exactly one directive on the LAST line:
+[[ACTION:name|{json params}|Confirm Button Label]]
+Available leave type codes: ${leaveCodes || 'none'}.
+Available actions:
+${actList || '(none for this user)'}
+Rules: NEVER invent dates, amounts, names, or leave types — if a required detail is missing, ASK a short follow-up question instead of guessing (no directive then). Resolve relative dates (e.g. "next Monday") using today's date from the context. Output AT MOST ONE directive per reply (either a GOTO or an ACTION), alone on the final line; otherwise reply with just helpful text.`;
     const raw = await ai.callLLM({ system, messages, maxTokens: 900 });
 
-    // Pull out a [[GOTO:#/route|Label]] directive, validate the route, strip it from the text.
-    let answer = raw, navigate = null;
-    const m = raw.match(/\[\[\s*GOTO\s*:\s*(#\/[\w-]*)\s*\|\s*([^\]]+?)\s*\]\]/i);
-    if (m) {
-      const route = m[1].trim();
-      const label = m[2].trim().slice(0, 40);
-      if (routes.some((x) => x.route === route)) navigate = { route, label };
-      answer = raw.replace(m[0], '').trim();
+    let answer = raw, navigate = null, proposedAction = null;
+    // ACTION directive (do-the-task) takes priority over GOTO.
+    const am = raw.match(/\[\[\s*ACTION\s*:\s*([a-z_]+)\s*\|\s*(\{[\s\S]*?\})\s*\|\s*([^\]]+?)\s*\]\]/i);
+    if (am) {
+      const name = am[1];
+      let params = {}; try { params = JSON.parse(am[2]); } catch (e) {}
+      if (ACTIONS[name] && ACTIONS[name].availability(req)) {
+        proposedAction = { name, params, label: am[3].trim().slice(0, 40), summary: ACTIONS[name].summary(params) };
+      }
+      answer = raw.replace(am[0], '').trim();
     }
-    res.json({ answer, navigate });
+    // GOTO directive (navigate) — only if no action proposed.
+    if (!proposedAction) {
+      const gm = raw.match(/\[\[\s*GOTO\s*:\s*(#\/[\w-]*)\s*\|\s*([^\]]+?)\s*\]\]/i);
+      if (gm) {
+        const route = gm[1].trim();
+        if (routes.some((x) => x.route === route)) navigate = { route, label: gm[2].trim().slice(0, 40) };
+        answer = raw.replace(gm[0], '').trim();
+      }
+    }
+    res.json({ answer, navigate, proposedAction });
   } catch (e) { res.status(e.notConfigured ? 400 : 500).json({ error: e.message }); }
+});
+
+// ---- Execute a confirmed in-chat action -----------------------------------
+router.post('/act', requireLogin, async (req, res) => {
+  try {
+    const name = req.body && req.body.name;
+    const params = (req.body && req.body.params) || {};
+    const a = ACTIONS[name];
+    if (!a) return res.status(400).json({ error: 'Unknown action.' });
+    if (!a.availability(req)) return res.status(403).json({ error: "You can't perform that action." });
+    const message = await a.run(req, params);
+    res.json({ ok: true, message });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ---- Draft content (auto-safe: returns text, user reviews before posting) --

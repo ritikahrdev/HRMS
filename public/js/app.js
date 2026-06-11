@@ -181,13 +181,28 @@ const App = {
           <div class="content" id="view"></div>
         </div>
       </div>
-      <div id="aiFab" title="Ask the AI assistant" style="position:fixed;right:22px;bottom:22px;z-index:60;width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(99,102,241,.5)">✨</div>
-      <div id="aiPanel" style="position:fixed;right:22px;bottom:90px;z-index:60;width:380px;max-width:92vw;height:520px;max-height:72vh;background:#fff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden">
-        <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:12px 16px;font-weight:700;display:flex;align-items:center">🤖 AI Assistant<span id="aiClose" style="margin-left:auto;cursor:pointer;font-weight:400;font-size:18px">✕</span></div>
-        <div id="aiMsgs" style="flex:1;overflow-y:auto;padding:14px;background:#f9fafb;font-size:14px;line-height:1.5"></div>
-        <div style="padding:10px;border-top:1px solid #eef1f6;display:flex;gap:8px;align-items:center">
-          <input id="aiInput" placeholder="Ask anything…" style="flex:1" autocomplete="off" />
-          <button class="btn sm" id="aiSend">Send</button>
+      <style>
+        @keyframes aiOrbPulse{0%,100%{box-shadow:0 6px 22px rgba(124,58,237,.45),0 0 0 0 rgba(124,58,237,.35)}50%{box-shadow:0 8px 30px rgba(124,58,237,.55),0 0 0 13px rgba(124,58,237,0)}}
+        @keyframes aiPop{0%{opacity:0;transform:translateY(18px) scale(.95)}100%{opacity:1;transform:translateY(0) scale(1)}}
+        @keyframes aiBlink{0%,80%,100%{transform:scale(.5);opacity:.35}40%{transform:scale(1);opacity:1}}
+        @keyframes aiAurora{0%{background-position:0% 50%}100%{background-position:200% 50%}}
+        #aiFab{transition:transform .15s ease}#aiFab:hover{transform:scale(1.08) rotate(8deg)}
+        .ai-dot{width:7px;height:7px;border-radius:50%;background:#8b5cf6;display:inline-block;animation:aiBlink 1.2s infinite}
+        .ai-dot:nth-child(2){animation-delay:.2s}.ai-dot:nth-child(3){animation-delay:.4s}
+        .ai-send:hover{filter:brightness(1.12)}.ai-chip:hover{background:#f1edff;border-color:#c4b5fd}
+        #aiInput:focus{border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.18)}
+      </style>
+      <div id="aiFab" title="Ask Hrika AI" style="position:fixed;right:22px;bottom:22px;z-index:60;width:60px;height:60px;border-radius:50%;background:radial-gradient(circle at 30% 28%,#a78bfa,#7c3aed 58%,#6366f1);color:#fff;font-size:27px;display:flex;align-items:center;justify-content:center;cursor:pointer;animation:aiOrbPulse 2.6s infinite">✦</div>
+      <div id="aiPanel" style="position:fixed;right:22px;bottom:96px;z-index:60;width:392px;max-width:93vw;height:560px;max-height:74vh;background:#fff;border-radius:22px;box-shadow:0 24px 60px rgba(60,40,140,.28);display:none;flex-direction:column;overflow:hidden;border:1px solid rgba(124,58,237,.14)">
+        <div style="padding:15px 18px;color:#fff;background:linear-gradient(110deg,#6d28d9,#7c3aed,#c026d3,#7c3aed);background-size:220% 100%;animation:aiAurora 9s linear infinite;display:flex;align-items:center;gap:12px">
+          <div style="width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:20px">✦</div>
+          <div style="flex:1"><div style="font-weight:800;font-size:16px;line-height:1.1">Hrika AI</div><div style="font-size:11px;opacity:.88">your HR copilot · ask, or tell me to do it</div></div>
+          <span id="aiClose" style="cursor:pointer;font-size:20px;opacity:.9">✕</span>
+        </div>
+        <div id="aiMsgs" style="flex:1;overflow-y:auto;padding:16px;background:linear-gradient(#faf9ff,#f4f3fb);font-size:14px;line-height:1.55"></div>
+        <div style="padding:12px;border-top:1px solid #eee9f7;display:flex;gap:9px;align-items:center;background:#fff">
+          <input id="aiInput" placeholder="Ask anything, or say what to do…" autocomplete="off" style="flex:1;border:1px solid #e3def3;border-radius:22px;padding:10px 16px;outline:none;font-size:14px;transition:.15s" />
+          <button id="aiSend" class="ai-send" style="width:42px;height:42px;border:none;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#c026d3);color:#fff;font-size:17px;cursor:pointer;flex:none">➤</button>
         </div>
       </div>`;
     // Sidebar logout
@@ -234,7 +249,7 @@ const App = {
     this.initAiAssistant();
   },
 
-  // ---- AI Assistant (floating copilot) ----
+  // ---- Hrika AI Assistant (floating copilot) ----
   initAiAssistant() {
     const fab = document.getElementById('aiFab');
     const panel = document.getElementById('aiPanel');
@@ -243,57 +258,79 @@ const App = {
     const send = document.getElementById('aiSend');
     if (!fab) return;
     this._aiHistory = [];
-    const bubble = (who, text, pending) => {
-      const mine = who === 'me';
-      const html = `<div style="display:flex;margin:8px 0;${mine ? 'justify-content:flex-end' : ''}">
-        <div style="max-width:82%;padding:9px 12px;border-radius:12px;${mine ? 'background:#6366f1;color:#fff' : 'background:#fff;border:1px solid #e9ecf3;color:#1f2937'}${pending ? ';opacity:.6' : ''}">${mine ? UI.esc(text) : text}</div></div>`;
-      msgs.insertAdjacentHTML('beforeend', html);
-      msgs.scrollTop = msgs.scrollHeight;
+    const AV = '<div style="width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#a78bfa,#7c3aed);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;flex:none">✦</div>';
+    const scroll = () => { msgs.scrollTop = msgs.scrollHeight; };
+    // me -> right gradient bubble; ai -> orb + bubble (caller passes ready HTML).
+    const bubble = (who, html) => {
+      msgs.insertAdjacentHTML('beforeend', who === 'me'
+        ? `<div style="display:flex;justify-content:flex-end;margin:9px 0"><div style="max-width:80%;padding:9px 13px;border-radius:15px 15px 4px 15px;background:linear-gradient(135deg,#7c3aed,#8b5cf6);color:#fff">${html}</div></div>`
+        : `<div style="display:flex;gap:8px;margin:9px 0;align-items:flex-end">${AV}<div style="max-width:80%;padding:9px 13px;border-radius:15px 15px 15px 4px;background:#fff;border:1px solid #ece7f8;color:#1f2937">${html}</div></div>`);
+      scroll();
     };
-    // light markdown: **bold**, bullet lines, newlines
     const fmt = (t) => UI.esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^[-•]\s?/gm, '• ').replace(/\n/g, '<br/>');
+    const showTyping = () => {
+      const id = 'typ' + Date.now();
+      msgs.insertAdjacentHTML('beforeend', `<div id="${id}" style="display:flex;gap:8px;margin:9px 0;align-items:flex-end">${AV}<div style="padding:12px 15px;border-radius:15px 15px 15px 4px;background:#fff;border:1px solid #ece7f8"><span class="ai-dot"></span> <span class="ai-dot"></span> <span class="ai-dot"></span></div></div>`);
+      scroll();
+      return document.getElementById(id);
+    };
+    const navButton = (nav) => {
+      const id = 'go' + Date.now();
+      msgs.insertAdjacentHTML('beforeend', `<div style="margin:2px 0 10px 34px"><button id="${id}" style="border:none;border-radius:20px;padding:8px 17px;background:linear-gradient(135deg,#7c3aed,#c026d3);color:#fff;font-weight:600;font-size:13px;cursor:pointer">→ ${UI.esc(nav.label || 'Open page')}</button></div>`);
+      scroll();
+      const b = document.getElementById(id);
+      if (b) b.onclick = () => { location.hash = nav.route; panel.style.display = 'none'; fab.textContent = '✦'; };
+    };
+    const actionCard = (pa) => {
+      const id = 'act' + Date.now();
+      msgs.insertAdjacentHTML('beforeend', `<div id="${id}" style="margin:2px 0 10px 34px;border:1.5px solid #e3def3;border-radius:14px;padding:12px 13px;background:#fff;max-width:88%;box-shadow:0 3px 10px rgba(124,58,237,.07)">
+        <div style="font-size:11px;color:#7c3aed;font-weight:800;letter-spacing:.3px;margin-bottom:5px">⚡ ACTION READY</div>
+        <div style="font-size:13px;color:#374151;margin-bottom:11px">${UI.esc(pa.summary || pa.label)}</div>
+        <div class="act-row" style="display:flex;gap:8px"><button data-yes style="border:none;border-radius:18px;padding:7px 16px;background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;font-weight:600;font-size:13px;cursor:pointer">✓ ${UI.esc(pa.label || 'Confirm')}</button><button data-no style="border:1px solid #e5e7eb;border-radius:18px;padding:7px 15px;background:#fff;color:#6b7280;font-size:13px;cursor:pointer">Cancel</button></div></div>`);
+      scroll();
+      const card = document.getElementById(id);
+      const row = card.querySelector('.act-row');
+      card.querySelector('[data-no]').onclick = () => { row.innerHTML = '<span style="color:#9ca3af;font-size:12px">Cancelled.</span>'; };
+      card.querySelector('[data-yes]').onclick = async () => {
+        row.innerHTML = '<span class="muted" style="font-size:12px">⏳ Working…</span>';
+        try { const r = await api.post('/ai/act', { name: pa.name, params: pa.params }); row.innerHTML = `<span style="color:#16a34a;font-size:13px;font-weight:600">${UI.esc(r.message || 'Done ✅')}</span>`; }
+        catch (e) { row.innerHTML = `<span style="color:#dc2626;font-size:12px">${UI.esc(e.message)}</span>`; }
+      };
+    };
 
     const greet = async () => {
       msgs.innerHTML = '';
       let st; try { st = await api.get('/ai/status'); } catch (e) { st = { configured: false }; }
       if (!st.configured) {
         bubble('ai', App.has('settings:manage')
-          ? 'Hi! I\'m your AI assistant. To switch me on, add a Claude API key in <b>Settings → AI Assistant</b>.'
-          : 'Hi! The AI assistant isn\'t set up yet — please ask your HR admin to enable it in Settings.');
+          ? "Hi! I'm <b>Hrika AI</b> ✦. To switch me on, add an API key in <b>Settings → AI Assistant</b>."
+          : "Hi! The AI assistant isn't set up yet — please ask your HR admin to enable it.");
         return;
       }
-      bubble('ai', 'Hi! Ask me anything about your HR — leave balance, who\'s on leave, policies, and more. 💜');
+      bubble('ai', "Hi! I'm <b>Hrika AI</b> ✦ — ask me anything, or just <b>tell me what to do</b> (apply leave, submit a claim, find a page…). 💜");
       const chips = App.has('reports:view')
-        ? ['Who is on leave today?', 'How many active employees do we have?', 'How many leave approvals are pending?']
-        : ['How much leave do I have left?', 'What are our working hours?', 'When is the next holiday?'];
-      const chipHtml = chips.map((c) => `<button class="chip-q" style="margin:3px;padding:5px 10px;border:1px solid #dfe3ee;border-radius:14px;background:#fff;cursor:pointer;font-size:12px">${UI.esc(c)}</button>`).join('');
-      msgs.insertAdjacentHTML('beforeend', `<div style="margin-top:6px">${chipHtml}</div>`);
-      msgs.querySelectorAll('.chip-q').forEach((b) => b.onclick = () => { input.value = b.textContent; ask(); });
+        ? ['Who is on leave today?', 'Pending approvals', 'Draft an announcement', 'How many employees?']
+        : ['Apply for casual leave tomorrow', 'Download my payslip', 'How much leave do I have?', 'Submit a reimbursement'];
+      msgs.insertAdjacentHTML('beforeend', `<div style="margin:6px 0 0 34px;display:flex;flex-wrap:wrap;gap:6px">${chips.map((c) => `<button class="ai-chip" style="padding:6px 11px;border:1px solid #e3def3;border-radius:15px;background:#fff;cursor:pointer;font-size:12px;color:#5b21b6">${UI.esc(c)}</button>`).join('')}</div>`);
+      msgs.querySelectorAll('.ai-chip').forEach((b) => b.onclick = () => { input.value = b.textContent; ask(); });
     };
 
     const ask = async () => {
       const q = input.value.trim();
       if (!q) return;
       input.value = '';
-      bubble('me', q);
+      bubble('me', UI.esc(q));
       this._aiHistory.push({ role: 'user', content: q });
-      bubble('ai', '<span class="muted">…thinking</span>', true);
-      const placeholder = msgs.lastElementChild;
+      const typing = showTyping();
       try {
         const r = await api.post('/ai/chat', { messages: this._aiHistory.slice(0, -1), question: q });
-        placeholder.remove();
+        typing.remove();
         if (r.answer) bubble('ai', fmt(r.answer));
-        // One-click jump to the exact page for the user's request.
-        if (r.navigate && r.navigate.route) {
-          const id = 'aigo' + Date.now();
-          msgs.insertAdjacentHTML('beforeend', `<div style="margin:4px 0 10px"><button id="${id}" class="btn sm" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">→ ${UI.esc(r.navigate.label || 'Open page')}</button></div>`);
-          msgs.scrollTop = msgs.scrollHeight;
-          const go = document.getElementById(id);
-          if (go) go.onclick = () => { location.hash = r.navigate.route; panel.style.display = 'none'; fab.textContent = '✨'; };
-        }
+        if (r.proposedAction) actionCard(r.proposedAction);
+        else if (r.navigate && r.navigate.route) navButton(r.navigate);
         this._aiHistory.push({ role: 'assistant', content: r.answer || '' });
       } catch (e) {
-        placeholder.remove();
+        typing.remove();
         bubble('ai', '<span style="color:#dc2626">' + UI.esc(e.message) + '</span>');
       }
     };
@@ -302,11 +339,10 @@ const App = {
     fab.onclick = () => {
       const show = panel.style.display === 'none';
       panel.style.display = show ? 'flex' : 'none';
-      fab.textContent = show ? '✕' : '✨';
-      if (show && !opened) { opened = true; greet(); }
-      if (show) setTimeout(() => input.focus(), 50);
+      if (show) { panel.style.animation = 'aiPop .22s ease'; fab.textContent = '✕'; if (!opened) { opened = true; greet(); } setTimeout(() => input.focus(), 60); }
+      else fab.textContent = '✦';
     };
-    document.getElementById('aiClose').onclick = () => { panel.style.display = 'none'; fab.textContent = '✨'; };
+    document.getElementById('aiClose').onclick = () => { panel.style.display = 'none'; fab.textContent = '✦'; };
     send.onclick = ask;
     input.onkeydown = (e) => { if (e.key === 'Enter') ask(); };
   },
