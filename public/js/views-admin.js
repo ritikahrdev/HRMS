@@ -3770,7 +3770,8 @@ const AdminViews = {
 
   async exitDetail(id, c) {
     const { exit: x, tasks, settlement } = await api.get('/offboarding/' + id);
-    const money = (n) => (settlement.currency || '₹') + Number(n || 0).toLocaleString('en-IN');
+    const cur = settlement.currency || '₹';
+    const money = (n) => cur + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
     const ownerIcon = { hr: '🧑‍💼', it: '💻', finance: '💰', manager: '👔', employee: '👤' };
     const tasksHtml = tasks.map((t) => `
       <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed #eef1f6;cursor:pointer">
@@ -3780,10 +3781,19 @@ const AdminViews = {
       </label>`).join('');
     const done = tasks.filter((t) => t.done).length;
     const editable = x.status !== 'completed' && x.status !== 'cancelled';
+
+    // Local, editable copy of the Full & Final settlement.
+    const fnf = {
+      currency: cur,
+      meta: settlement.meta || {},
+      earnings: (settlement.earnings || []).map((e) => ({ ...e })),
+      deductions: (settlement.deductions || []).map((d) => ({ ...d })),
+    };
+
     const m = UI.modal({
       title: `🚪 ${UI.esc(x.employee_name)} — Offboarding`,
       bodyHtml: `
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px">
           <div>
             <div class="section-title" style="font-size:14px">Exit Details</div>
             <table style="font-size:13px">
@@ -3800,27 +3810,92 @@ const AdminViews = {
               <div class="field"><label style="font-size:12px">Exit notes</label><textarea id="ex-notes" rows="2" style="width:100%">${UI.esc(x.exit_notes || '')}</textarea></div>` : ''}
           </div>
           <div>
-            <div class="section-title" style="font-size:14px">Full & Final Settlement <span class="muted" style="font-size:11px">(estimate)</span></div>
-            <table style="font-size:13px">
-              <tr><td class="muted">Last month salary (${settlement.daysWorkedLastMonth}d)</td><td>${money(settlement.lastMonthSalary)}</td></tr>
-              <tr><td class="muted">Leave encashment (${settlement.leaveBalanceDays}d)</td><td>${money(settlement.leaveEncashment)}</td></tr>
-              <tr><td class="muted">Gross</td><td>${money(settlement.gross)}</td></tr>
-              <tr><td class="muted">Less: loan/advance recovery</td><td style="color:#dc2626">- ${money(settlement.loanRecovery)}</td></tr>
-              <tr><td class="muted"><b>Net payable</b></td><td><b>${money(settlement.net)}</b></td></tr>
-            </table>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div class="section-title" style="font-size:14px;margin:0">Full & Final Settlement ${settlement.edited ? '<span class="muted" style="font-size:11px">(edited)</span>' : '<span class="muted" style="font-size:11px">(auto)</span>'}</div>
+              ${editable ? `<button class="btn sm secondary" id="fnf-recompute" type="button" title="Reset to auto-calculated figures">↻ Recompute</button>` : ''}
+            </div>
+            <div id="exFnf"></div>
           </div>
         </div>
         <div class="section-title mt" style="font-size:14px">Clearance Checklist <span class="muted" style="font-size:12px">(${done}/${tasks.length} done)</span></div>
         <div id="exTasks">${tasksHtml}</div>`,
       footHtml: editable
-        ? `<button class="btn secondary" id="ex-cancel">Cancel Exit</button><button class="btn secondary" id="ex-save">Save</button><button class="btn green" id="ex-complete">Complete Offboarding</button>`
+        ? `<button class="btn secondary" id="ex-cancel">Cancel Exit</button><button class="btn secondary" id="ex-save">Save Details</button><button class="btn green" id="ex-complete">Complete & Pay F&F</button>`
         : `<button class="btn secondary" data-close-btn>Close</button>`,
     });
     const close = m.root.querySelector('[data-close-btn]'); if (close) close.onclick = m.close;
+
+    // ---- editable F&F renderer ----
+    const recalc = () => {
+      const sum = (arr) => arr.reduce((a, r) => a + (Number(r.amount) || 0), 0);
+      const g = sum(fnf.earnings), d = sum(fnf.deductions);
+      return { gross: g, totalDeductions: d, net: g - d };
+    };
+    const paintFnf = () => {
+      const host = m.root.querySelector('#exFnf');
+      const line = (item, idx, kind) => `
+        <div style="display:flex;align-items:center;gap:6px;margin:4px 0">
+          ${editable
+            ? `<input data-fnf-label="${kind}:${idx}" value="${UI.esc(item.label)}" ${item.auto ? 'readonly' : ''} style="flex:1;font-size:12px;${item.auto ? 'border:none;background:transparent;color:#374151' : ''}" />`
+            : `<span style="flex:1;font-size:12px">${UI.esc(item.label)}</span>`}
+          ${editable ? `<span style="font-size:12px;color:#9ca3af">${cur}</span><input type="number" step="0.01" data-fnf-amt="${kind}:${idx}" value="${item.amount}" style="width:100px;text-align:right;font-size:12px${kind === 'd' ? ';color:#dc2626' : ''}" />`
+            : `<span style="font-size:12px${kind === 'd' ? ';color:#dc2626' : ''}">${kind === 'd' ? '- ' : ''}${money(item.amount)}</span>`}
+          ${editable && !item.auto ? `<button data-fnf-del="${kind}:${idx}" type="button" title="Remove" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:14px">×</button>` : (editable ? '<span style="width:14px"></span>' : '')}
+        </div>`;
+      const t = recalc();
+      host.innerHTML = `
+        <div style="font-size:12px;font-weight:600;color:#16a34a;margin-top:4px">Earnings</div>
+        ${fnf.earnings.map((e, i) => line(e, i, 'e')).join('')}
+        ${editable ? `<button class="btn sm secondary" id="fnf-add-e" type="button" style="margin-top:4px">+ Add earning</button>` : ''}
+        <div style="font-size:12px;font-weight:600;color:#dc2626;margin-top:12px">Deductions</div>
+        ${fnf.deductions.map((d, i) => line(d, i, 'd')).join('')}
+        ${editable ? `<button class="btn sm secondary" id="fnf-add-d" type="button" style="margin-top:4px">+ Add deduction</button>` : ''}
+        <table style="font-size:13px;margin-top:12px;width:100%;border-top:1px solid #e5e7eb">
+          <tr><td class="muted">Gross earnings</td><td style="text-align:right" id="fnf-gross">${money(t.gross)}</td></tr>
+          <tr><td class="muted">Total deductions</td><td style="text-align:right;color:#dc2626" id="fnf-ded">- ${money(t.totalDeductions)}</td></tr>
+          <tr><td><b>Net payable</b></td><td style="text-align:right"><b id="fnf-net">${money(t.net)}</b></td></tr>
+        </table>`;
+      if (!editable) return;
+      // bind amount/label edits (live totals, no repaint to keep focus)
+      host.querySelectorAll('[data-fnf-amt]').forEach((el) => el.oninput = () => {
+        const [k, i] = el.dataset.fnfAmt.split(':');
+        (k === 'e' ? fnf.earnings : fnf.deductions)[Number(i)].amount = Number(el.value) || 0;
+        const tt = recalc();
+        host.querySelector('#fnf-gross').textContent = money(tt.gross);
+        host.querySelector('#fnf-ded').textContent = '- ' + money(tt.totalDeductions);
+        host.querySelector('#fnf-net').textContent = money(tt.net);
+      });
+      host.querySelectorAll('[data-fnf-label]').forEach((el) => el.oninput = () => {
+        const [k, i] = el.dataset.fnfLabel.split(':');
+        (k === 'e' ? fnf.earnings : fnf.deductions)[Number(i)].label = el.value;
+      });
+      host.querySelectorAll('[data-fnf-del]').forEach((el) => el.onclick = () => {
+        const [k, i] = el.dataset.fnfDel.split(':');
+        (k === 'e' ? fnf.earnings : fnf.deductions).splice(Number(i), 1); paintFnf();
+      });
+      host.querySelector('#fnf-add-e').onclick = () => { fnf.earnings.push({ key: 'custom', label: 'New earning', amount: 0, auto: false }); paintFnf(); };
+      host.querySelector('#fnf-add-d').onclick = () => { fnf.deductions.push({ key: 'custom', label: 'New deduction', amount: 0, auto: false }); paintFnf(); };
+    };
+    paintFnf();
+
+    const saveFnf = async (silent) => {
+      try { const r = await api.put(`/offboarding/${id}/settlement`, { settlement: { earnings: fnf.earnings, deductions: fnf.deductions } });
+        if (!silent) UI.toast('Settlement saved.', 'success'); return r.settlement; }
+      catch (e) { UI.toast(e.message, 'error'); throw e; }
+    };
+
     m.root.querySelectorAll('[data-task]').forEach((cb) => cb.onchange = async () => {
       try { await api.post(`/offboarding/${id}/tasks/${cb.dataset.task}/toggle`); } catch (e) { UI.toast(e.message, 'error'); cb.checked = !cb.checked; }
     });
     if (editable) {
+      m.root.querySelector('#fnf-recompute').onclick = async () => {
+        if (!confirm('Reset the settlement to the auto-calculated figures? Your manual edits to it will be lost.')) return;
+        const fresh = await api.get(`/offboarding/${id}?recompute=1`);
+        fnf.earnings = (fresh.settlement.earnings || []).map((e) => ({ ...e }));
+        fnf.deductions = (fresh.settlement.deductions || []).map((d) => ({ ...d }));
+        fnf.meta = fresh.settlement.meta || fnf.meta;
+        paintFnf(); UI.toast('Recomputed from latest data.', 'success');
+      };
       m.root.querySelector('#ex-save').onclick = async () => {
         try {
           await api.patch('/offboarding/' + id, {
@@ -3828,6 +3903,7 @@ const AdminViews = {
             rehire_eligible: m.root.querySelector('#ex-rehire').checked,
             exit_notes: m.root.querySelector('#ex-notes').value,
           });
+          await saveFnf(true);
           UI.toast('Saved.', 'success');
         } catch (e) { UI.toast(e.message, 'error'); }
       };
@@ -3836,9 +3912,13 @@ const AdminViews = {
         try { await api.post(`/offboarding/${id}/cancel`); m.close(); UI.toast('Exit cancelled.', 'success'); this.offboarding(c); } catch (e) { UI.toast(e.message, 'error'); }
       };
       m.root.querySelector('#ex-complete').onclick = async () => {
-        const force = done < tasks.length ? confirm(`${tasks.length - done} clearance task(s) are still pending. Complete anyway? This will deactivate the employee.`) : confirm('Complete offboarding? This deactivates the employee and finalises their settlement.');
-        if (!force) return;
+        const t = recalc();
+        const ok = done < tasks.length
+          ? confirm(`${tasks.length - done} clearance task(s) are still pending.\n\nComplete anyway and finalise F&F of ${money(t.net)}? This deactivates the employee.`)
+          : confirm(`Complete offboarding and finalise F&F of ${money(t.net)}? This deactivates the employee.`);
+        if (!ok) return;
         try {
+          await saveFnf(true);                       // persist edited F&F first
           await api.post(`/offboarding/${id}/complete`, { force: true });
           m.close(); UI.toast('Offboarding completed. Employee deactivated.', 'success'); this.offboarding(c);
         } catch (e) { UI.toast(e.message, 'error'); }

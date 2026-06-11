@@ -70,17 +70,64 @@ async function settlementFor(employeeId, lastWorkingDay) {
   leaveBalanceDays = +leaveBalanceDays.toFixed(1);
   const leaveEncashment = +(leaveBalanceDays * perDay).toFixed(2);
 
+  // Years of completed service (for gratuity eligibility & amount).
+  let years = 0;
+  if (emp.date_of_joining) {
+    const doj = new Date(emp.date_of_joining + 'T00:00:00Z');
+    const end = new Date(lwd + 'T00:00:00Z');
+    if (!isNaN(doj) && !isNaN(end)) years = Math.max(0, (end - doj) / (365.25 * 864e5));
+  }
+  // Payment of Gratuity Act: eligible after 5 yrs; (15/26) * last monthly * completed years.
+  const gratuity = years >= 5 ? +(((15 * monthly) / 26) * Math.floor(years)).toFixed(2) : 0;
+
   // Outstanding loan/advance balance is recovered (deduction).
   const loanRow = await db.prepare("SELECT COALESCE(SUM(COALESCE(balance, amount)),0) AS s FROM loans WHERE employee_id=? AND status='active'").get(employeeId);
   const loanRecovery = +Number(loanRow.s).toFixed(2);
 
-  const gross = +(lastMonthSalary + leaveEncashment).toFixed(2);
-  const net = +(gross - loanRecovery).toFixed(2);
-  return {
+  // Structured, editable breakdown. Each line: {key, label, amount, auto, editable}.
+  const earnings = [
+    { key: 'lastMonthSalary', label: `Last month salary (${dayOfMonth} day${dayOfMonth === 1 ? '' : 's'})`, amount: lastMonthSalary, auto: true },
+    { key: 'leaveEncashment', label: `Leave encashment (${leaveBalanceDays} day${leaveBalanceDays === 1 ? '' : 's'})`, amount: leaveEncashment, auto: true },
+    { key: 'gratuity', label: `Gratuity${years >= 5 ? ` (${Math.floor(years)} yrs)` : ' (≥5 yrs only)'}`, amount: gratuity, auto: true },
+    { key: 'bonus', label: 'Bonus / incentives', amount: 0, auto: true },
+  ];
+  const deductions = [
+    { key: 'loanRecovery', label: 'Loan / advance recovery', amount: loanRecovery, auto: true },
+    { key: 'noticeRecovery', label: 'Notice-period shortfall recovery', amount: 0, auto: true },
+    { key: 'otherDeduction', label: 'Other deductions', amount: 0, auto: true },
+  ];
+  return totalled({
     currency: s.currency || '₹',
-    monthly, perDay, daysWorkedLastMonth: dayOfMonth, lastMonthSalary,
-    leaveBalanceDays, leaveEncashment, loanRecovery, gross, net,
-  };
+    meta: { monthly, perDay, daysWorkedLastMonth: dayOfMonth, leaveBalanceDays, years: +years.toFixed(1) },
+    earnings, deductions, edited: false,
+  });
+}
+
+// (Re)compute gross / totalDeductions / net from a settlement's line items.
+function totalled(st) {
+  const sum = (arr) => +(arr || []).reduce((a, x) => a + (Number(x.amount) || 0), 0).toFixed(2);
+  st.gross = sum(st.earnings);
+  st.totalDeductions = sum(st.deductions);
+  st.net = +(st.gross - st.totalDeductions).toFixed(2);
+  // keep legacy fields some callers/emails read
+  const find = (arr, k) => (arr.find((x) => x.key === k) || {}).amount || 0;
+  st.leaveBalanceDays = st.meta ? st.meta.leaveBalanceDays : find(st.earnings, 'leaveEncashment');
+  st.leaveEncashment = find(st.earnings, 'leaveEncashment');
+  return st;
+}
+
+// Sanitise an incoming edited settlement: keep only label/amount, recompute totals.
+function sanitizeSettlement(incoming, base) {
+  const clean = (arr) => (Array.isArray(arr) ? arr : [])
+    .map((x) => ({ key: x.key || 'custom', label: String(x.label || 'Item').slice(0, 80), amount: +(Number(x.amount) || 0).toFixed(2), auto: !!x.auto }))
+    .filter((x) => x.label);
+  return totalled({
+    currency: (base && base.currency) || '₹',
+    meta: (base && base.meta) || {},
+    earnings: clean(incoming.earnings),
+    deductions: clean(incoming.deductions),
+    edited: true,
+  });
 }
 
 // Active exit for an employee, if any.
@@ -211,8 +258,24 @@ router.get('/:id', requirePerm('offboarding:manage'), async (req, res) => {
     ).get(req.params.id);
     if (!x) return res.status(404).json({ error: 'Not found.' });
     const tasks = await loadTasks(x.id);
-    const settlement = x.settlement ? JSON.parse(x.settlement) : await settlementFor(x.employee_id, x.last_working_day);
+    // Force a fresh auto-calc with ?recompute=1, else return the saved (edited) one.
+    let settlement;
+    if (x.settlement && req.query.recompute !== '1') settlement = totalled(JSON.parse(x.settlement));
+    else settlement = await settlementFor(x.employee_id, x.last_working_day);
     res.json({ exit: x, tasks, settlement, reasons: REASONS });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save an edited Full & Final settlement (HR can tweak any line / add items).
+router.put('/:id/settlement', requirePerm('offboarding:manage'), async (req, res) => {
+  try {
+    const x = await db.prepare('SELECT * FROM exits WHERE id = ?').get(req.params.id);
+    if (!x) return res.status(404).json({ error: 'Not found.' });
+    if (x.status === 'completed') return res.status(400).json({ error: 'This exit is already completed — its settlement is final.' });
+    const base = await settlementFor(x.employee_id, x.last_working_day); // for currency/meta
+    const clean = sanitizeSettlement(req.body && req.body.settlement ? req.body.settlement : req.body, base);
+    await db.prepare('UPDATE exits SET settlement = ? WHERE id = ?').run(JSON.stringify(clean), x.id);
+    res.json({ ok: true, settlement: clean });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -258,7 +321,8 @@ router.post('/:id/complete', requirePerm('offboarding:manage'), async (req, res)
     if (Number(pending.c) > 0 && !(req.body && req.body.force)) {
       return res.status(400).json({ error: `${pending.c} clearance task(s) are still pending. Finish them or pass force to override.`, pending: Number(pending.c) });
     }
-    const settlement = await settlementFor(x.employee_id, x.last_working_day);
+    // Use HR's edited settlement if one was saved; otherwise compute fresh.
+    const settlement = x.settlement ? totalled(JSON.parse(x.settlement)) : await settlementFor(x.employee_id, x.last_working_day);
     await db.withTransaction(async (tx) => {
       await tx.prepare("UPDATE exits SET status='completed', completed_at=datetime('now'), settlement=? WHERE id=?").run(JSON.stringify(settlement), x.id);
       await tx.prepare("UPDATE employees SET status='inactive' WHERE id=?").run(x.employee_id);
