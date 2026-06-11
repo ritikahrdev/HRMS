@@ -905,8 +905,9 @@ const AdminViews = {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const [{ leaves }, { types }] = await Promise.all([api.get('/leave'), api.get('/leave/types')]);
     const typeName = (code) => (types.find((t) => t.code === code) || {}).name || code;
+    const anyPending = leaves.some((l) => l.status === 'pending');
     c.innerHTML = `
-      <div class="toolbar"><div class="section-title" style="margin:0">Leave Requests</div><div class="spacer"></div><button class="btn secondary" id="grant">Grant Comp-off</button></div>
+      <div class="toolbar"><div class="section-title" style="margin:0">Leave Requests</div><div class="spacer"></div>${anyPending ? '<button class="btn secondary" id="aiSuggest">✨ AI suggestions</button>' : ''}<button class="btn secondary" id="grant">Grant Comp-off</button></div>
       ` + UI.table([
       { key: 'employee_name', label: 'Employee' },
       { key: 'type', label: 'Type', render: (r) => UI.esc(typeName(r.type)) },
@@ -924,6 +925,26 @@ const AdminViews = {
     };
     document.querySelectorAll('[data-ok]').forEach((b) => b.onclick = () => decide(b.dataset.ok, 'approved'));
     document.querySelectorAll('[data-no]').forEach((b) => b.onclick = () => decide(b.dataset.no, 'rejected'));
+    const aiSuggest = document.getElementById('aiSuggest');
+    if (aiSuggest) aiSuggest.onclick = async () => {
+      aiSuggest.disabled = true; aiSuggest.textContent = '✨ Thinking…';
+      try {
+        const r = await api.get('/ai/recommendations?type=leave');
+        if (!r.configured) { UI.toast('Enable AI in Settings → AI Assistant first.', 'error'); }
+        const recs = r.recommendations || {};
+        document.querySelectorAll('[data-ok]').forEach((b) => {
+          const rec = recs[b.dataset.ok];
+          if (!rec) return;
+          const ok = rec.suggestion === 'approve';
+          const chip = document.createElement('div');
+          chip.style.cssText = 'font-size:11px;margin-bottom:4px;color:' + (ok ? '#16a34a' : '#dc2626');
+          chip.innerHTML = `✨ ${ok ? 'Suggest approve' : 'Suggest reject'}: <span style="color:#6b7280">${UI.esc(rec.reason || '')}</span>`;
+          b.parentElement.insertBefore(chip, b);
+        });
+        UI.toast('AI suggestions added — you decide. 💜', 'success');
+      } catch (e) { UI.toast(e.message, 'error'); }
+      aiSuggest.disabled = false; aiSuggest.textContent = '✨ AI suggestions';
+    };
     document.getElementById('grant').onclick = async () => {
       let list = [];
       try { list = (await api.get('/employees')).employees; } catch (e) {}
@@ -1567,6 +1588,20 @@ const AdminViews = {
         <div class="muted" id="autoStatus" style="font-size:12px;margin-top:8px"></div>
       </div>
       <div class="card mt" style="max-width:760px">
+        <div class="section-title">🤖 AI Assistant</div>
+        <p class="muted" style="font-size:12px">Turn on the AI copilot — it answers questions from your HRMS data, drafts announcements & job posts, suggests approve/reject on pending requests, and screens candidates. Paste your own <b>Claude API key</b> from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (you only pay Anthropic for what you use — fractions of a cent per request).</p>
+        <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="aiEnabled" ${(s.ai || {}).enabled !== false ? 'checked' : ''}/> Enable AI features</label></div>
+        <div class="form-grid">
+          <div class="field full"><label>Claude API Key</label><input id="aiKey" type="password" value="${UI.esc((s.ai || {}).apiKey || '')}" placeholder="sk-ant-..." autocomplete="off" /><span class="muted" style="font-size:11px">Stored privately for your company. Used only to call Claude.</span></div>
+          <div class="field full"><label>Model</label><select id="aiModel" style="width:100%">
+            ${[['claude-haiku-4-5', 'Claude Haiku 4.5 — fastest & cheapest (recommended)'], ['claude-sonnet-4-6', 'Claude Sonnet 4.6 — balanced'], ['claude-opus-4-8', 'Claude Opus 4.8 — most capable (priciest)']]
+              .map(([v, l]) => `<option value="${v}" ${((s.ai || {}).model || 'claude-haiku-4-5') === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select></div>
+        </div>
+        <button class="btn sm secondary" id="aiTest" type="button">✨ Test the AI</button>
+        <span class="muted" id="aiTestOut" style="font-size:12px;margin-left:8px"></span>
+      </div>
+      <div class="card mt" style="max-width:760px">
         <div class="section-title">Mandatory Documents</div>
         <p class="muted" style="font-size:12px">One document name per line. These show as a required checklist (✓ uploaded / Missing) on every employee's Documents.</p>
         <textarea id="requiredDocs" rows="8">${(s.requiredDocs || []).join('\n')}</textarea>
@@ -1782,6 +1817,11 @@ const AdminViews = {
           radius: Number(val('geoRadius')) || 200,
         },
         birthdayEmails: document.getElementById('birthdayEmails').checked,
+        ai: {
+          enabled: document.getElementById('aiEnabled').checked,
+          apiKey: val('aiKey').trim(),
+          model: val('aiModel'),
+        },
         automation: (() => {
           const on = new Set(Array.from(document.querySelectorAll('.auto-job:checked')).map((x) => x.value));
           return {
@@ -1842,6 +1882,17 @@ const AdminViews = {
       else autoStatus.textContent = 'Has not run yet — it runs automatically on the first activity each day.';
     };
     if (autoStatus) api.get('/automation/status').then((r) => showAutoStatus(r.state)).catch(() => {});
+    const aiTest = document.getElementById('aiTest');
+    if (aiTest) aiTest.onclick = async () => {
+      const out = document.getElementById('aiTestOut');
+      out.textContent = 'Save settings first if you just pasted the key…';
+      aiTest.disabled = true;
+      try {
+        const r = await api.post('/ai/chat', { question: 'In one short sentence, confirm you are connected and ready to help with HR.' });
+        out.innerHTML = '✅ ' + UI.esc(r.answer || 'Connected.');
+      } catch (e) { out.innerHTML = '❌ ' + UI.esc(e.message); }
+      aiTest.disabled = false;
+    };
     const autoRun = document.getElementById('autoRunNow');
     if (autoRun) autoRun.onclick = async () => {
       autoRun.disabled = true; autoRun.textContent = '⏳ Running…';
@@ -1983,6 +2034,10 @@ const AdminViews = {
           bodyHtml: `
             <div class="field"><label>Title</label><input id="title" /></div>
             <div class="field"><label>Message</label><textarea id="body" rows="4"></textarea></div>
+            <div style="display:flex;gap:6px;align-items:center;margin:-4px 0 4px">
+              <input id="aiBrief" placeholder="Or describe it and let AI draft… e.g. 'office closed Friday for Diwali'" style="flex:1;font-size:12px" />
+              <button class="btn sm secondary" id="aiDraft" type="button">✨ Draft</button>
+            </div>
             <label class="checkbox-row"><input type="checkbox" id="pinned" /> Pin to top</label>
             <div style="background:#fef3c7;border-left:4px solid #d97706;padding:10px;margin-top:12px;border-radius:4px;font-size:13px;color:#78350f">
               <strong>📢 Auto-notify:</strong> This announcement will be posted to your Slack group and emailed to all active employees.
@@ -1990,6 +2045,19 @@ const AdminViews = {
           footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="save">Post</button>`,
         });
         m.root.querySelector('[data-close-btn]').onclick = m.close;
+        m.root.querySelector('#aiDraft').onclick = async () => {
+          const brief = m.root.querySelector('#aiBrief').value.trim();
+          if (!brief) return UI.toast('Type a quick brief for the AI first.', 'error');
+          const btn = m.root.querySelector('#aiDraft'); btn.disabled = true; btn.textContent = '✨ Drafting…';
+          try {
+            const r = await api.post('/ai/draft', { kind: 'announcement', brief });
+            const lines = r.text.split('\n').filter(Boolean);
+            if (!m.root.querySelector('#title').value && lines.length > 1) { m.root.querySelector('#title').value = lines[0].replace(/^#+\s*/, '').slice(0, 80); m.root.querySelector('#body').value = lines.slice(1).join('\n').trim(); }
+            else m.root.querySelector('#body').value = r.text;
+            UI.toast('Draft ready — review and edit before posting.', 'success');
+          } catch (e) { UI.toast(e.message, 'error'); }
+          btn.disabled = false; btn.textContent = '✨ Draft';
+        };
         m.root.querySelector('#save').onclick = async () => {
           try { await api.post('/announcements', { title: m.root.querySelector('#title').value, body: m.root.querySelector('#body').value, pinned: m.root.querySelector('#pinned').checked }); m.close(); UI.toast('Posted.', 'success'); this.announcements(c); }
           catch (e) { UI.toast(e.message, 'error'); }
@@ -3436,6 +3504,7 @@ const AdminViews = {
           <div class="btn-row mt" style="gap:4px">
             <select class="kmove" data-id="${a.id}" style="font-size:11px;padding:3px 6px;width:auto">${stageOpts(a.stage)}</select>
             ${a.resume_file ? `<a class="btn sm secondary" href="/api/recruitment/applicants/${a.id}/resume" target="_blank">CV</a>` : ''}
+            <button class="btn sm secondary" data-screen="${a.id}" data-sname="${UI.esc(a.name)}">✨ Screen</button>
             <button class="btn sm secondary" data-iv="${a.id}" data-name="${UI.esc(a.name)}" data-email="${UI.esc(a.email || '')}">Interview</button>
             <button class="btn sm green" data-hire="${a.id}">Hire</button>
           </div>
@@ -3463,6 +3532,26 @@ const AdminViews = {
     c.querySelectorAll('.kmove').forEach((s) => s.onchange = async () => {
       try { await api.put('/recruitment/applicants/' + s.dataset.id, { stage: s.value }); this.jobBoard(c, jobId); }
       catch (e) { UI.toast(e.message, 'error'); }
+    });
+    c.querySelectorAll('[data-screen]').forEach((b) => b.onclick = async () => {
+      const m = UI.modal({ title: '✨ AI Screening — ' + b.dataset.sname, bodyHtml: '<div class="muted">Screening against the job…</div>', footHtml: '<button class="btn secondary" data-close-btn>Close</button>' });
+      m.root.querySelector('[data-close-btn]').onclick = m.close;
+      try {
+        const r = await api.post('/ai/screen/' + b.dataset.screen, {});
+        const sc = r.screening || {};
+        const recColor = sc.recommendation === 'strong' ? '#16a34a' : sc.recommendation === 'weak' ? '#dc2626' : '#d97706';
+        m.root.querySelector('.body').innerHTML = `
+          <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">
+            <div style="font-size:34px;font-weight:800;color:${recColor}">${sc.score != null ? sc.score : '—'}<span style="font-size:14px;color:#9ca3af">/100</span></div>
+            <div><span class="tag" style="background:${recColor};color:#fff">${UI.esc(sc.recommendation || 'n/a')} fit</span></div>
+          </div>
+          <p style="font-size:14px">${UI.esc(sc.summary || '')}</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px">
+            <div><b style="color:#16a34a;font-size:13px">Strengths</b><ul style="font-size:13px;margin:6px 0 0;padding-left:18px">${(sc.strengths || []).map((x) => '<li>' + UI.esc(x) + '</li>').join('') || '<li class="muted">—</li>'}</ul></div>
+            <div><b style="color:#dc2626;font-size:13px">Concerns</b><ul style="font-size:13px;margin:6px 0 0;padding-left:18px">${(sc.concerns || []).map((x) => '<li>' + UI.esc(x) + '</li>').join('') || '<li class="muted">—</li>'}</ul></div>
+          </div>
+          <p class="muted" style="font-size:11px;margin-top:12px">AI guidance only — make your own hiring decision. Based on the details on file.</p>`;
+      } catch (e) { m.root.querySelector('.body').innerHTML = '<div style="color:#dc2626">' + UI.esc(e.message) + '</div>'; }
     });
     c.querySelectorAll('[data-hire]').forEach((b) => b.onclick = async () => {
       if (!confirm('Hire this candidate? This creates an employee + onboarding checklist.')) return;

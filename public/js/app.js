@@ -180,6 +180,15 @@ const App = {
           </div>
           <div class="content" id="view"></div>
         </div>
+      </div>
+      <div id="aiFab" title="Ask the AI assistant" style="position:fixed;right:22px;bottom:22px;z-index:60;width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(99,102,241,.5)">✨</div>
+      <div id="aiPanel" style="position:fixed;right:22px;bottom:90px;z-index:60;width:380px;max-width:92vw;height:520px;max-height:72vh;background:#fff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden">
+        <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:12px 16px;font-weight:700;display:flex;align-items:center">🤖 AI Assistant<span id="aiClose" style="margin-left:auto;cursor:pointer;font-weight:400;font-size:18px">✕</span></div>
+        <div id="aiMsgs" style="flex:1;overflow-y:auto;padding:14px;background:#f9fafb;font-size:14px;line-height:1.5"></div>
+        <div style="padding:10px;border-top:1px solid #eef1f6;display:flex;gap:8px;align-items:center">
+          <input id="aiInput" placeholder="Ask anything…" style="flex:1" autocomplete="off" />
+          <button class="btn sm" id="aiSend">Send</button>
+        </div>
       </div>`;
     // Sidebar logout
     const doLogout = async () => { await api.post('/auth/logout'); location.hash = '#/'; location.reload(); };
@@ -222,6 +231,76 @@ const App = {
     if (!location.hash) location.hash = '#/';
     this.route();
     this.initNotifications();
+    this.initAiAssistant();
+  },
+
+  // ---- AI Assistant (floating copilot) ----
+  initAiAssistant() {
+    const fab = document.getElementById('aiFab');
+    const panel = document.getElementById('aiPanel');
+    const msgs = document.getElementById('aiMsgs');
+    const input = document.getElementById('aiInput');
+    const send = document.getElementById('aiSend');
+    if (!fab) return;
+    this._aiHistory = [];
+    const bubble = (who, text, pending) => {
+      const mine = who === 'me';
+      const html = `<div style="display:flex;margin:8px 0;${mine ? 'justify-content:flex-end' : ''}">
+        <div style="max-width:82%;padding:9px 12px;border-radius:12px;${mine ? 'background:#6366f1;color:#fff' : 'background:#fff;border:1px solid #e9ecf3;color:#1f2937'}${pending ? ';opacity:.6' : ''}">${mine ? UI.esc(text) : text}</div></div>`;
+      msgs.insertAdjacentHTML('beforeend', html);
+      msgs.scrollTop = msgs.scrollHeight;
+    };
+    // light markdown: **bold**, bullet lines, newlines
+    const fmt = (t) => UI.esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^[-•]\s?/gm, '• ').replace(/\n/g, '<br/>');
+
+    const greet = async () => {
+      msgs.innerHTML = '';
+      let st; try { st = await api.get('/ai/status'); } catch (e) { st = { configured: false }; }
+      if (!st.configured) {
+        bubble('ai', App.has('settings:manage')
+          ? 'Hi! I\'m your AI assistant. To switch me on, add a Claude API key in <b>Settings → AI Assistant</b>.'
+          : 'Hi! The AI assistant isn\'t set up yet — please ask your HR admin to enable it in Settings.');
+        return;
+      }
+      bubble('ai', 'Hi! Ask me anything about your HR — leave balance, who\'s on leave, policies, and more. 💜');
+      const chips = App.has('reports:view')
+        ? ['Who is on leave today?', 'How many active employees do we have?', 'How many leave approvals are pending?']
+        : ['How much leave do I have left?', 'What are our working hours?', 'When is the next holiday?'];
+      const chipHtml = chips.map((c) => `<button class="chip-q" style="margin:3px;padding:5px 10px;border:1px solid #dfe3ee;border-radius:14px;background:#fff;cursor:pointer;font-size:12px">${UI.esc(c)}</button>`).join('');
+      msgs.insertAdjacentHTML('beforeend', `<div style="margin-top:6px">${chipHtml}</div>`);
+      msgs.querySelectorAll('.chip-q').forEach((b) => b.onclick = () => { input.value = b.textContent; ask(); });
+    };
+
+    const ask = async () => {
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = '';
+      bubble('me', q);
+      this._aiHistory.push({ role: 'user', content: q });
+      bubble('ai', '<span class="muted">…thinking</span>', true);
+      const placeholder = msgs.lastElementChild;
+      try {
+        const r = await api.post('/ai/chat', { messages: this._aiHistory.slice(0, -1), question: q });
+        placeholder.remove();
+        bubble('ai', fmt(r.answer || '(no answer)'));
+        this._aiHistory.push({ role: 'assistant', content: r.answer || '' });
+      } catch (e) {
+        placeholder.remove();
+        bubble('ai', '<span style="color:#dc2626">' + UI.esc(e.message) + '</span>');
+      }
+    };
+
+    let opened = false;
+    fab.onclick = () => {
+      const show = panel.style.display === 'none';
+      panel.style.display = show ? 'flex' : 'none';
+      fab.textContent = show ? '✕' : '✨';
+      if (show && !opened) { opened = true; greet(); }
+      if (show) setTimeout(() => input.focus(), 50);
+    };
+    document.getElementById('aiClose').onclick = () => { panel.style.display = 'none'; fab.textContent = '✨'; };
+    send.onclick = ask;
+    input.onkeydown = (e) => { if (e.key === 'Enter') ask(); };
   },
 
   // ---- Notifications (bell) ----

@@ -111,6 +111,7 @@ app.use('/api/offboarding', require('./routes/offboarding'));
 app.use('/api/timesheets', require('./routes/timesheets'));
 app.use('/api/birthdays', require('./routes/birthdays'));
 app.use('/api/automation', require('./routes/automation'));
+app.use('/api/ai', require('./routes/ai'));
 
 // Public pre-boarding portal page (no login). A candidate opens this with a
 // private token to fill their joining form & upload documents before Day 1.
