@@ -2,11 +2,45 @@ const AdminViews = {
   async dashboard(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const o = await api.get('/reports/overview');
+    const dateRange = (r) => UI.date(r.from_date) + (r.to_date && r.to_date !== r.from_date ? ' → ' + UI.date(r.to_date) : '') + (r.half_day ? ' (half)' : '');
+    const reasonTxt = (t) => t ? UI.esc(t) : '<span style="color:#c7ccd8">no reason given</span>';
+
+    const onLeaveRows = (o.onLeaveToday || []).map((r) => `
+      <div style="padding:8px 0;border-bottom:1px dashed #eef1f6">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <b>${UI.esc(r.name)}</b>
+          <span class="tag" style="font-size:10px">${UI.esc(r.type)}</span>
+          <span class="muted" style="font-size:12px">📅 ${dateRange(r)} · ${r.days} day${r.days > 1 ? 's' : ''}</span>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:2px">💬 ${reasonTxt(r.reason)}</div>
+      </div>`).join('');
+
+    const pendingRows = (o.pendingLeaveDetails || []).map((r) => `
+      <div style="padding:8px 0;border-bottom:1px dashed #eef1f6">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <b>${UI.esc(r.name)}</b>
+          <span class="tag" style="font-size:10px">${UI.esc(r.type)}</span>
+          <span class="muted" style="font-size:12px">📅 ${dateRange(r)} · ${r.days} day${r.days > 1 ? 's' : ''}</span>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:2px">💬 ${reasonTxt(r.reason)} <span style="color:#c7ccd8">· applied ${UI.date(r.applied_at)}</span></div>
+      </div>`).join('');
+
+    const corrRows = (o.pendingCorrections || []).map((r) => `
+      <div style="padding:8px 0;border-bottom:1px dashed #eef1f6">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <b>${UI.esc(r.name)}</b>
+          <span class="tag pending" style="font-size:10px">${UI.esc(r.requested_status || '')}</span>
+          <span class="muted" style="font-size:12px">📅 ${UI.date(r.date)}</span>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:2px">💬 ${reasonTxt(r.reason)}</div>
+      </div>`).join('');
+
     c.innerHTML = `
       <div class="cards">
-        <div class="card stat"><div class="stat-ico">👥</div><div class="label">Active Employees</div><div class="value">${o.totalEmployees}</div></div>
-        <div class="card stat"><div class="stat-ico">✅</div><div class="label">Present Today</div><div class="value green">${o.presentToday}</div></div>
-        <div class="card stat"><div class="stat-ico">🚫</div><div class="label">Absent Today</div><div class="value red">${o.absentToday}</div></div>
+        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/employees'"><div class="stat-ico">👥</div><div class="label">Active Employees</div><div class="value">${o.totalEmployees}</div></div>
+        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/attendance'"><div class="stat-ico">✅</div><div class="label">Present Today</div><div class="value green">${o.presentToday}</div></div>
+        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/attendance'"><div class="stat-ico">🚫</div><div class="label">Absent Today</div><div class="value red">${o.absentToday}</div></div>
+        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/leave-approvals'"><div class="stat-ico">⏳</div><div class="label">Pending Leave Approvals</div><div class="value amber">${o.pendingLeaves || 0}</div></div>
       </div>
       <div class="section-title mt">Quick Actions</div>
       <div class="btn-row">
@@ -14,6 +48,29 @@ const AdminViews = {
         <button class="btn secondary" onclick="location.hash='#/import'">Import from Excel</button>
         <button class="btn secondary" onclick="location.hash='#/payroll'">Run Payroll</button>
         <button class="btn secondary" onclick="location.hash='#/attendance'">View Attendance</button>
+      </div>
+      <div class="cards mt" style="align-items:flex-start">
+        <div class="card" style="flex:1;min-width:300px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="font-weight:650">🌴 On Leave Today <span class="muted" style="font-size:12px">(${(o.onLeaveToday || []).length})</span></div>
+            <button class="btn sm secondary" onclick="location.hash='#/leave-calendar'">Calendar</button>
+          </div>
+          ${onLeaveRows || '<div class="muted" style="font-size:13px;padding:10px 0">Nobody is on leave today. 🎉</div>'}
+        </div>
+        <div class="card" style="flex:1;min-width:300px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="font-weight:650">⏳ Pending Leave Requests <span class="muted" style="font-size:12px">(${o.pendingLeaves || 0})</span></div>
+            <button class="btn sm" onclick="location.hash='#/leave-approvals'">Review</button>
+          </div>
+          ${pendingRows || '<div class="muted" style="font-size:13px;padding:10px 0">Nothing waiting — all caught up. ✅</div>'}
+        </div>
+        ${corrRows ? `<div class="card" style="flex:1;min-width:300px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="font-weight:650">✏️ Attendance Requests</div>
+            <button class="btn sm" onclick="location.hash='#/corrections'">Review</button>
+          </div>
+          ${corrRows}
+        </div>` : ''}
       </div>
       <div id="celebrations"></div>`;
     AdminViews.celebrationsCard(document.getElementById('celebrations'));

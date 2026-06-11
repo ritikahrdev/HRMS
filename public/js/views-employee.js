@@ -17,12 +17,14 @@ const EmployeeViews = {
 
   async dashboard(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
-    const [todayRes, balanceRes, { payslips }, moodData] = await Promise.all([
+    const [todayRes, balanceRes, { payslips }, moodData, myLeaveRes] = await Promise.all([
       api.get('/attendance/today'),
       api.get('/leave/balance'),
       api.get('/payroll/my'),
       api.get('/mood/my').catch(() => ({ today: null })),
+      api.get('/leave/my').catch(() => ({ leaves: [] })),
     ]);
+    const myLeaves = (myLeaveRes.leaves || []).slice(0, 4);
     const a = todayRes.attendance;
     const winState = todayRes.window || { open: true, cutoff: '' };
     const checkedIn = a && a.check_in;
@@ -49,16 +51,35 @@ const EmployeeViews = {
         </div>
         ${balRows}
       </div>
-      <div class="section-title mt">Recent Payslips</div>
-      ${UI.table(
-        [
-          { key: 'month', label: 'Month' },
-          { key: 'net_salary', label: 'Net Salary', render: (r) => UI.money(r.net_salary) },
-          { key: 'a', label: '', render: (r) => `<a href="/api/payroll/${r.id}/pdf" target="_blank">Download</a>` },
-        ],
-        payslips.slice(0, 3),
-        'No payslips yet.'
-      )}
+      <div class="cards mt" style="align-items:flex-start">
+        <div class="card" style="flex:1;min-width:300px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="font-weight:650">🌴 My Leave Requests</div>
+            <button class="btn sm secondary" onclick="location.hash='#/my-leave'">View all / Apply</button>
+          </div>
+          ${myLeaves.length ? myLeaves.map((r) => `
+            <div style="padding:8px 0;border-bottom:1px dashed #eef1f6">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <span class="tag" style="font-size:10px">${UI.esc(r.type)}</span>
+                <span style="font-size:13px">📅 ${UI.date(r.from_date)}${r.to_date !== r.from_date ? ' → ' + UI.date(r.to_date) : ''}${r.half_day ? ' (half)' : ''} · ${r.days} day${r.days > 1 ? 's' : ''}</span>
+                ${UI.tag(r.status)}
+              </div>
+              <div class="muted" style="font-size:12px;margin-top:2px">💬 ${r.reason ? UI.esc(r.reason) : '<span style="color:#c7ccd8">no reason given</span>'}${r.comment ? ' · <b>Approver:</b> ' + UI.esc(r.comment) : ''}</div>
+            </div>`).join('') : '<div class="muted" style="font-size:13px;padding:10px 0">No leave requests yet.</div>'}
+        </div>
+        <div class="card" style="flex:1;min-width:300px">
+          <div class="section-title" style="margin-bottom:6px">Recent Payslips</div>
+          ${UI.table(
+            [
+              { key: 'month', label: 'Month' },
+              { key: 'net_salary', label: 'Net Salary', render: (r) => UI.money(r.net_salary) },
+              { key: 'a', label: '', render: (r) => `<a href="/api/payroll/${r.id}/pdf" target="_blank">Download</a>` },
+            ],
+            payslips.slice(0, 3),
+            'No payslips yet.'
+          )}
+        </div>
+      </div>
       <div id="emp-celebrations"></div>
     `;
     AdminViews.celebrationsCard(document.getElementById('emp-celebrations'));

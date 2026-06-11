@@ -4,7 +4,7 @@ const { requirePerm } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Dashboard headline numbers for admin.
+// Dashboard headline numbers + detail panels for admin.
 router.get('/overview', requirePerm('reports:view'), async (req, res) => {
   try {
     const totalEmployees = (await db.prepare("SELECT COUNT(*) c FROM employees WHERE status='active'").get()).c;
@@ -16,12 +16,37 @@ router.get('/overview', requirePerm('reports:view'), async (req, res) => {
       "SELECT COUNT(*) c FROM attendance WHERE date = ? AND (check_in IS NOT NULL OR status IN ('present','half'))"
     ).get(today)).c;
 
+    // Detail: who is on approved leave today — with dates + reason.
+    const onLeaveToday = await db.prepare(
+      `SELECT e.name, e.department, lr.type, lr.from_date, lr.to_date, lr.days, lr.half_day, lr.reason
+       FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id
+       WHERE lr.status='approved' AND lr.from_date <= ? AND lr.to_date >= ?
+       ORDER BY e.name`
+    ).all(today, today);
+
+    // Detail: pending leave requests — with dates + reason (for quick triage).
+    const pendingLeaveDetails = await db.prepare(
+      `SELECT lr.id, e.name, e.department, lr.type, lr.from_date, lr.to_date, lr.days, lr.half_day, lr.reason, lr.applied_at
+       FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id
+       WHERE lr.status='pending' ORDER BY lr.applied_at DESC LIMIT 8`
+    ).all();
+
+    // Detail: pending attendance correction requests — with date + reason.
+    const pendingCorrections = await db.prepare(
+      `SELECT c.id, e.name, c.date, c.type, c.requested_status, c.reason, c.applied_at
+       FROM attendance_corrections c JOIN employees e ON e.id = c.employee_id
+       WHERE c.status='pending' ORDER BY c.applied_at DESC LIMIT 8`
+    ).all();
+
     res.json({
       totalEmployees,
       presentToday,
       absentToday: Math.max(0, totalEmployees - presentToday),
       pendingLeaves,
       pendingReimb,
+      onLeaveToday,
+      pendingLeaveDetails,
+      pendingCorrections,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
