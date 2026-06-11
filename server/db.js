@@ -390,7 +390,93 @@ CREATE TABLE IF NOT EXISTS inventory (
   created_at TEXT NOT NULL DEFAULT ${TS},
   updated_at TEXT NOT NULL DEFAULT ${TS}
 );
+
+-- Leave accrual & carry-forward ledger. Each row is a +/- movement on an
+-- employee's balance for a leave type. period is 'YYYY-MM' for monthly accrual
+-- or 'YYYY' for carry-forward / opening; balance for a year sums substr(period,1,4).
+CREATE TABLE IF NOT EXISTS leave_ledger (
+  id SERIAL PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  amount REAL NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'accrual',
+  period TEXT,
+  note TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
+CREATE INDEX IF NOT EXISTS leave_ledger_emp ON leave_ledger(employee_id, type);
+CREATE UNIQUE INDEX IF NOT EXISTS leave_ledger_uniq ON leave_ledger(employee_id, type, kind, period);
+
+-- Offboarding / exit management.
+CREATE TABLE IF NOT EXISTS exits (
+  id SERIAL PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  reason TEXT,
+  reason_detail TEXT,
+  resignation_date TEXT,
+  notice_days INTEGER NOT NULL DEFAULT 30,
+  last_working_day TEXT,
+  status TEXT NOT NULL DEFAULT 'initiated',
+  initiated_by TEXT,
+  rehire_eligible INTEGER DEFAULT 1,
+  exit_notes TEXT,
+  settlement TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT ${TS},
+  completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS exit_tasks (
+  id SERIAL PRIMARY KEY,
+  exit_id INTEGER NOT NULL REFERENCES exits(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  owner TEXT,
+  done INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL DEFAULT 0,
+  done_at TEXT, done_by TEXT
+);
+
+-- Project timesheets.
+CREATE TABLE IF NOT EXISTS projects (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT,
+  client TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  billable INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
+
+CREATE TABLE IF NOT EXISTS timesheet_entries (
+  id SERIAL PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  date TEXT NOT NULL,
+  hours REAL NOT NULL DEFAULT 0,
+  task TEXT,
+  billable INTEGER NOT NULL DEFAULT 1,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  approver_id INTEGER REFERENCES users(id),
+  decided_at TEXT,
+  comment TEXT,
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
+CREATE INDEX IF NOT EXISTS timesheet_emp_date ON timesheet_entries(employee_id, date);
 `;
+
+// Columns added to pre-existing tables after their first release. Postgres
+// supports ADD COLUMN IF NOT EXISTS, so these are safe to run on every startup.
+const COLUMN_MIGRATIONS = [
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS in_lat REAL",
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS in_lng REAL",
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS out_lat REAL",
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS out_lng REAL",
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS geo_accuracy REAL",
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS in_geofenced INTEGER",
+];
 
 const INVENTORY_SEED = [
   ['Laptop (14" Business)', 'electronics', 5, 5, 'good', 55000, 'Standard dev laptops'],
@@ -473,7 +559,14 @@ const defaultSettings = {
   modules: {
     directory: true, notices: true, holidays: true, recognition: true, performance: true,
     surveys: true, helpdesk: true, assets: true, loans: true, reimbursement: true, recruitment: true,
+    offboarding: true, timesheets: true,
   },
+  // Monthly leave accrual + year-end carry-forward. When enabled for a type,
+  // that type's "allowed" balance comes from the accrual ledger instead of the
+  // flat annual quota. rules keyed by leave-type code.
+  leaveAccrual: { enabled: false, rules: {} },
+  // Optional office geofence for attendance marking (does not block — only flags).
+  geofence: { enabled: false, lat: null, lng: null, radius: 200 },
   slack: {
     enabled: false, botToken: '', channelId: '', signingSecret: '',
     presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
@@ -497,6 +590,9 @@ let initialized = false;
 async function init() {
   if (initialized) return;
   await exec(SCHEMA);
+
+  // Add any columns introduced after the table's first release.
+  for (const stmt of COLUMN_MIGRATIONS) await exec(stmt);
 
   // Normalise any legacy role values (harmless on a fresh DB).
   await exec("UPDATE users SET role='SUPER_ADMIN' WHERE role='admin'");
@@ -522,6 +618,12 @@ async function init() {
     if (saved.departmentAccounts && typeof saved.departmentAccounts === 'object') {
       for (const dept of Object.keys(defaultSettings.departmentAccounts)) {
         if (!(dept in saved.departmentAccounts)) { saved.departmentAccounts[dept] = defaultSettings.departmentAccounts[dept]; changed = true; }
+      }
+    }
+    // Newly-added modules default to on for existing installs.
+    if (saved.modules && typeof saved.modules === 'object') {
+      for (const m of Object.keys(defaultSettings.modules)) {
+        if (!(m in saved.modules)) { saved.modules[m] = defaultSettings.modules[m]; changed = true; }
       }
     }
     if (changed) await prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(saved));

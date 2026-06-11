@@ -11,7 +11,7 @@ const DEFAULT_PERMISSIONS = {
     'employees:read', 'employees:write',
     'attendance:viewAll', 'attendance:correct',
     'leave:approve', 'reports:view', 'settings:manage', 'payroll:view',
-    'recruitment:manage',
+    'recruitment:manage', 'offboarding:manage', 'timesheets:approve',
   ],
   FINANCE_ADMIN: [
     'employees:read', 'payroll:manage', 'payroll:view',
@@ -19,7 +19,7 @@ const DEFAULT_PERMISSIONS = {
   ],
   MANAGER: [
     'team:view', 'attendance:viewTeam', 'attendance:correct',
-    'leave:approve', 'reimbursement:approve',
+    'leave:approve', 'reimbursement:approve', 'timesheets:approve',
   ],
   EMPLOYEE: [],
 };
@@ -39,6 +39,8 @@ const ALL_PERMISSIONS = [
   { key: 'reports:view', label: 'View reports', group: 'Reports' },
   { key: 'settings:manage', label: 'Manage company settings', group: 'Admin' },
   { key: 'recruitment:manage', label: 'Manage recruitment & hiring', group: 'Recruitment' },
+  { key: 'offboarding:manage', label: 'Manage offboarding & exits', group: 'Offboarding' },
+  { key: 'timesheets:approve', label: 'Manage projects & approve timesheets', group: 'Timesheets' },
 ];
 
 const ROLE_LABELS = {

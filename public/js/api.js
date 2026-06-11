@@ -12,6 +12,8 @@ const api = {
   get(url) { return this.request('GET', url); },
   post(url, body) { return this.request('POST', url, body); },
   put(url, body) { return this.request('PUT', url, body); },
+  patch(url, body) { return this.request('PATCH', url, body); },
+  del(url, body) { return this.request('DELETE', url, body); },
 
   // multipart/form-data upload (FormData passed in)
   async upload(url, formData) {

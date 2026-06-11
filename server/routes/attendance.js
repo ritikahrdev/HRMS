@@ -42,6 +42,32 @@ function clockInCutoff() {
   return { cutoff, label, grace, allDay };
 }
 
+// Distance in metres between two lat/lng points (haversine).
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Reads {lat, lng, accuracy} from a request body and returns parsed coords or null.
+function readGeo(body) {
+  if (!body) return null;
+  const lat = Number(body.lat), lng = Number(body.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const accuracy = Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null;
+  return { lat, lng, accuracy };
+}
+
+// Is a coordinate within the configured office geofence? null if no geofence set.
+function geofenceCheck(geo) {
+  const g = getSettings().geofence || {};
+  if (!g.enabled || g.lat == null || g.lng == null || !geo) return null;
+  const dist = distanceMeters(geo.lat, geo.lng, Number(g.lat), Number(g.lng));
+  return dist <= (Number(g.radius) || 200);
+}
+
 // Decides Present / Half / Absent from hours worked against the shift.
 function statusForHours(hours) {
   const s = getSettings();
@@ -101,9 +127,15 @@ router.post('/check-in', requireLogin, async (req, res) => {
       lateMin = Math.max(0, Math.round((new Date(now) - shiftStart) / 60000));
     }
 
-    if (existing) await db.prepare('UPDATE attendance SET check_in = ?, status = ?, late_minutes = ? WHERE id = ?').run(now, 'present', lateMin, existing.id);
-    else await db.prepare('INSERT INTO attendance (employee_id, date, check_in, status, late_minutes) VALUES (?, ?, ?, ?, ?)').run(empId, date, now, 'present', lateMin);
-    res.json({ ok: true, checkIn: now, lateMinutes: lateMin });
+    // Optional GPS location captured by the browser at clock-in.
+    const geo = readGeo(req.body);
+    const inFence = geofenceCheck(geo);
+    const lat = geo ? geo.lat : null, lng = geo ? geo.lng : null, acc = geo ? geo.accuracy : null;
+    const fenceFlag = inFence === null ? null : (inFence ? 1 : 0);
+
+    if (existing) await db.prepare('UPDATE attendance SET check_in = ?, status = ?, late_minutes = ?, in_lat = ?, in_lng = ?, geo_accuracy = ?, in_geofenced = ? WHERE id = ?').run(now, 'present', lateMin, lat, lng, acc, fenceFlag, existing.id);
+    else await db.prepare('INSERT INTO attendance (employee_id, date, check_in, status, late_minutes, in_lat, in_lng, geo_accuracy, in_geofenced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(empId, date, now, 'present', lateMin, lat, lng, acc, fenceFlag);
+    res.json({ ok: true, checkIn: now, lateMinutes: lateMin, geo: geo ? { lat, lng, inFence } : null });
   } catch (err) {
     console.error('Error checking in:', err);
     res.status(500).json({ error: 'Failed to check in' });
@@ -122,7 +154,9 @@ router.post('/check-out', requireLogin, async (req, res) => {
     const status = statusForHours(hours);
     const full = Number(getSettings().fullDayHours || 9);
     const ot = +Math.max(0, hours - full).toFixed(2);
-    await db.prepare('UPDATE attendance SET check_out = ?, work_hours = ?, status = ?, ot_hours = ? WHERE id = ?').run(now, +hours.toFixed(2), status, ot, row.id);
+    const geo = readGeo(req.body);
+    const olat = geo ? geo.lat : null, olng = geo ? geo.lng : null;
+    await db.prepare('UPDATE attendance SET check_out = ?, work_hours = ?, status = ?, ot_hours = ?, out_lat = ?, out_lng = ? WHERE id = ?').run(now, +hours.toFixed(2), status, ot, olat, olng, row.id);
     res.json({ ok: true, checkOut: now, workHours: +hours.toFixed(2), status, otHours: ot });
   } catch (err) {
     console.error('Error checking out:', err);
@@ -188,7 +222,7 @@ router.get('/day', requireLogin, async (req, res) => {
     else if (onLeave.has(e.id)) status = 'leave';
     else if (holiday) status = 'holiday';
     const mood = moodMap[e.id] || null;
-    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, marked: !!(a && a.check_in), mood_score: mood ? mood.score : null, mood_note: mood ? mood.note : null };
+    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, marked: !!(a && a.check_in), mood_score: mood ? mood.score : null, mood_note: mood ? mood.note : null, in_lat: a ? a.in_lat : null, in_lng: a ? a.in_lng : null, in_geofenced: a ? a.in_geofenced : null };
   });
   const summary = { present: 0, half: 0, leave: 0, absent: 0, holiday: 0 };
   for (const l of list) summary[l.status] = (summary[l.status] || 0) + 1;

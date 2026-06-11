@@ -781,6 +781,9 @@ const AdminViews = {
       { key: 'check_in', label: 'Marked At', render: (r) => r.check_in ? '<b>' + UI.time(r.check_in) + '</b>' : '<span style="color:#cbd5e1">—</span>' },
       { key: 'late', label: 'Late By', render: (r) => r.late_minutes > 0 ? '<span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700">⏰ ' + UI.duration(r.late_minutes) + '</span>' : (r.marked ? '<span style="color:#16a34a;font-size:12px">On time</span>' : '<span style="color:#cbd5e1">—</span>') },
       { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) + (r.wfh ? ' <span title="Work from home" style="font-size:12px">🏠</span>' : '') + (r.source === 'slack' ? ' <span title="Marked via Slack" style="font-size:11px;color:#6b7280">💬</span>' : '') },
+      { key: 'location', label: 'Location', render: (r) => (r.in_lat != null && r.in_lng != null)
+        ? `<a href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" rel="noopener" title="Marked from this location">📍 Map</a>${r.in_geofenced === 0 ? ' <span title="Outside office radius" style="font-size:11px;color:#dc2626">⚠ off-site</span>' : (r.in_geofenced === 1 ? ' <span title="At office" style="font-size:11px;color:#16a34a">✓</span>' : '')}`
+        : '<span style="color:#cbd5e1">—</span>' },
       { key: 'mood', label: 'Mood', render: (r) => r.mood_note ? `<span title="${UI.esc(r.mood_note)}">${UI.mood(r.mood_score)}</span>` : UI.mood(r.mood_score) },
       { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-edit="${r.id}">Edit</button> <button class="btn sm red" data-del="${r.id}">Delete</button>` },
     ], list, 'No active employees.');
@@ -1504,8 +1507,42 @@ const AdminViews = {
         <div class="section-title">Modules (turn sections on/off)</div>
         <p class="muted" style="font-size:12px">Switch off sections you don't use — they disappear from everyone's menu. Core HR (Employees, Attendance, Leave, Payroll) is always on.</p>
         <div class="checkbox-row">
-          ${[['directory', 'Directory'], ['notices', 'Notice Board'], ['holidays', 'Holidays'], ['recognition', 'Recognition'], ['performance', 'Performance'], ['surveys', 'Surveys'], ['helpdesk', 'Helpdesk'], ['assets', 'Assets'], ['loans', 'Loans & Advances'], ['reimbursement', 'Reimbursements'], ['recruitment', 'Recruitment']]
+          ${[['directory', 'Directory'], ['notices', 'Notice Board'], ['holidays', 'Holidays'], ['recognition', 'Recognition'], ['performance', 'Performance'], ['surveys', 'Surveys'], ['helpdesk', 'Helpdesk'], ['assets', 'Assets'], ['loans', 'Loans & Advances'], ['reimbursement', 'Reimbursements'], ['recruitment', 'Recruitment'], ['offboarding', 'Offboarding / Exits'], ['timesheets', 'Timesheets']]
             .map(([k, label]) => `<label><input type="checkbox" class="mod" value="${k}" ${(s.modules || {})[k] !== false ? 'checked' : ''}/> ${label}</label>`).join('')}
+        </div>
+      </div>
+      <div class="card mt" style="max-width:760px">
+        <div class="section-title">Leave Accrual & Carry-forward</div>
+        <p class="muted" style="font-size:12px">When on, paid leave is <b>earned monthly</b> instead of given as a flat yearly quota. Set how many days accrue per month and the maximum that can carry into next year.</p>
+        <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="accEnabled" ${(s.leaveAccrual || {}).enabled ? 'checked' : ''}/> Enable monthly accrual</label></div>
+        <table style="width:100%;font-size:13px">
+          <thead><tr><th style="text-align:left">Leave Type</th><th>Days / month</th><th>Carry-forward cap</th></tr></thead>
+          <tbody>
+            ${(s.leaveTypes || []).filter((t) => t.paid !== false && t.code !== 'unpaid' && t.code !== 'comp_off').map((t) => {
+              const r = ((s.leaveAccrual || {}).rules || {})[t.code] || {};
+              return `<tr data-acc-code="${UI.esc(t.code)}">
+                <td>${UI.esc(t.name)}</td>
+                <td style="text-align:center"><input type="number" step="0.5" min="0" class="acc-pm" value="${r.perMonth != null ? r.perMonth : ''}" placeholder="0" style="width:90px" /></td>
+                <td style="text-align:center"><input type="number" step="0.5" min="0" class="acc-cap" value="${r.carryCap != null ? r.carryCap : ''}" placeholder="0" style="width:90px" /></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="btn-row mt">
+          <button class="btn sm secondary" id="runAccrual" type="button">▶ Run accrual for this year</button>
+          <button class="btn sm secondary" id="runCarry" type="button">↪ Carry forward last year</button>
+        </div>
+        <p class="muted" style="font-size:11px;margin-top:6px">Save first, then "Run accrual" tops up every employee for each month of the year (safe to click repeatedly).</p>
+      </div>
+      <div class="card mt" style="max-width:760px">
+        <div class="section-title">Attendance Location (Geofence)</div>
+        <p class="muted" style="font-size:12px">Capture each employee's GPS location when they mark attendance. If you set an office location, marks are flagged as inside/outside the radius (it never blocks marking).</p>
+        <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="geoEnabled" ${(s.geofence || {}).enabled ? 'checked' : ''}/> Enable office geofence check</label></div>
+        <div class="form-grid">
+          <div class="field"><label>Office Latitude</label><input id="geoLat" value="${(s.geofence || {}).lat != null ? UI.esc(String(s.geofence.lat)) : ''}" placeholder="e.g. 28.6139" /></div>
+          <div class="field"><label>Office Longitude</label><input id="geoLng" value="${(s.geofence || {}).lng != null ? UI.esc(String(s.geofence.lng)) : ''}" placeholder="e.g. 77.2090" /></div>
+          <div class="field"><label>Radius (metres)</label><input type="number" id="geoRadius" value="${(s.geofence || {}).radius != null ? s.geofence.radius : 200}" /></div>
+          <div class="field" style="align-self:end"><button class="btn sm secondary" id="geoHere" type="button">📍 Use my current location</button></div>
         </div>
       </div>
       <div class="card mt" style="max-width:760px">
@@ -1688,7 +1725,7 @@ const AdminViews = {
           pt: { enabled: document.getElementById('ptEnabled').checked, amount: Number(val('ptAmount')) },
         },
         modules: (() => {
-          const all = ['directory', 'notices', 'holidays', 'recognition', 'performance', 'surveys', 'helpdesk', 'assets', 'loans', 'reimbursement', 'recruitment'];
+          const all = ['directory', 'notices', 'holidays', 'recognition', 'performance', 'surveys', 'helpdesk', 'assets', 'loans', 'reimbursement', 'recruitment', 'offboarding', 'timesheets'];
           const on = new Set(Array.from(document.querySelectorAll('.mod:checked')).map((x) => x.value));
           const m = {}; all.forEach((k) => { m[k] = on.has(k); }); return m;
         })(),
@@ -1707,11 +1744,51 @@ const AdminViews = {
           validReaction: ((s.slack || {}).validReaction) || 'thumbsup',
           invalidReaction: ((s.slack || {}).invalidReaction) || 'x',
         },
+        leaveAccrual: (() => {
+          const rules = {};
+          document.querySelectorAll('[data-acc-code]').forEach((tr) => {
+            const code = tr.getAttribute('data-acc-code');
+            const pm = Number(tr.querySelector('.acc-pm').value) || 0;
+            const cap = Number(tr.querySelector('.acc-cap').value) || 0;
+            if (pm > 0 || cap > 0) rules[code] = { perMonth: pm, carryCap: cap };
+          });
+          return { enabled: document.getElementById('accEnabled').checked, rules };
+        })(),
+        geofence: {
+          enabled: document.getElementById('geoEnabled').checked,
+          lat: val('geoLat').trim() === '' ? null : Number(val('geoLat')),
+          lng: val('geoLng').trim() === '' ? null : Number(val('geoLng')),
+          radius: Number(val('geoRadius')) || 200,
+        },
       };
       try { await api.put('/settings', payload); UI.currency = payload.currency || UI.currency; UI.toast('Settings saved. Reloading menu…', 'success'); setTimeout(() => location.reload(), 800); }
       catch (e) { UI.toast(e.message, 'error'); }
     };
     function val(id) { return document.getElementById(id).value; }
+
+    // Leave-accrual action buttons.
+    const runAcc = document.getElementById('runAccrual');
+    if (runAcc) runAcc.onclick = async () => {
+      try { const r = await api.post('/leave/accrual/run', {}); UI.toast(`Accrual done — ${r.accrued} new entries through month ${r.upToMonth || ''}.`, 'success'); }
+      catch (e) { UI.toast(e.message, 'error'); }
+    };
+    const runCarry = document.getElementById('runCarry');
+    if (runCarry) runCarry.onclick = async () => {
+      const year = new Date().getFullYear() - 1;
+      if (!confirm(`Carry forward remaining balances from ${year} into ${year + 1} (capped)?`)) return;
+      try { const r = await api.post('/leave/accrual/carry-forward', { year }); UI.toast(`Carried forward for ${r.carried} employee-types.`, 'success'); }
+      catch (e) { UI.toast(e.message, 'error'); }
+    };
+    const geoHere = document.getElementById('geoHere');
+    if (geoHere) geoHere.onclick = () => {
+      if (!navigator.geolocation) return UI.toast('Geolocation not available in this browser.', 'error');
+      geoHere.textContent = '📍 Locating…';
+      navigator.geolocation.getCurrentPosition(
+        (p) => { document.getElementById('geoLat').value = p.coords.latitude.toFixed(6); document.getElementById('geoLng').value = p.coords.longitude.toFixed(6); geoHere.textContent = '📍 Use my current location'; UI.toast('Location filled in. Click Save to keep it.', 'success'); },
+        () => { geoHere.textContent = '📍 Use my current location'; UI.toast('Could not get your location.', 'error'); },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    };
   },
 
   // ---------------- Access Control matrix (Super Admin only) ----------------
@@ -3628,5 +3705,261 @@ const AdminViews = {
       { key: 'purchase_price', label: 'Value', render: r => r.purchase_price ? `₹${r.purchase_price.toLocaleString('en-IN')}` : '<span class="muted">—</span>' },
       { key: 'act', label: '', render: r => `<button class="btn sm secondary" data-inv-edit="${r.id}">Edit</button>` },
     ], items, '');
+  },
+
+  // ==================== OFFBOARDING / EXITS ====================
+  async offboarding(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    const { exits, summary } = await api.get('/offboarding');
+    const stat = (label, val, cls) => `<div class="card stat"><div class="label">${label}</div><div class="value ${cls || ''}">${val}</div></div>`;
+    c.innerHTML = `
+      <div class="cards">
+        ${stat('Resignations Submitted', summary.initiated, 'amber')}
+        ${stat('In Process', summary.in_progress, 'amber')}
+        ${stat('Completed', summary.completed, 'green')}
+        ${stat('Cancelled', summary.cancelled || 0)}
+      </div>
+      <div class="toolbar mt"><div class="section-title" style="margin:0">Employee Exits</div><div class="spacer"></div><button class="btn" id="startExit">+ Start Offboarding</button></div>
+      <div id="exitList"></div>`;
+
+    const statusTag = (s) => UI.tag(s === 'initiated' ? 'submitted' : s === 'in_progress' ? 'in process' : s);
+    document.getElementById('exitList').innerHTML = UI.table([
+      { key: 'employee_name', label: 'Employee', render: (r) => `<b>${UI.esc(r.employee_name)}</b><br/><span class="muted" style="font-size:12px">${UI.esc(r.emp_code || '')} · ${UI.esc(r.department || '-')}</span>` },
+      { key: 'reason', label: 'Reason', render: (r) => UI.esc((r.reason || '').replace(/_/g, ' ')) },
+      { key: 'last_working_day', label: 'Last Working Day', render: (r) => UI.date(r.last_working_day) },
+      { key: 'progress', label: 'Clearance', render: (r) => `${r.tasks_done}/${r.tasks_total}` },
+      { key: 'status', label: 'Status', render: (r) => statusTag(r.status) },
+      { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-exit="${r.id}">Open</button>` },
+    ], exits, 'No exits yet. Click "Start Offboarding" to begin one.');
+
+    document.querySelectorAll('[data-exit]').forEach((b) => b.onclick = () => this.exitDetail(b.dataset.exit, c));
+    document.getElementById('startExit').onclick = async () => {
+      const { employees } = await api.get('/employees');
+      const active = employees.filter((e) => e.status === 'active');
+      const m = UI.modal({
+        title: '🚪 Start Offboarding',
+        bodyHtml: `
+          <div class="field"><label>Employee *</label><select id="ex-emp" style="width:100%"><option value="">— Select —</option>${active.map((e) => `<option value="${e.id}">${UI.esc(e.name)} (${UI.esc(e.emp_code || '')})</option>`).join('')}</select></div>
+          <div class="form-grid">
+            <div class="field"><label>Reason</label><select id="ex-reason" style="width:100%">
+              <option value="resignation">Resignation</option><option value="termination">Termination</option>
+              <option value="retirement">Retirement</option><option value="end_of_contract">End of Contract</option>
+              <option value="absconding">Absconding</option><option value="other">Other</option></select></div>
+            <div class="field"><label>Notice Period (days)</label><input type="number" id="ex-notice" value="30" min="0" style="width:100%" /></div>
+            <div class="field"><label>Resignation / Notice Date</label><input type="date" id="ex-date" value="${new Date().toISOString().slice(0, 10)}" style="width:100%" /></div>
+          </div>
+          <div class="field"><label>Note <span class="muted">(optional)</span></label><textarea id="ex-note" rows="2" style="width:100%"></textarea></div>`,
+        footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="ex-create">Start Offboarding</button>`,
+      });
+      m.root.querySelector('[data-close-btn]').onclick = m.close;
+      m.root.querySelector('#ex-create').onclick = async () => {
+        const employee_id = m.root.querySelector('#ex-emp').value;
+        if (!employee_id) return UI.toast('Please select an employee.', 'error');
+        try {
+          await api.post('/offboarding', {
+            employee_id, reason: m.root.querySelector('#ex-reason').value,
+            notice_days: Number(m.root.querySelector('#ex-notice').value),
+            resignation_date: m.root.querySelector('#ex-date').value,
+            reason_detail: m.root.querySelector('#ex-note').value.trim(),
+          });
+          m.close(); UI.toast('Offboarding started.', 'success'); this.offboarding(c);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    };
+  },
+
+  async exitDetail(id, c) {
+    const { exit: x, tasks, settlement } = await api.get('/offboarding/' + id);
+    const money = (n) => (settlement.currency || '₹') + Number(n || 0).toLocaleString('en-IN');
+    const ownerIcon = { hr: '🧑‍💼', it: '💻', finance: '💰', manager: '👔', employee: '👤' };
+    const tasksHtml = tasks.map((t) => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed #eef1f6;cursor:pointer">
+        <input type="checkbox" data-task="${t.id}" ${t.done ? 'checked' : ''} />
+        <span style="flex:1">${UI.esc(t.title)} <span class="muted" style="font-size:11px">${ownerIcon[t.owner] || ''} ${UI.esc(t.owner || '')}</span></span>
+        ${t.done ? `<span class="muted" style="font-size:11px">✓ ${UI.esc(t.done_by || '')}</span>` : ''}
+      </label>`).join('');
+    const done = tasks.filter((t) => t.done).length;
+    const editable = x.status !== 'completed' && x.status !== 'cancelled';
+    const m = UI.modal({
+      title: `🚪 ${UI.esc(x.employee_name)} — Offboarding`,
+      bodyHtml: `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px">
+          <div>
+            <div class="section-title" style="font-size:14px">Exit Details</div>
+            <table style="font-size:13px">
+              <tr><td class="muted">Code / Dept</td><td>${UI.esc(x.emp_code || '-')} · ${UI.esc(x.department || '-')}</td></tr>
+              <tr><td class="muted">Joined</td><td>${UI.date(x.date_of_joining)}</td></tr>
+              <tr><td class="muted">Reason</td><td>${UI.esc((x.reason || '').replace(/_/g, ' '))}</td></tr>
+              <tr><td class="muted">Resignation date</td><td>${UI.date(x.resignation_date)}</td></tr>
+              <tr><td class="muted">Notice</td><td>${x.notice_days} days</td></tr>
+              <tr><td class="muted">Last working day</td><td><b>${UI.date(x.last_working_day)}</b></td></tr>
+              <tr><td class="muted">Status</td><td>${UI.tag(x.status === 'initiated' ? 'submitted' : x.status === 'in_progress' ? 'in process' : x.status)}</td></tr>
+            </table>
+            ${editable ? `<div class="field mt"><label style="font-size:12px">Adjust last working day</label><input type="date" id="ex-lwd" value="${x.last_working_day || ''}" style="width:100%" /></div>
+              <div class="field"><label style="font-size:12px"><input type="checkbox" id="ex-rehire" ${x.rehire_eligible ? 'checked' : ''}/> Eligible for rehire</label></div>
+              <div class="field"><label style="font-size:12px">Exit notes</label><textarea id="ex-notes" rows="2" style="width:100%">${UI.esc(x.exit_notes || '')}</textarea></div>` : ''}
+          </div>
+          <div>
+            <div class="section-title" style="font-size:14px">Full & Final Settlement <span class="muted" style="font-size:11px">(estimate)</span></div>
+            <table style="font-size:13px">
+              <tr><td class="muted">Last month salary (${settlement.daysWorkedLastMonth}d)</td><td>${money(settlement.lastMonthSalary)}</td></tr>
+              <tr><td class="muted">Leave encashment (${settlement.leaveBalanceDays}d)</td><td>${money(settlement.leaveEncashment)}</td></tr>
+              <tr><td class="muted">Gross</td><td>${money(settlement.gross)}</td></tr>
+              <tr><td class="muted">Less: loan/advance recovery</td><td style="color:#dc2626">- ${money(settlement.loanRecovery)}</td></tr>
+              <tr><td class="muted"><b>Net payable</b></td><td><b>${money(settlement.net)}</b></td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="section-title mt" style="font-size:14px">Clearance Checklist <span class="muted" style="font-size:12px">(${done}/${tasks.length} done)</span></div>
+        <div id="exTasks">${tasksHtml}</div>`,
+      footHtml: editable
+        ? `<button class="btn secondary" id="ex-cancel">Cancel Exit</button><button class="btn secondary" id="ex-save">Save</button><button class="btn green" id="ex-complete">Complete Offboarding</button>`
+        : `<button class="btn secondary" data-close-btn>Close</button>`,
+    });
+    const close = m.root.querySelector('[data-close-btn]'); if (close) close.onclick = m.close;
+    m.root.querySelectorAll('[data-task]').forEach((cb) => cb.onchange = async () => {
+      try { await api.post(`/offboarding/${id}/tasks/${cb.dataset.task}/toggle`); } catch (e) { UI.toast(e.message, 'error'); cb.checked = !cb.checked; }
+    });
+    if (editable) {
+      m.root.querySelector('#ex-save').onclick = async () => {
+        try {
+          await api.patch('/offboarding/' + id, {
+            last_working_day: m.root.querySelector('#ex-lwd').value,
+            rehire_eligible: m.root.querySelector('#ex-rehire').checked,
+            exit_notes: m.root.querySelector('#ex-notes').value,
+          });
+          UI.toast('Saved.', 'success');
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+      m.root.querySelector('#ex-cancel').onclick = async () => {
+        if (!confirm('Cancel this exit? The employee stays active.')) return;
+        try { await api.post(`/offboarding/${id}/cancel`); m.close(); UI.toast('Exit cancelled.', 'success'); this.offboarding(c); } catch (e) { UI.toast(e.message, 'error'); }
+      };
+      m.root.querySelector('#ex-complete').onclick = async () => {
+        const force = done < tasks.length ? confirm(`${tasks.length - done} clearance task(s) are still pending. Complete anyway? This will deactivate the employee.`) : confirm('Complete offboarding? This deactivates the employee and finalises their settlement.');
+        if (!force) return;
+        try {
+          await api.post(`/offboarding/${id}/complete`, { force: true });
+          m.close(); UI.toast('Offboarding completed. Employee deactivated.', 'success'); this.offboarding(c);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    }
+  },
+
+  // ==================== TIMESHEETS (admin) ====================
+  async timesheets(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    let tab = 'approvals';
+    const render = async () => {
+      c.innerHTML = `
+        <div class="toolbar">
+          <button class="btn sm ${tab === 'approvals' ? '' : 'secondary'}" data-tab="approvals">Approvals</button>
+          <button class="btn sm ${tab === 'projects' ? '' : 'secondary'}" data-tab="projects">Projects</button>
+          <button class="btn sm ${tab === 'summary' ? '' : 'secondary'}" data-tab="summary">Summary</button>
+        </div>
+        <div id="tsBody" class="mt"><div class="muted">Loading...</div></div>`;
+      c.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { tab = b.dataset.tab; render(); });
+      const body = document.getElementById('tsBody');
+      if (tab === 'approvals') return this.tsApprovals(body, render);
+      if (tab === 'projects') return this.tsProjects(body, render);
+      return this.tsSummary(body);
+    };
+    await render();
+  },
+
+  async tsApprovals(body, refresh) {
+    const { groups } = await api.get('/timesheets');
+    if (!groups.length) { body.innerHTML = '<div class="empty">No timesheets awaiting approval. 🎉</div>'; return; }
+    body.innerHTML = groups.map((g, gi) => `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div><b>${UI.esc(g.employee_name)}</b> <span class="muted" style="font-size:12px">${UI.esc(g.emp_code || '')} · week of ${UI.date(g.weekStart)}</span></div>
+          <div><span class="muted">Total <b>${g.totalHours}h</b> · Billable <b>${g.billableHours}h</b></span></div>
+        </div>
+        <div style="margin:8px 0">${UI.table([
+          { key: 'date', label: 'Date', render: (r) => UI.date(r.date) },
+          { key: 'project_name', label: 'Project', render: (r) => UI.esc(r.project_name || '—') },
+          { key: 'task', label: 'Task', render: (r) => UI.esc(r.task || '-') },
+          { key: 'hours', label: 'Hours', render: (r) => `<b>${r.hours}</b>` },
+          { key: 'billable', label: 'Billable', render: (r) => r.billable ? '💰' : '—' },
+        ], g.entries, '')}</div>
+        <div class="btn-row"><button class="btn green sm" data-approve="${gi}">✓ Approve Week</button><button class="btn danger sm" data-reject="${gi}">✕ Reject</button></div>
+      </div>`).join('');
+    const decide = async (gi, decision) => {
+      const g = groups[gi];
+      let comment = '';
+      if (decision === 'rejected') { comment = prompt('Reason for rejection (optional):') || ''; }
+      try { await api.post('/timesheets/decision', { ids: g.ids, decision, comment }); UI.toast(`Timesheet ${decision}.`, 'success'); refresh(); }
+      catch (e) { UI.toast(e.message, 'error'); }
+    };
+    body.querySelectorAll('[data-approve]').forEach((b) => b.onclick = () => decide(Number(b.dataset.approve), 'approved'));
+    body.querySelectorAll('[data-reject]').forEach((b) => b.onclick = () => decide(Number(b.dataset.reject), 'rejected'));
+  },
+
+  async tsProjects(body, refresh) {
+    const { projects } = await api.get('/timesheets/projects?all=1');
+    body.innerHTML = `
+      <div class="toolbar"><div class="section-title" style="margin:0">Projects</div><div class="spacer"></div><button class="btn sm" id="addProj">+ Add Project</button></div>
+      ${UI.table([
+        { key: 'name', label: 'Project', render: (r) => `<b>${UI.esc(r.name)}</b>${r.code ? ` <span class="muted">(${UI.esc(r.code)})</span>` : ''}` },
+        { key: 'client', label: 'Client', render: (r) => UI.esc(r.client || '-') },
+        { key: 'billable', label: 'Billable', render: (r) => r.billable ? '💰 Yes' : 'No' },
+        { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
+        { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-pedit="${r.id}">Edit</button> <button class="btn sm danger" data-pdel="${r.id}">${'Delete'}</button>` },
+      ], projects, 'No projects yet.')}`;
+    const projModal = (p) => {
+      const m = UI.modal({
+        title: p ? '✏️ Edit Project' : '➕ Add Project',
+        bodyHtml: `
+          <div class="field"><label>Name *</label><input id="p-name" value="${p ? UI.esc(p.name) : ''}" style="width:100%" /></div>
+          <div class="form-grid">
+            <div class="field"><label>Code</label><input id="p-code" value="${p ? UI.esc(p.code || '') : ''}" style="width:100%" /></div>
+            <div class="field"><label>Client</label><input id="p-client" value="${p ? UI.esc(p.client || '') : ''}" style="width:100%" /></div>
+          </div>
+          <div class="field"><label><input type="checkbox" id="p-bill" ${!p || p.billable ? 'checked' : ''}/> Billable project</label></div>
+          ${p ? `<div class="field"><label>Status</label><select id="p-status" style="width:100%"><option value="active" ${p.status === 'active' ? 'selected' : ''}>Active</option><option value="archived" ${p.status === 'archived' ? 'selected' : ''}>Archived</option></select></div>` : ''}`,
+        footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="p-save">Save</button>`,
+      });
+      m.root.querySelector('[data-close-btn]').onclick = m.close;
+      m.root.querySelector('#p-save').onclick = async () => {
+        const payload = { name: m.root.querySelector('#p-name').value.trim(), code: m.root.querySelector('#p-code').value.trim(), client: m.root.querySelector('#p-client').value.trim(), billable: m.root.querySelector('#p-bill').checked };
+        if (p) payload.status = m.root.querySelector('#p-status').value;
+        if (!payload.name) return UI.toast('Name is required.', 'error');
+        try { if (p) await api.patch('/timesheets/projects/' + p.id, payload); else await api.post('/timesheets/projects', payload); m.close(); UI.toast('Saved.', 'success'); refresh(); }
+        catch (e) { UI.toast(e.message, 'error'); }
+      };
+    };
+    document.getElementById('addProj').onclick = () => projModal(null);
+    body.querySelectorAll('[data-pedit]').forEach((b) => b.onclick = () => projModal(projects.find((p) => String(p.id) === b.dataset.pedit)));
+    body.querySelectorAll('[data-pdel]').forEach((b) => b.onclick = async () => {
+      if (!confirm('Delete this project? (If it has logged time, it will be archived instead.)')) return;
+      try { await api.del('/timesheets/projects/' + b.dataset.pdel); UI.toast('Done.', 'success'); refresh(); } catch (e) { UI.toast(e.message, 'error'); }
+    });
+  },
+
+  async tsSummary(body) {
+    const monday = (() => { const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return d.toISOString().slice(0, 10); })();
+    const sunday = (() => { const d = new Date(monday + 'T00:00:00'); d.setDate(d.getDate() + 6); return d.toISOString().slice(0, 10); })();
+    body.innerHTML = `
+      <div class="toolbar"><label class="muted">From</label><input type="date" id="sFrom" value="${monday}" /><label class="muted">To</label><input type="date" id="sTo" value="${sunday}" /><button class="btn sm" id="sGo">View</button></div>
+      <div id="sumOut" class="mt"><div class="muted">Pick a range and click View.</div></div>`;
+    const load = async () => {
+      const from = document.getElementById('sFrom').value, to = document.getElementById('sTo').value;
+      const out = document.getElementById('sumOut');
+      out.innerHTML = '<div class="muted">Loading...</div>';
+      const r = await api.get(`/timesheets/summary?from=${from}&to=${to}`);
+      out.innerHTML = `
+        <div class="cards">
+          <div class="card stat"><div class="label">Approved Hours</div><div class="value">${r.totals.hours}</div></div>
+          <div class="card stat"><div class="label">Billable Hours</div><div class="value green">${r.totals.billable}</div></div>
+          <div class="card stat"><div class="label">Utilisation</div><div class="value">${r.totals.hours ? Math.round((r.totals.billable / r.totals.hours) * 100) : 0}%</div></div>
+        </div>
+        <div class="section-title mt">By Project</div>
+        ${UI.table([{ key: 'project', label: 'Project', render: (x) => UI.esc(x.project) }, { key: 'hours', label: 'Hours' }, { key: 'billable', label: 'Billable' }], r.byProject, 'No approved time in this range.')}
+        <div class="section-title mt">By Employee</div>
+        ${UI.table([{ key: 'employee', label: 'Employee', render: (x) => UI.esc(x.employee) }, { key: 'hours', label: 'Hours' }, { key: 'billable', label: 'Billable' }], r.byEmployee, 'No approved time in this range.')}`;
+    };
+    document.getElementById('sGo').onclick = load;
+    load();
   },
 };

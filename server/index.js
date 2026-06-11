@@ -95,6 +95,8 @@ app.use('/api/recruitment', require('./routes/recruitment'));
 app.use('/api/webhook', require('./routes/webhook'));
 app.use('/api/mood', require('./routes/mood'));
 app.use('/api/preboard', require('./routes/preboard'));
+app.use('/api/offboarding', require('./routes/offboarding'));
+app.use('/api/timesheets', require('./routes/timesheets'));
 
 // Public pre-boarding portal page (no login). A candidate opens this with a
 // private token to fill their joining form & upload documents before Day 1.
@@ -130,6 +132,8 @@ const port = config.port || 4000;
 (async () => {
   try {
     await db.init();
+    // Best-effort: bring leave accrual up to date for the current year on boot.
+    require('./services/leaveAccrual').autoCatchUp();
     app.listen(port, () => {
       console.log('\n==============================================');
       console.log('  HR Software is running!');

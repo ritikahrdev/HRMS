@@ -48,7 +48,7 @@ router.put('/', requirePerm('settings:manage'), async (req, res) => {
     'weekendPolicy', 'fullDayHours', 'halfDayHours', 'graceMinutes', 'attendanceCloseTime', 'leavePolicy',
     'payrollClosingDay', 'payroll', 'statutory', 'attendanceSheetUrl',
     'leaveTypes', 'modules', 'slack', 'requiredDocs', 'uidaiCert', 'webhookSecret',
-    'departmentAccounts', 'preboardLinkHours',
+    'departmentAccounts', 'preboardLinkHours', 'leaveAccrual', 'geofence', 'noticePeriodDays',
   ];
   const partial = {};
   for (const k of allowed) if (k in req.body) partial[k] = req.body[k];

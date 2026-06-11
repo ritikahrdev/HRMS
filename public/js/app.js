@@ -28,6 +28,7 @@ const App = {
       push('Me', '#/my-attendance', 'My Attendance', () => EmployeeViews.attendance(c()));
       push('Me', '#/my-leave', 'My Leave', () => EmployeeViews.leave(c()));
       if (this.modOn('reimbursement')) push('Me', '#/my-reimb', 'My Reimbursements', () => EmployeeViews.reimbursement(c()));
+      if (this.modOn('timesheets')) push('Me', '#/my-timesheet', 'My Timesheet', () => EmployeeViews.timesheet(c()));
       push('Me', '#/my-payslips', 'My Payslips', () => EmployeeViews.payslips(c()));
       push('Me', '#/my-onboarding', 'My Onboarding', () => EmployeeViews.onboardingForm(c()));
     }
@@ -49,6 +50,8 @@ const App = {
     if (this.has('employees:write')) push('Admin', '#/import', 'Import Excel', () => AdminViews.import(c()));
     if (this.has('recruitment:manage') && this.modOn('recruitment')) push('Admin', '#/recruitment', 'Recruitment', () => AdminViews.recruitment(c()));
     if (this.has('employees:write')) push('Admin', '#/onboarding', 'Onboarding', () => AdminViews.onboarding(c()));
+    if (this.has('offboarding:manage') && this.modOn('offboarding')) push('Admin', '#/offboarding', 'Offboarding', () => AdminViews.offboarding(c()));
+    if (this.has('timesheets:approve') && this.modOn('timesheets')) push('Admin', '#/timesheet-approvals', 'Timesheets', () => AdminViews.timesheets(c()));
     if (this.has('attendance:viewAll') || this.has('attendance:viewTeam')) push('Admin', '#/attendance', 'Attendance', () => AdminViews.attendance(c()));
     if (this.has('attendance:correct')) push('Admin', '#/corrections', 'Attendance Requests', () => AdminViews.corrections(c()));
     if (this.has('leave:approve')) push('Admin', '#/leave-approvals', 'Leave Approvals', () => AdminViews.leave(c()));
@@ -75,7 +78,8 @@ const App = {
 
   NAV_ICONS: {
     '#/': '🏠', '#/my-attendance': '🕒', '#/my-leave': '🌴', '#/my-reimb': '🧾',
-    '#/my-payslips': '💸', '#/my-onboarding': '📋', '#/profile': '👤',
+    '#/my-payslips': '💸', '#/my-onboarding': '📋', '#/profile': '👤', '#/my-timesheet': '⏱️',
+    '#/offboarding': '🚪', '#/timesheet-approvals': '⏱️',
     '#/directory': '📒', '#/notices': '📢', '#/holidays': '📅', '#/recognition': '🏆',
     '#/performance': '🎯', '#/surveys': '📝', '#/helpdesk': '🎧',
     '#/employees': '👥', '#/team': '🧑‍🤝‍🧑', '#/import': '📥', '#/onboarding': '🚀', '#/attendance': '🕒',

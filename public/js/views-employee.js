@@ -1,4 +1,20 @@
 const EmployeeViews = {
+  // Best-effort browser geolocation for attendance. Never blocks marking:
+  // resolves to {lat,lng,accuracy} or null (denied / unavailable / timeout).
+  captureGeo() {
+    return new Promise((resolve) => {
+      if (!('geolocation' in navigator)) return resolve(null);
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      navigator.geolocation.getCurrentPosition(
+        (p) => finish({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+        () => finish(null),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
+      setTimeout(() => finish(null), 8500);
+    });
+  },
+
   async dashboard(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const [todayRes, balanceRes, { payslips }, moodData] = await Promise.all([
@@ -67,7 +83,9 @@ const EmployeeViews = {
         if (wrap) { wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); wrap.style.outline = '2px solid #ef4444'; wrap.style.borderRadius = '8px'; setTimeout(() => { wrap.style.outline = ''; }, 2500); }
         return;
       }
-      try { await api.post('/attendance/check-in'); UI.toast('Attendance marked!', 'success'); this.dashboard(c); }
+      mark.disabled = true; mark.textContent = '📍 Marking…';
+      const geo = await this.captureGeo();
+      try { await api.post('/attendance/check-in', geo || {}); UI.toast('Attendance marked!' + (geo ? ' 📍 Location captured.' : ''), 'success'); this.dashboard(c); }
       catch (e) { UI.toast(e.message, 'error'); this.dashboard(c); }
     };
 
@@ -166,10 +184,12 @@ const EmployeeViews = {
         if (wrap) { wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); wrap.style.outline = '2px solid #ef4444'; wrap.style.borderRadius = '8px'; setTimeout(() => { wrap.style.outline = ''; }, 2500); }
         return;
       }
+      mark.disabled = true; mark.textContent = '📍 Marking…';
+      const geo = await this.captureGeo();
       try {
-        const r = await api.post('/attendance/check-in');
+        const r = await api.post('/attendance/check-in', geo || {});
         const lateMsg = r.lateMinutes > 0 ? ` ⏰ You're ${UI.duration(r.lateMinutes)} late.` : '';
-        UI.toast(`Attendance marked!${lateMsg}`, 'success');
+        UI.toast(`Attendance marked!${lateMsg}${geo ? ' 📍 Location captured.' : ''}`, 'success');
         this.attendance(c);
       } catch (e) { UI.toast(e.message, 'error'); this.attendance(c); }
     };
@@ -682,7 +702,8 @@ const EmployeeViews = {
         <table>${account.map((r) => `<tr><td class="muted">${UI.esc(r[0])}</td><td>${UI.esc(r[1] || '-')}</td></tr>`).join('')}</table>
         <div class="mt"><button class="btn secondary" id="pw">Change Password</button></div>
       </div>
-      ${empCard}`;
+      ${empCard}
+      ${employee && App.modOn('offboarding') ? '<div id="exit-card" style="max-width:620px"></div>' : ''}`;
     document.getElementById('pw').onclick = () => App.changePasswordModal();
     if (employee) {
       document.getElementById('docs').onclick = () => AdminViews.documentsModal(employee.id, employee.name);
@@ -691,7 +712,155 @@ const EmployeeViews = {
           ? UI.table([{ key: 'name', label: 'Asset' }, { key: 'tag', label: 'Tag', render: (r) => UI.esc(r.tag || '-') }, { key: 'category', label: 'Category', render: (r) => UI.esc(r.category || '-') }], assets)
           : '<div class="empty">No assets assigned to you.</div>';
       }).catch(() => {});
+      if (App.modOn('offboarding')) this.exitCard(document.getElementById('exit-card'));
     }
+  },
+
+  // Resignation / exit status card on the profile page.
+  async exitCard(host) {
+    if (!host) return;
+    let data; try { data = await api.get('/offboarding/mine'); } catch (e) { return; }
+    const x = data.exit;
+    const active = x && (x.status === 'initiated' || x.status === 'in_progress');
+    if (active) {
+      const done = (data.tasks || []).filter((t) => t.done).length;
+      const total = (data.tasks || []).length;
+      host.innerHTML = `
+        <div class="card mt" style="border-left:4px solid #f59e0b">
+          <div class="section-title">🚪 Exit in Progress</div>
+          <table>
+            <tr><td class="muted">Status</td><td>${UI.tag(x.status === 'initiated' ? 'submitted' : 'in process')}</td></tr>
+            <tr><td class="muted">Resignation date</td><td>${UI.date(x.resignation_date)}</td></tr>
+            <tr><td class="muted">Last working day</td><td><b>${UI.date(x.last_working_day)}</b></td></tr>
+            <tr><td class="muted">Notice period</td><td>${x.notice_days} days</td></tr>
+            <tr><td class="muted">Clearance progress</td><td>${done} / ${total} tasks done</td></tr>
+          </table>
+          <p class="muted" style="font-size:12px;margin-top:8px">HR is processing your exit. You'll be notified once your Full & Final settlement is ready.</p>
+        </div>`;
+      return;
+    }
+    if (x && x.status === 'completed') {
+      host.innerHTML = `<div class="card mt"><div class="section-title">Exit completed</div><p class="muted">Your last working day was ${UI.date(x.last_working_day)}.</p></div>`;
+      return;
+    }
+    // No exit — offer to resign.
+    host.innerHTML = `
+      <div class="card mt">
+        <div class="section-title">Resignation</div>
+        <p class="muted" style="font-size:13px">Planning to move on? You can submit your resignation here. HR will be notified to start the exit process.</p>
+        <button class="btn danger" id="resignBtn">Submit Resignation</button>
+      </div>`;
+    host.querySelector('#resignBtn').onclick = () => {
+      const m = UI.modal({
+        title: '🚪 Submit Resignation',
+        bodyHtml: `
+          <p style="font-size:13px;color:#6b7280;margin-bottom:12px">This notifies HR and begins your offboarding. Your manager and HR will guide you through clearance.</p>
+          <div class="field"><label>Proposed Last Working Day <span class="muted">(optional)</span></label><input type="date" id="rs-lwd" style="width:100%" /></div>
+          <div class="field"><label>Reason / Note <span class="muted">(optional)</span></label><textarea id="rs-note" rows="3" placeholder="Briefly share your reason (optional)…" style="width:100%"></textarea></div>`,
+        footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn danger" id="rs-submit">Submit Resignation</button>`,
+      });
+      m.root.querySelector('[data-close-btn]').onclick = m.close;
+      m.root.querySelector('#rs-submit').onclick = async () => {
+        try {
+          await api.post('/offboarding/resign', {
+            last_working_day: m.root.querySelector('#rs-lwd').value || null,
+            reason_detail: m.root.querySelector('#rs-note').value.trim(),
+          });
+          m.close(); UI.toast('Resignation submitted. HR has been notified.', 'success');
+          this.exitCard(host);
+        } catch (e) { UI.toast(e.message, 'error'); }
+      };
+    };
+  },
+
+  // ---------------- My Timesheet ----------------
+  async timesheet(c) {
+    c.innerHTML = '<div class="muted">Loading...</div>';
+    const monday = (iso) => { const d = new Date((iso || new Date().toISOString().slice(0, 10)) + 'T00:00:00'); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return d.toISOString().slice(0, 10); };
+    let week = monday();
+    const render = async () => {
+      const [{ entries, totalHours, billableHours, weekStart, weekEnd }, { projects }] = await Promise.all([
+        api.get('/timesheets/mine?week=' + week),
+        api.get('/timesheets/projects'),
+      ]);
+      const days = []; for (let i = 0; i < 7; i++) { const d = new Date(weekStart + 'T00:00:00'); d.setDate(d.getDate() + i); days.push(d.toISOString().slice(0, 10)); }
+      const dayName = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+      const anyLocked = entries.some((e) => e.status === 'submitted' || e.status === 'approved');
+      const statusTag = entries.length
+        ? (entries.every((e) => e.status === 'approved') ? UI.tag('approved')
+          : entries.some((e) => e.status === 'submitted') ? UI.tag('submitted')
+          : entries.some((e) => e.status === 'rejected') ? UI.tag('rejected') : UI.tag('draft'))
+        : '';
+      c.innerHTML = `
+        <div class="toolbar">
+          <button class="btn sm secondary" id="prev">← Prev</button>
+          <b>Week of ${dayName(weekStart)} – ${dayName(weekEnd)}</b>
+          <button class="btn sm secondary" id="next">Next →</button>
+          <div class="spacer"></div>
+          <span class="muted">Total <b>${totalHours}h</b> · Billable <b>${billableHours}h</b></span> ${statusTag}
+        </div>
+        <div class="cards" style="margin:10px 0">
+          <div class="card stat"><div class="label">Total Hours</div><div class="value">${totalHours}</div></div>
+          <div class="card stat"><div class="label">Billable Hours</div><div class="value green">${billableHours}</div></div>
+          <div class="card stat"><div class="label">Entries</div><div class="value">${entries.length}</div></div>
+        </div>
+        <div id="tslist"></div>
+        <div class="btn-row mt">
+          <button class="btn" id="addEntry">+ Add Time Entry</button>
+          <button class="btn green" id="submitWeek" ${(!entries.length || anyLocked) ? 'disabled' : ''}>Submit Week for Approval</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin-top:6px">${anyLocked ? 'This week is submitted — entries are locked until reviewed.' : 'Add your hours per project, then submit the week. Your manager/HR will approve.'}</p>`;
+
+      document.getElementById('tslist').innerHTML = entries.length ? UI.table([
+        { key: 'date', label: 'Date', render: (r) => dayName(r.date) },
+        { key: 'project_name', label: 'Project', render: (r) => UI.esc(r.project_name || '—') },
+        { key: 'task', label: 'Task', render: (r) => UI.esc(r.task || '-') },
+        { key: 'hours', label: 'Hours', render: (r) => `<b>${r.hours}</b>` },
+        { key: 'billable', label: 'Billable', render: (r) => r.billable ? '💰 Yes' : 'No' },
+        { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
+        { key: 'act', label: '', render: (r) => (r.status === 'draft' || r.status === 'rejected') ? `<button class="btn sm danger" data-del="${r.id}">Delete</button>` : '' },
+      ], entries, 'No time logged this week.') : '<div class="empty">No time logged this week. Click "Add Time Entry".</div>';
+
+      document.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+        try { await api.del('/timesheets/entry/' + b.dataset.del); render(); } catch (e) { UI.toast(e.message, 'error'); }
+      });
+      document.getElementById('prev').onclick = () => { const d = new Date(week + 'T00:00:00'); d.setDate(d.getDate() - 7); week = d.toISOString().slice(0, 10); render(); };
+      document.getElementById('next').onclick = () => { const d = new Date(week + 'T00:00:00'); d.setDate(d.getDate() + 7); week = d.toISOString().slice(0, 10); render(); };
+      document.getElementById('submitWeek').onclick = async () => {
+        if (!confirm('Submit this week for approval? You will not be able to edit entries until reviewed.')) return;
+        try { await api.post('/timesheets/submit', { week }); UI.toast('Timesheet submitted for approval.', 'success'); render(); } catch (e) { UI.toast(e.message, 'error'); }
+      };
+      document.getElementById('addEntry').onclick = () => {
+        const m = UI.modal({
+          title: '⏱️ Add Time Entry',
+          bodyHtml: `
+            <div class="form-grid">
+              <div class="field"><label>Date *</label><select id="ts-date" style="width:100%">${days.map((d) => `<option value="${d}">${dayName(d)}</option>`).join('')}</select></div>
+              <div class="field"><label>Hours *</label><input type="number" id="ts-hours" min="0.5" max="24" step="0.5" value="8" style="width:100%" /></div>
+              <div class="field full"><label>Project</label><select id="ts-project" style="width:100%"><option value="">— No project —</option>${projects.map((p) => `<option value="${p.id}">${UI.esc(p.name)}${p.code ? ' (' + UI.esc(p.code) + ')' : ''}</option>`).join('')}</select></div>
+              <div class="field full"><label>Task / Description</label><input id="ts-task" placeholder="What did you work on?" style="width:100%" /></div>
+              <div class="field full"><label><input type="checkbox" id="ts-bill" checked /> Billable</label></div>
+            </div>`,
+          footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="ts-save">Add Entry</button>`,
+        });
+        m.root.querySelector('[data-close-btn]').onclick = m.close;
+        m.root.querySelector('#ts-save').onclick = async () => {
+          const hours = Number(m.root.querySelector('#ts-hours').value);
+          if (!(hours > 0)) return UI.toast('Enter valid hours.', 'error');
+          try {
+            await api.post('/timesheets/entry', {
+              date: m.root.querySelector('#ts-date').value,
+              hours,
+              project_id: m.root.querySelector('#ts-project').value || null,
+              task: m.root.querySelector('#ts-task').value.trim(),
+              billable: m.root.querySelector('#ts-bill').checked,
+            });
+            m.close(); UI.toast('Time entry added.', 'success'); render();
+          } catch (e) { UI.toast(e.message, 'error'); }
+        };
+      };
+    };
+    await render();
   },
 
   // ---------------- Self-service onboarding / joining form ----------------

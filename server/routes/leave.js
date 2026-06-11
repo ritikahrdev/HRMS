@@ -5,6 +5,7 @@ const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
 const { applyLeaveDecision, approverEmailsFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
+const accrual = require('../services/leaveAccrual');
 
 const router = express.Router();
 
@@ -88,14 +89,21 @@ async function balanceFor(empId) {
     "SELECT COALESCE(SUM(days),0) AS d FROM comp_off_credits WHERE employee_id = ? AND substr(created_at,1,4) = ?"
   ).get(empId, String(year))).d;
 
+  const accrualRules = accrual.accrualRules();
+  const accrualOn = accrual.isEnabled();
+
   const balance = {};
   for (const t of types) {
     if (t.code === 'unpaid') continue; // unlimited
-    const allowed = t.code === 'comp_off' ? compCredits : (t.quota || 0);
+    let allowed;
+    let source = 'quota';
+    if (t.code === 'comp_off') { allowed = compCredits; source = 'comp_off'; }
+    else if (accrualOn && accrualRules[t.code]) { allowed = await accrual.ledgerAllowed(empId, t.code, year); source = 'accrual'; }
+    else { allowed = t.quota || 0; }
     const u = usedMap[t.code] || 0;
-    balance[t.code] = { name: t.name, allowed, used: u, remaining: +(allowed - u).toFixed(1), paid: t.paid !== false };
+    balance[t.code] = { name: t.name, allowed, used: u, remaining: +(allowed - u).toFixed(1), paid: t.paid !== false, source };
   }
-  return { year, balance };
+  return { year, balance, accrualEnabled: accrualOn };
 }
 
 router.get('/balance', requireLogin, async (req, res) => {
@@ -210,6 +218,69 @@ router.post('/:id/decision', requirePerm('leave:approve'), async (req, res) => {
 
   await applyLeaveDecision(lr.id, decision, comment, req.session.user.id);
   res.json({ ok: true });
+});
+
+// ---- Leave accrual & carry-forward (HR/Super) -----------------------------
+
+// View an employee's accrual ledger (HR sees anyone; an employee sees their own).
+router.get('/ledger', requireLogin, async (req, res) => {
+  try {
+    const role = req.session.user.role;
+    let empId = req.query.employee_id;
+    const canManage = require('../services/permissions').can(role, 'leave:approve') || require('../services/permissions').can(role, 'settings:manage');
+    if (!empId) empId = req.session.user.employeeId;
+    if (!empId) return res.json({ ledger: [] });
+    if (String(empId) !== String(req.session.user.employeeId) && !canManage) {
+      return res.status(403).json({ error: 'Not allowed.' });
+    }
+    const rows = await db.prepare(
+      'SELECT * FROM leave_ledger WHERE employee_id = ? ORDER BY period DESC, id DESC LIMIT 200'
+    ).all(empId);
+    res.json({ ledger: rows, enabled: accrual.isEnabled(), rules: accrual.accrualRules() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Run monthly accrual (defaults to catching up the whole current year).
+router.post('/accrual/run', requirePerm('settings:manage'), async (req, res) => {
+  try {
+    if (!accrual.isEnabled()) return res.status(400).json({ error: 'Leave accrual is turned off. Enable it in Settings → Leave Accrual first.' });
+    const month = req.body && req.body.month;
+    let result;
+    if (month && /^\d{4}-\d{2}$/.test(month)) result = await accrual.runMonthlyAccrual(month, req.session.user.id);
+    else result = await accrual.catchUpYear(new Date().getFullYear(), req.session.user.id);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Carry forward a year's remaining balance into the next year.
+router.post('/accrual/carry-forward', requirePerm('settings:manage'), async (req, res) => {
+  try {
+    if (!accrual.isEnabled()) return res.status(400).json({ error: 'Leave accrual is turned off.' });
+    const year = (req.body && req.body.year) || new Date().getFullYear();
+    const result = await accrual.runCarryForward(Number(year), req.session.user.id);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Manual ledger adjustment (e.g. opening balance or a correction).
+router.post('/ledger/adjust', requirePerm('settings:manage'), async (req, res) => {
+  try {
+    const { employee_id, type, amount, note } = req.body || {};
+    if (!employee_id || !type || amount == null) return res.status(400).json({ error: 'employee_id, type and amount are required.' });
+    const period = String(new Date().getFullYear());
+    // adjustments stack, so make each unique by appending a counter to the period key.
+    const n = (await db.prepare("SELECT COUNT(*) AS c FROM leave_ledger WHERE employee_id=? AND type=? AND kind='adjustment' AND substr(period,1,4)=?").get(employee_id, type, period)).c;
+    await accrual.addEntry(employee_id, type, Number(amount), 'adjustment', `${period}#${Number(n) + 1}`, note || 'Manual adjustment', req.session.user.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 module.exports = router;
