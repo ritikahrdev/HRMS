@@ -567,6 +567,10 @@ const defaultSettings = {
   leaveAccrual: { enabled: false, rules: {} },
   // Optional office geofence for attendance marking (does not block — only flags).
   geofence: { enabled: false, lat: null, lng: null, radius: 200 },
+  // Automatic birthday wishes (emailed to the employee only). Company timezone
+  // controls which calendar day counts as "today" for birthdays.
+  birthdayEmails: true,
+  timezone: 'Asia/Kolkata',
   slack: {
     enabled: false, botToken: '', channelId: '', signingSecret: '',
     presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],

@@ -1546,6 +1546,13 @@ const AdminViews = {
         </div>
       </div>
       <div class="card mt" style="max-width:760px">
+        <div class="section-title">Birthday Wishes</div>
+        <p class="muted" style="font-size:12px">Automatically email a warm birthday wish to each employee on their birthday — sent only to them, from your company. (Uses each employee's Date of Birth.)</p>
+        <div class="checkbox-row" style="margin-bottom:8px"><label><input type="checkbox" id="birthdayEmails" ${s.birthdayEmails !== false ? 'checked' : ''}/> Send automatic birthday emails</label></div>
+        <button class="btn sm secondary" id="birthdaySendNow" type="button">🎂 Send today's wishes now</button>
+        <span class="muted" id="birthdayToday" style="font-size:12px;margin-left:8px"></span>
+      </div>
+      <div class="card mt" style="max-width:760px">
         <div class="section-title">Mandatory Documents</div>
         <p class="muted" style="font-size:12px">One document name per line. These show as a required checklist (✓ uploaded / Missing) on every employee's Documents.</p>
         <textarea id="requiredDocs" rows="8">${(s.requiredDocs || []).join('\n')}</textarea>
@@ -1760,6 +1767,7 @@ const AdminViews = {
           lng: val('geoLng').trim() === '' ? null : Number(val('geoLng')),
           radius: Number(val('geoRadius')) || 200,
         },
+        birthdayEmails: document.getElementById('birthdayEmails').checked,
       };
       try { await api.put('/settings', payload); UI.currency = payload.currency || UI.currency; UI.toast('Settings saved. Reloading menu…', 'success'); setTimeout(() => location.reload(), 800); }
       catch (e) { UI.toast(e.message, 'error'); }
@@ -1788,6 +1796,17 @@ const AdminViews = {
         () => { geoHere.textContent = '📍 Use my current location'; UI.toast('Could not get your location.', 'error'); },
         { enableHighAccuracy: true, timeout: 8000 }
       );
+    };
+
+    // Birthday wishes — show who's celebrating today + a manual send.
+    const bToday = document.getElementById('birthdayToday');
+    if (bToday) api.get('/birthdays/today').then((r) => {
+      bToday.textContent = r.birthdays.length ? `🎂 Today: ${r.birthdays.map((b) => b.name).join(', ')}` : 'No birthdays today.';
+    }).catch(() => {});
+    const bSend = document.getElementById('birthdaySendNow');
+    if (bSend) bSend.onclick = async () => {
+      try { const r = await api.post('/birthdays/send', {}); UI.toast(r.found ? `🎂 ${r.sent} wish(es) sent, ${r.skipped} already sent.` : 'No birthdays today.', 'success'); }
+      catch (e) { UI.toast(e.message, 'error'); }
     };
   },
 

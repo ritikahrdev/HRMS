@@ -61,6 +61,11 @@ app.use(
 // Apply general rate limiter to all API routes
 app.use('/api/', apiLimiter);
 
+// Daily birthday-wish tick. Fires on API activity but the service's in-memory
+// date-guard means real work runs at most once per day (free tier has no cron).
+const birthdayWishes = require('./services/birthdayWishes');
+app.use('/api/', (req, res, next) => { birthdayWishes.dailyTick(); next(); });
+
 // Middleware to attach loginLimiter to req so auth route can use it
 const attachLoginLimiter = (req, res, next) => {
   req.loginLimiter = loginLimiter;
@@ -97,6 +102,7 @@ app.use('/api/mood', require('./routes/mood'));
 app.use('/api/preboard', require('./routes/preboard'));
 app.use('/api/offboarding', require('./routes/offboarding'));
 app.use('/api/timesheets', require('./routes/timesheets'));
+app.use('/api/birthdays', require('./routes/birthdays'));
 
 // Public pre-boarding portal page (no login). A candidate opens this with a
 // private token to fill their joining form & upload documents before Day 1.
@@ -134,6 +140,8 @@ const port = config.port || 4000;
     await db.init();
     // Best-effort: bring leave accrual up to date for the current year on boot.
     require('./services/leaveAccrual').autoCatchUp();
+    // Best-effort: send any of today's birthday wishes on boot/wake.
+    require('./services/birthdayWishes').dailyTick();
     app.listen(port, () => {
       console.log('\n==============================================');
       console.log('  HR Software is running!');
