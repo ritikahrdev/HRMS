@@ -1589,11 +1589,12 @@ const AdminViews = {
       </div>
       <div class="card mt" style="max-width:760px">
         <div class="section-title">🤖 AI Assistant</div>
-        <p class="muted" style="font-size:12px">Turn on the AI copilot — it answers questions from your HRMS data, drafts announcements & job posts, suggests approve/reject on pending requests, and screens candidates. Pick a <b>free</b> provider, get a free API key from the link, and paste it below.</p>
+        <p class="muted" style="font-size:12px">Turn on the AI copilot — it answers questions from your HRMS data, drafts announcements & job posts, suggests approve/reject on pending requests, and screens candidates. Pick a provider (Google &amp; Groq are <b>free</b>; or use your own Azure OpenAI), get a key from the link, and paste it below.</p>
         <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="aiEnabled" ${(s.ai || {}).enabled !== false ? 'checked' : ''}/> Enable AI features</label></div>
         <div class="form-grid">
           <div class="field"><label>Provider</label><select id="aiProvider" style="width:100%"></select></div>
-          <div class="field"><label>Model</label><select id="aiModel" style="width:100%"></select></div>
+          <div class="field"><label>Model / Deployment</label><input id="aiModel" list="aiModelList" style="width:100%" autocomplete="off" /><datalist id="aiModelList"></datalist></div>
+          <div class="field full" id="aiEndpointWrap" style="display:none"><label>Azure Endpoint</label><input id="aiEndpoint" value="${UI.esc((s.ai || {}).endpoint || '')}" placeholder="https://your-resource.openai.azure.com/openai/v1" autocomplete="off" /></div>
           <div class="field full"><label>API Key</label><input id="aiKey" type="password" value="${UI.esc((s.ai || {}).apiKey || '')}" placeholder="paste your key here" autocomplete="off" />
             <span class="muted" id="aiKeyHint" style="font-size:11px"></span></div>
         </div>
@@ -1820,7 +1821,8 @@ const AdminViews = {
           enabled: document.getElementById('aiEnabled').checked,
           provider: val('aiProvider'),
           apiKey: val('aiKey').trim(),
-          model: val('aiModel'),
+          model: val('aiModel').trim(),
+          endpoint: (document.getElementById('aiEndpoint') ? val('aiEndpoint').trim() : ''),
         },
         automation: (() => {
           const on = new Set(Array.from(document.querySelectorAll('.auto-job:checked')).map((x) => x.value));
@@ -1893,10 +1895,14 @@ const AdminViews = {
       const curProvider = (s.ai || {}).provider || 'google';
       const curModel = (s.ai || {}).model;
       provSel.innerHTML = cat.map((p) => `<option value="${p.id}" ${p.id === curProvider ? 'selected' : ''}>${UI.esc(p.label)}</option>`).join('');
+      const dataList = document.getElementById('aiModelList');
+      const endpointWrap = document.getElementById('aiEndpointWrap');
       const fillModels = (pid, selModel) => {
         const p = cat.find((x) => x.id === pid) || cat[0];
-        modelSel.innerHTML = p.models.map((m) => `<option value="${m.id}" ${m.id === selModel ? 'selected' : ''}>${UI.esc(m.label)}</option>`).join('');
+        dataList.innerHTML = p.models.map((m) => `<option value="${UI.esc(m.id)}">${UI.esc(m.label)}</option>`).join('');
+        modelSel.value = selModel || p.models[0].id;
         hint.innerHTML = `${UI.esc(p.keyHint)} <a href="${p.keyUrl}" target="_blank" rel="noopener"><b>Get a key →</b></a>`;
+        if (endpointWrap) endpointWrap.style.display = p.needsEndpoint ? '' : 'none';
       };
       fillModels(curProvider, curModel);
       provSel.onchange = () => fillModels(provSel.value, null);

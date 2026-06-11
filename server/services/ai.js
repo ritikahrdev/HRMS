@@ -27,6 +27,19 @@ const PROVIDERS = {
       { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B — fastest, free' },
     ],
   },
+  azure: {
+    label: 'Azure OpenAI — your Azure resource',
+    free: false,
+    needsEndpoint: true,
+    keyUrl: 'https://portal.azure.com/',
+    keyHint: 'Uses your own Azure OpenAI resource. Set the Endpoint, and put your DEPLOYMENT name in the Model field.',
+    models: [
+      { id: 'gpt-4o-mini', label: 'gpt-4o-mini (use your deployment name)' },
+      { id: 'gpt-4o', label: 'gpt-4o' },
+      { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+      { id: 'gpt-35-turbo', label: 'gpt-35-turbo' },
+    ],
+  },
   anthropic: {
     label: 'Anthropic Claude — paid (most capable)',
     free: false,
@@ -43,6 +56,7 @@ const PROVIDERS = {
 function envKey(provider) {
   if (provider === 'google') return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
   if (provider === 'groq') return process.env.GROQ_API_KEY || '';
+  if (provider === 'azure') return process.env.AZURE_OPENAI_API_KEY || '';
   return process.env.ANTHROPIC_API_KEY || '';
 }
 
@@ -50,9 +64,11 @@ function aiConfig() {
   const ai = getSettings().ai || {};
   const provider = PROVIDERS[ai.provider] ? ai.provider : 'google';
   const p = PROVIDERS[provider];
+  // Azure's "model" is a custom deployment name — accept whatever the admin typed.
   let model = ai.model;
-  if (!model || !p.models.some((m) => m.id === model)) model = p.models[0].id;
-  return { enabled: ai.enabled !== false, provider, p, model, apiKey: ai.apiKey || envKey(provider) };
+  if (provider !== 'azure' && (!model || !p.models.some((m) => m.id === model))) model = p.models[0].id;
+  if (provider === 'azure' && !model) model = p.models[0].id;
+  return { enabled: ai.enabled !== false, provider, p, model, apiKey: ai.apiKey || envKey(provider), endpoint: ai.endpoint || process.env.AZURE_OPENAI_ENDPOINT || '' };
 }
 
 function isConfigured() {
@@ -62,7 +78,7 @@ function isConfigured() {
 
 // Public catalogue for the settings UI (no keys leaked).
 function catalogue() {
-  return Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label, free: p.free, keyUrl: p.keyUrl, keyHint: p.keyHint, models: p.models }));
+  return Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label, free: p.free, needsEndpoint: !!p.needsEndpoint, keyUrl: p.keyUrl, keyHint: p.keyHint, models: p.models }));
 }
 
 // ---- Per-provider callers (each returns plain text, throws friendly errors) -
@@ -129,13 +145,38 @@ async function callAnthropic({ apiKey, model, system, messages, maxTokens }) {
   return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 }
 
-const CALLERS = { google: callGemini, groq: callGroq, anthropic: callAnthropic };
+// Azure OpenAI. Accepts either a v1 base (.../openai/v1) or a bare resource URL.
+// The "model" is the Azure DEPLOYMENT name.
+async function callAzure({ apiKey, model, endpoint, system, messages, maxTokens }) {
+  if (!endpoint) throw new Error('Set your Azure OpenAI Endpoint in Settings → AI Assistant.');
+  const base = String(endpoint).replace(/\/+$/, '');
+  const url = /\/openai\/v1$/i.test(base)
+    ? base + '/chat/completions'
+    : base + `/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=2024-08-01-preview`;
+  const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
+  const r = await safeFetch(url, {
+    method: 'POST',
+    headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages: msgs, max_tokens: maxTokens }),
+  }, 'Azure OpenAI');
+  if (!r.ok) {
+    let d = ''; try { const j = await r.json(); d = (j.error && j.error.message) || ''; } catch (e) {}
+    if (r.status === 401) throw keyError('azure');
+    if (r.status === 429) throw rateError();
+    if (r.status === 404 || /deployment.*(not exist|not found)/i.test(d)) throw new Error('Azure: that deployment or endpoint wasn\'t found. Check the Endpoint and your deployment name (the Model field) in Settings.');
+    throw new Error('Azure OpenAI error' + (d ? ': ' + d.slice(0, 160) : ` (HTTP ${r.status}).`));
+  }
+  const data = await r.json();
+  return (((data.choices || [])[0] || {}).message || {}).content ? data.choices[0].message.content.trim() : '';
+}
+
+const CALLERS = { google: callGemini, groq: callGroq, azure: callAzure, anthropic: callAnthropic };
 
 // ---- Unified interface -----------------------------------------------------
 async function callLLM({ system, messages, maxTokens = 1024 }) {
   const c = aiConfig();
-  if (!c.apiKey) { const e = new Error('AI is not set up yet. Add a free API key in Settings → AI Assistant.'); e.notConfigured = true; throw e; }
-  return CALLERS[c.provider]({ apiKey: c.apiKey, model: c.model, system, messages, maxTokens });
+  if (!c.apiKey) { const e = new Error('AI is not set up yet. Add an API key in Settings → AI Assistant.'); e.notConfigured = true; throw e; }
+  return CALLERS[c.provider]({ apiKey: c.apiKey, model: c.model, endpoint: c.endpoint, system, messages, maxTokens });
 }
 
 async function complete(system, userText, maxTokens) {

@@ -591,7 +591,7 @@ const defaultSettings = {
   automationState: { lastRunDate: null, lastRunAt: null, results: {} },
   // AI copilot. Defaults to a FREE provider (Google Gemini); the admin pastes
   // their own free API key to switch it on. Groq and paid Claude also supported.
-  ai: { enabled: true, provider: 'google', apiKey: '', model: 'gemini-2.0-flash' },
+  ai: { enabled: true, provider: 'google', apiKey: '', model: 'gemini-2.0-flash', endpoint: '' },
   slack: {
     enabled: false, botToken: '', channelId: '', signingSecret: '',
     presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
