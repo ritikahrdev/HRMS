@@ -76,22 +76,36 @@ async function applyReimbursementDecision(id, decision, comment, approverUserId)
   return { ok: true, reimbursement: { ...row, status: decision }, employee: emp };
 }
 
-// Finds who should approve a given employee's requests and returns their emails.
+// Finds who should approve a given employee's requests. Returns
+// [{ userId, email, name }] so each approver can get a PERSONAL action link
+// (and the decision records who clicked).
 // kind = 'leave' (manager or HR) or 'reimbursement' (manager or Finance).
-async function approverEmailsFor(employeeId, kind) {
+async function approversFor(employeeId, kind) {
   const emp = await db.prepare('SELECT manager_id FROM employees WHERE id = ?').get(employeeId);
-  const emails = [];
+  const out = [];
+  const seen = new Set();
+  const add = (userId, email, name) => {
+    if (!email || seen.has(email.toLowerCase())) return;
+    seen.add(email.toLowerCase());
+    out.push({ userId: userId || null, email, name: name || email });
+  };
   if (emp && emp.manager_id) {
-    const mgr = await db.prepare('SELECT email FROM employees WHERE id = ?').get(emp.manager_id);
-    if (mgr && mgr.email) emails.push(mgr.email);
+    const mgr = await db.prepare('SELECT user_id, email, name FROM employees WHERE id = ?').get(emp.manager_id);
+    if (mgr) add(mgr.user_id, mgr.email, mgr.name);
   }
   // Always also notify the relevant admins.
   const roles = kind === 'reimbursement' ? ['FINANCE_ADMIN', 'SUPER_ADMIN'] : ['HR_ADMIN', 'SUPER_ADMIN'];
   const admins = await db.prepare(
-    `SELECT email FROM users WHERE role IN (${roles.map(() => '?').join(',')}) AND email IS NOT NULL`
+    `SELECT u.id, u.email, (SELECT name FROM employees e WHERE e.user_id = u.id) AS name
+     FROM users u WHERE u.role IN (${roles.map(() => '?').join(',')}) AND u.email IS NOT NULL`
   ).all(...roles);
-  for (const a of admins) if (a.email && !emails.includes(a.email)) emails.push(a.email);
-  return emails;
+  for (const a of admins) add(a.id, a.email, a.name);
+  return out;
 }
 
-module.exports = { applyLeaveDecision, applyReimbursementDecision, approverEmailsFor };
+// Back-compat: just the email list.
+async function approverEmailsFor(employeeId, kind) {
+  return (await approversFor(employeeId, kind)).map((a) => a.email);
+}
+
+module.exports = { applyLeaveDecision, applyReimbursementDecision, approverEmailsFor, approversFor };

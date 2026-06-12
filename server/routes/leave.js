@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireLogin, requirePerm, teamEmployeeIds, canActOnEmployee } = require('../middleware/auth');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
-const { applyLeaveDecision, approverEmailsFor } = require('../services/decisions');
+const { applyLeaveDecision, approversFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
 const accrual = require('../services/leaveAccrual');
 
@@ -52,24 +52,23 @@ router.post('/', requireLogin, async (req, res) => {
       'INSERT INTO leave_requests (employee_id, type, from_date, to_date, days, reason, half_day) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(empId, type, from_date, to_date, days, reason || '', halfDay ? 1 : 0);
 
-    // Email the approver(s) with one-click approve / reject links.
+    // Email each approver a PERSONAL one-click link, so the decision records
+    // who approved (the name then shows on the request).
     const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
     const id = r.lastInsertRowid;
-    const approveLink = actionUrl('leave', id, 'approved');
-    const rejectLink = actionUrl('leave', id, 'rejected');
-    const to = await approverEmailsFor(empId, 'leave');
-    if (to.length) {
+    const approvers = await approversFor(empId, 'leave');
+    for (const ap of approvers) {
       await sendMail({
-        to: to.join(','),
+        to: ap.email,
         subject: `Leave request from ${emp ? emp.name : 'an employee'}`,
         html: `<p><b>${emp ? emp.name : 'An employee'}</b> applied for <b>${type}</b> leave from <b>${from_date}</b> to <b>${to_date}</b> (${days} day(s)).</p>
           <p>Reason: ${reason || '-'}</p>
           <p>
-            <a href="${approveLink}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
-            <a href="${rejectLink}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a>
+            <a href="${actionUrl('leave', id, 'approved', ap.userId)}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
+            <a href="${actionUrl('leave', id, 'rejected', ap.userId)}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a>
           </p>
-          <p style="color:#888;font-size:12px">Or open the HR portal to review it.</p>`,
-      });
+          <p style="color:#888;font-size:12px">This link is personal to you (${ap.name}) — the decision will be recorded in your name. Or open the HR portal to review it.</p>`,
+      }).catch(() => {});
     }
     res.json({ id, days });
   } catch (err) {
@@ -128,7 +127,10 @@ router.get('/balance', requireLogin, async (req, res) => {
 router.get('/my', requireLogin, async (req, res) => {
   try {
     const empId = myEmpId(req, res); if (!empId) return;
-    const rows = await db.prepare('SELECT * FROM leave_requests WHERE employee_id = ? ORDER BY applied_at DESC').all(empId);
+    const rows = await db.prepare(
+      `SELECT lr.*, (SELECT COALESCE(e2.name, u.email) FROM users u LEFT JOIN employees e2 ON e2.user_id = u.id WHERE u.id = lr.approver_id) AS approver_name
+       FROM leave_requests lr WHERE lr.employee_id = ? ORDER BY lr.applied_at DESC`
+    ).all(empId);
     res.json({ leaves: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -197,7 +199,8 @@ router.delete('/compoff/:id', requirePerm('leave:approve'), async (req, res) => 
 router.get('/', requirePerm('leave:approve'), async (req, res) => {
   try {
     const status = req.query.status;
-    const base = `SELECT lr.*, e.name AS employee_name, e.emp_code
+    const base = `SELECT lr.*, e.name AS employee_name, e.emp_code,
+               (SELECT COALESCE(e2.name, u.email) FROM users u LEFT JOIN employees e2 ON e2.user_id = u.id WHERE u.id = lr.approver_id) AS approver_name
                FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id`;
     let where = '';
     let params = [];

@@ -7,7 +7,7 @@ const { requireLogin, requirePerm, teamEmployeeIds, canActOnEmployee } = require
 const { upload } = require('../services/upload');
 const { saveFile, getFile, deleteFile, sendFile } = require('../services/filestore');
 const { sendMail } = require('../services/email');
-const { applyReimbursementDecision, approverEmailsFor } = require('../services/decisions');
+const { applyReimbursementDecision, approversFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
 
 const router = express.Router();
@@ -31,18 +31,18 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
 
     const id = r.lastInsertRowid;
     const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
-    const to = await approverEmailsFor(empId, 'reimbursement');
-    if (to.length) {
+    const approvers = await approversFor(empId, 'reimbursement');
+    for (const ap of approvers) {
       await sendMail({
-        to: to.join(','),
+        to: ap.email,
         subject: `Reimbursement request from ${emp ? emp.name : 'an employee'}`,
         html: `<p><b>${emp ? emp.name : 'An employee'}</b> submitted a reimbursement: <b>${title}</b> (${category || 'general'}) for amount <b>${amount}</b>.</p>
           <p>
-            <a href="${actionUrl('reimbursement', id, 'approved')}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
-            <a href="${actionUrl('reimbursement', id, 'rejected')}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a>
+            <a href="${actionUrl('reimbursement', id, 'approved', ap.userId)}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
+            <a href="${actionUrl('reimbursement', id, 'rejected', ap.userId)}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a>
           </p>
-          <p style="color:#888;font-size:12px">Or open the HR portal to review the bill and decide.</p>`,
-      });
+          <p style="color:#888;font-size:12px">This link is personal to you (${ap.name}) — the decision will be recorded in your name. Or open the HR portal to review the bill and decide.</p>`,
+      }).catch(() => {});
     }
     res.json({ id });
   } catch (err) {
@@ -54,7 +54,10 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
 router.get('/my', requireLogin, async (req, res) => {
   try {
     const empId = myEmpId(req, res); if (!empId) return;
-    const rows = await db.prepare('SELECT * FROM reimbursements WHERE employee_id = ? ORDER BY applied_at DESC').all(empId);
+    const rows = await db.prepare(
+      `SELECT r.*, (SELECT COALESCE(e2.name, u.email) FROM users u LEFT JOIN employees e2 ON e2.user_id = u.id WHERE u.id = r.approver_id) AS approver_name
+       FROM reimbursements r WHERE r.employee_id = ? ORDER BY r.applied_at DESC`
+    ).all(empId);
     res.json({ reimbursements: rows });
   } catch (err) {
     console.error('Error fetching reimbursements:', err);
@@ -66,7 +69,8 @@ router.get('/my', requireLogin, async (req, res) => {
 router.get('/', requirePerm('reimbursement:approve'), async (req, res) => {
   try {
     const status = req.query.status;
-    const base = `SELECT r.*, e.name AS employee_name, e.emp_code
+    const base = `SELECT r.*, e.name AS employee_name, e.emp_code,
+               (SELECT COALESCE(e2.name, u.email) FROM users u LEFT JOIN employees e2 ON e2.user_id = u.id WHERE u.id = r.approver_id) AS approver_name
                FROM reimbursements r JOIN employees e ON e.id = r.employee_id`;
     let where = '';
     let params = [];

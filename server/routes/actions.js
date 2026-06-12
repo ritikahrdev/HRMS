@@ -29,13 +29,19 @@ router.get('/:type/:id/:decision', async (req, res) => {
   if (!['leave', 'reimbursement'].includes(type) || !['approved', 'rejected'].includes(decision)) {
     return res.status(400).send(page('Invalid link', 'This action link is not valid.', false));
   }
-  if (!verifyToken([type, String(id), decision], token)) {
+  // Personal links carry &u=<approver user id> signed into the token, so the
+  // decision records WHO approved. Legacy links (no u) still verify.
+  const uid = req.query.u;
+  const ok = uid != null
+    ? verifyToken([type, String(id), decision, String(uid)], token)
+    : verifyToken([type, String(id), decision], token);
+  if (!ok) {
     return res.status(403).send(page('Link expired or invalid', 'This approval link could not be verified. Please log in to the portal instead.', false));
   }
 
   try {
     const fn = type === 'leave' ? applyLeaveDecision : applyReimbursementDecision;
-    const result = await fn(Number(id), decision, 'Decided via email link', null);
+    const result = await fn(Number(id), decision, 'Decided via email link', uid != null ? Number(uid) : null);
     if (result.notFound) return res.status(404).send(page('Not found', 'That request no longer exists.', false));
     if (result.already) return res.send(page('Already decided', 'This request was already handled earlier.', true));
     const word = decision === 'approved' ? 'approved' : 'rejected';

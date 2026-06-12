@@ -16,8 +16,14 @@ function verifyToken(parts, token) {
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token));
 }
 
-// Builds an absolute action URL with a valid token.
-function actionUrl(type, id, decision) {
+// Builds an absolute action URL with a valid token. When approverUserId is
+// given, it's signed into the token and carried as &u= so the click records
+// WHO approved (each approver gets their own personal link).
+function actionUrl(type, id, decision, approverUserId) {
+  if (approverUserId != null) {
+    const token = makeToken([type, String(id), decision, String(approverUserId)]);
+    return `${config.publicUrl}/api/actions/${type}/${id}/${decision}?t=${token}&u=${approverUserId}`;
+  }
   const token = makeToken([type, String(id), decision]);
   return `${config.publicUrl}/api/actions/${type}/${id}/${decision}?t=${token}`;
 }

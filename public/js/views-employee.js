@@ -62,9 +62,9 @@ const EmployeeViews = {
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <span class="tag" style="font-size:10px">${UI.esc(r.type)}</span>
                 <span style="font-size:13px">📅 ${UI.date(r.from_date)}${r.to_date !== r.from_date ? ' → ' + UI.date(r.to_date) : ''}${r.half_day ? ' (half)' : ''} · ${r.days} day${r.days > 1 ? 's' : ''}</span>
-                ${UI.tag(r.status)}
+                ${UI.tag(r.status)}${r.status !== 'pending' && r.approver_name ? `<span class="muted" style="font-size:11px">by <b>${UI.esc(r.approver_name)}</b></span>` : ''}
               </div>
-              <div class="muted" style="font-size:12px;margin-top:2px">💬 ${r.reason ? UI.esc(r.reason) : '<span style="color:#c7ccd8">no reason given</span>'}${r.comment ? ' · <b>Approver:</b> ' + UI.esc(r.comment) : ''}</div>
+              <div class="muted" style="font-size:12px;margin-top:2px">💬 ${r.reason ? UI.esc(r.reason) : '<span style="color:#c7ccd8">no reason given</span>'}${r.comment && r.comment !== 'Decided via email link' ? ' · <b>Approver note:</b> ' + UI.esc(r.comment) : (r.comment === 'Decided via email link' ? ' · <span style="color:#c7ccd8">via email</span>' : '')}</div>
             </div>`).join('') : '<div class="muted" style="font-size:13px;padding:10px 0">No leave requests yet.</div>'}
         </div>
         <div class="card" style="flex:1;min-width:300px">
@@ -597,8 +597,8 @@ const EmployeeViews = {
         { key: 'to_date', label: 'To', render: (r) => UI.date(r.to_date) },
         { key: 'days', label: 'Days', render: (r) => r.days + (r.half_day ? ' (half)' : '') },
         { key: 'reason', label: 'Reason', render: (r) => UI.esc(r.reason || '-') },
-        { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
-        { key: 'comment', label: 'Comment', render: (r) => UI.esc(r.comment || '-') },
+        { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) + (r.status !== 'pending' && r.approver_name ? `<div class="muted" style="font-size:11px;margin-top:2px">by <b>${UI.esc(r.approver_name)}</b></div>` : '') },
+        { key: 'comment', label: 'Approver Note', render: (r) => r.comment === 'Decided via email link' ? '<span class="muted" style="font-size:12px">via email</span>' : UI.esc(r.comment || '-') },
       ], leaves, 'You have not applied for any leave.')}`;
 
     document.getElementById('apply').onclick = () => {

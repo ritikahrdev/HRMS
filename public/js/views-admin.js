@@ -988,8 +988,8 @@ const AdminViews = {
       { key: 'to_date', label: 'To', render: (r) => UI.date(r.to_date) },
       { key: 'days', label: 'Days', render: (r) => r.days + (r.half_day ? ' (half)' : '') },
       { key: 'reason', label: 'Reason', render: (r) => UI.esc(r.reason || '-') },
-      { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) },
-      { key: 'act', label: '', render: (r) => r.status === 'pending' ? `<button class="btn sm green" data-ok="${r.id}">Approve</button> <button class="btn sm red" data-no="${r.id}">Reject</button>` : UI.esc(r.comment || '') },
+      { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) + (r.status !== 'pending' && r.approver_name ? `<div class="muted" style="font-size:11px;margin-top:2px">by <b>${UI.esc(r.approver_name)}</b></div>` : '') },
+      { key: 'act', label: '', render: (r) => r.status === 'pending' ? `<button class="btn sm green" data-ok="${r.id}">Approve</button> <button class="btn sm red" data-no="${r.id}">Reject</button>` : (r.comment === 'Decided via email link' ? '<span class="muted" style="font-size:12px">via email</span>' : UI.esc(r.comment || '')) },
     ], leaves, 'No leave requests.');
     const decide = async (id, decision) => {
       const comment = decision === 'rejected' ? (prompt('Reason for rejection (optional):') || '') : '';

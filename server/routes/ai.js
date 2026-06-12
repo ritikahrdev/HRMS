@@ -5,7 +5,7 @@ const { can } = require('../services/permissions');
 const { getSettings } = require('../services/settings');
 const { sendMail } = require('../services/email');
 const { notifyEveryone } = require('../services/notify');
-const { approverEmailsFor } = require('../services/decisions');
+const { approversFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
 const ai = require('../services/ai');
 
@@ -36,14 +36,14 @@ const ACTIONS = {
       const r = await db.prepare('INSERT INTO leave_requests (employee_id, type, from_date, to_date, days, reason, half_day) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(empId, p.type, p.from_date, p.to_date, days, p.reason || '', half ? 1 : 0);
       const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
-      const to = await approverEmailsFor(empId, 'leave');
-      if (to.length) {
+      for (const ap of await approversFor(empId, 'leave')) {
         await sendMail({
-          to: to.join(','),
+          to: ap.email,
           subject: `Leave request from ${emp ? emp.name : 'an employee'}`,
           html: `<p><b>${emp ? emp.name : 'An employee'}</b> applied for <b>${p.type}</b> leave from <b>${p.from_date}</b> to <b>${p.to_date}</b> (${days} day(s)).</p><p>Reason: ${p.reason || '-'}</p>
-            <p><a href="${actionUrl('leave', r.lastInsertRowid, 'approved')}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
-            <a href="${actionUrl('leave', r.lastInsertRowid, 'rejected')}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a></p>`,
+            <p><a href="${actionUrl('leave', r.lastInsertRowid, 'approved', ap.userId)}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
+            <a href="${actionUrl('leave', r.lastInsertRowid, 'rejected', ap.userId)}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a></p>
+            <p style="color:#888;font-size:12px">This link is personal to you (${ap.name}) — the decision will be recorded in your name.</p>`,
         }).catch(() => {});
       }
       return `✅ Applied for ${days} day(s) of ${p.type} leave (${p.from_date}${p.to_date !== p.from_date ? ' → ' + p.to_date : ''}). Your approver has been notified.`;
@@ -75,12 +75,12 @@ const ACTIONS = {
       if (!(amount > 0)) throw new Error('Please give an amount greater than 0.');
       const r = await db.prepare('INSERT INTO reimbursements (employee_id, title, category, amount) VALUES (?, ?, ?, ?)').run(empId, p.title, p.category || '', amount);
       const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
-      const to = await approverEmailsFor(empId, 'reimbursement');
-      if (to.length) {
-        await sendMail({ to: to.join(','), subject: `Reimbursement request from ${emp ? emp.name : 'an employee'}`,
+      for (const ap of await approversFor(empId, 'reimbursement')) {
+        await sendMail({ to: ap.email, subject: `Reimbursement request from ${emp ? emp.name : 'an employee'}`,
           html: `<p><b>${emp ? emp.name : 'An employee'}</b> submitted a reimbursement: <b>${p.title}</b> for <b>${amount}</b>.</p>
-            <p><a href="${actionUrl('reimbursement', r.lastInsertRowid, 'approved')}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
-            <a href="${actionUrl('reimbursement', r.lastInsertRowid, 'rejected')}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a></p>` }).catch(() => {});
+            <p><a href="${actionUrl('reimbursement', r.lastInsertRowid, 'approved', ap.userId)}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
+            <a href="${actionUrl('reimbursement', r.lastInsertRowid, 'rejected', ap.userId)}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a></p>
+            <p style="color:#888;font-size:12px">This link is personal to you (${ap.name}) — the decision will be recorded in your name.</p>` }).catch(() => {});
       }
       return `✅ Submitted reimbursement "${p.title}" for ${getSettings().currency || '₹'}${amount}. Your approver has been notified.`;
     },
