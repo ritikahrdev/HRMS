@@ -14,11 +14,12 @@ const STATUS_MAP = {
 
 // Idempotent upsert: one row per (employee, date). Re-sending updates in place.
 const upsert = db.prepare(`
-  INSERT INTO attendance (employee_id, date, check_in, status, wfh, source)
-  VALUES (@employee_id, @date, @check_in, @status, @wfh, 'webhook')
+  INSERT INTO attendance (employee_id, date, check_in, status, wfh, reason, source)
+  VALUES (@employee_id, @date, @check_in, @status, @wfh, @reason, 'webhook')
   ON CONFLICT(employee_id, date) DO UPDATE SET
     status   = @status,
     wfh      = @wfh,
+    reason   = COALESCE(@reason, attendance.reason),
     source   = 'webhook',
     check_in = COALESCE(@check_in, attendance.check_in)`);
 
@@ -52,6 +53,9 @@ router.post('/attendance', async (req, res) => {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const statusRaw = typeof body.status === 'string' ? body.status.trim() : '';
   const time = typeof body.time === 'string' ? body.time.trim() : '';
+  // Optional note explaining the entry (e.g. "Sick leave", "Client visit"). Kept
+  // to a sane length; omitted/blank is fine for backward compatibility.
+  const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 300) || null : null;
   if (!name) return res.status(400).json({ success: false, error: 'Missing required field: name.' });
   if (!statusRaw) return res.status(400).json({ success: false, error: 'Missing required field: status.' });
   if (!time) return res.status(400).json({ success: false, error: 'Missing required field: time.' });
@@ -81,7 +85,7 @@ router.post('/attendance', async (req, res) => {
   // 5) Upsert attendance (idempotent — never creates duplicates for the same day).
   const check_in = mapped.status === 'present' ? parsed.toISOString() : null;
   try {
-    await upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh });
+    await upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh, reason });
   } catch (e) {
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
   }
@@ -94,6 +98,7 @@ router.post('/attendance', async (req, res) => {
     status: statusRaw,
     time,
     date,
+    reason: reason || null,
     processedAt: new Date().toISOString(),
   });
 });
