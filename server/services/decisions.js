@@ -7,24 +7,37 @@ const { notifyUsers } = require('./notify');
 async function applyLeaveDecision(id, decision, comment, approverUserId) {
   const lr = await db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(id);
   if (!lr) return { ok: false, notFound: true };
-  if (lr.status !== 'pending') return { ok: true, already: true, leave: lr };
+  // Re-clicking the same decision (e.g. an email link twice) is a no-op.
+  if (lr.status === decision) return { ok: true, already: true, leave: lr };
+  const wasApproved = lr.status === 'approved';
 
   await db.prepare("UPDATE leave_requests SET status = ?, comment = ?, approver_id = ?, decided_at = datetime('now') WHERE id = ?")
     .run(decision, comment || '', approverUserId || null, lr.id);
 
+  const markStatus = lr.half_day ? 'half' : 'leave';
+  // Iterate dates as local YYYY-MM-DD strings (avoid UTC off-by-one).
+  const addDays = (ds, n) => {
+    const [y, m, d] = ds.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    dt.setDate(dt.getDate() + n);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  };
+
   if (decision === 'approved') {
-    const markStatus = lr.half_day ? 'half' : 'leave';
-    // Iterate dates as local YYYY-MM-DD strings (avoid UTC off-by-one).
-    const addDays = (ds, n) => {
-      const [y, m, d] = ds.split('-').map(Number);
-      const dt = new Date(y, m - 1, d);
-      dt.setDate(dt.getDate() + n);
-      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-    };
     for (let ds = lr.from_date; ds <= lr.to_date; ds = addDays(ds, 1)) {
-      const ex = await db.prepare('SELECT id, check_in FROM attendance WHERE employee_id = ? AND date = ?').get(lr.employee_id, ds);
+      const ex = await db.prepare('SELECT id, check_in, status FROM attendance WHERE employee_id = ? AND date = ?').get(lr.employee_id, ds);
       if (!ex) await db.prepare('INSERT INTO attendance (employee_id, date, status) VALUES (?, ?, ?)').run(lr.employee_id, ds, markStatus);
-      else if (!ex.check_in) await db.prepare('UPDATE attendance SET status = ? WHERE id = ?').run(markStatus, ex.id);
+      // Only fill a blank/absent placeholder — never overwrite a real check-in
+      // or a status synced from Slack/Sheets/Excel (e.g. an existing 'present').
+      else if (!ex.check_in && (!ex.status || ex.status === 'absent')) await db.prepare('UPDATE attendance SET status = ? WHERE id = ?').run(markStatus, ex.id);
+    }
+  } else if (wasApproved) {
+    // Reversing a previously-approved leave: delete ONLY the placeholder rows we
+    // created for it (this leave's mark, no real check-in). This frees the
+    // balance (balanceFor counts approved days) and un-corrupts attendance/payroll.
+    for (let ds = lr.from_date; ds <= lr.to_date; ds = addDays(ds, 1)) {
+      const ex = await db.prepare('SELECT id, check_in, status FROM attendance WHERE employee_id = ? AND date = ?').get(lr.employee_id, ds);
+      if (ex && !ex.check_in && ex.status === markStatus) await db.prepare('DELETE FROM attendance WHERE id = ?').run(ex.id);
     }
   }
 

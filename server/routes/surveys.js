@@ -131,15 +131,19 @@ router.get('/:id/responses', requirePerm('settings:manage'), async (req, res) =>
        LEFT JOIN employees e ON e.id = sr.employee_id WHERE sr.survey_id = ? ORDER BY sr.created_at DESC`
     ).all(s.id);
 
-    // Calculate eligible employees
-    let eligibleQuery = 'SELECT COUNT(*) c FROM employees WHERE status = "active"';
+    // Calculate eligible employees. (Single-quoted literal — Postgres treats
+    // "active" as an identifier; parameterised to avoid SQL injection.)
+    let eligibleQuery = "SELECT COUNT(*) c FROM employees WHERE status = 'active'";
+    const eligibleParams = [];
     if (s.target_department) {
-      eligibleQuery += ` AND department = '${s.target_department}'`;
+      eligibleQuery += ' AND department = ?';
+      eligibleParams.push(s.target_department);
     }
     if (s.target_manager_id) {
-      eligibleQuery += ` AND manager_id = ${s.target_manager_id}`;
+      eligibleQuery += ' AND manager_id = ?';
+      eligibleParams.push(s.target_manager_id);
     }
-    const totalEligible = (await db.prepare(eligibleQuery).get()).c;
+    const totalEligible = (await db.prepare(eligibleQuery).get(...eligibleParams)).c;
 
     const responses = rows.map((r) => ({
       employee_name: s.anonymous ? 'Anonymous' : r.employee_name,

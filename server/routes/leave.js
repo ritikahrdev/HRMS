@@ -199,6 +199,10 @@ router.post('/compoff', requirePerm('leave:approve'), async (req, res) => {
 
 router.delete('/compoff/:id', requirePerm('leave:approve'), async (req, res) => {
   try {
+    // Scope to the approver's team — a manager must not delete another team's credit.
+    const c = await db.prepare('SELECT employee_id FROM comp_off_credits WHERE id = ?').get(req.params.id);
+    if (!c) return res.status(404).json({ error: 'Not found.' });
+    if (!(await canActOnEmployee(req, c.employee_id))) return res.status(403).json({ error: 'Not in your team.' });
     await db.prepare('DELETE FROM comp_off_credits WHERE id = ?').run(req.params.id);
     res.json({ ok: true });
   } catch (e) {
@@ -296,6 +300,7 @@ router.post('/ledger/adjust', requirePerm('settings:manage'), async (req, res) =
   try {
     const { employee_id, type, amount, note } = req.body || {};
     if (!employee_id || !type || amount == null) return res.status(400).json({ error: 'employee_id, type and amount are required.' });
+    if (!(await canActOnEmployee(req, employee_id))) return res.status(403).json({ error: 'Not in your team.' });
     const period = String(new Date().getFullYear());
     // adjustments stack, so make each unique by appending a counter to the period key.
     const n = (await db.prepare("SELECT COUNT(*) AS c FROM leave_ledger WHERE employee_id=? AND type=? AND kind='adjustment' AND substr(period,1,4)=?").get(employee_id, type, period)).c;

@@ -79,7 +79,10 @@ async function computePayroll(employeeId, monthStr) {
 
   let present = 0;
   let paidLeave = 0;
-  let unpaid = 0;
+  // Keep the two unpaid causes separate — the company may dock one but not the
+  // other (e.g. dock absences but honour approved unpaid leave).
+  let unpaidLeaveDays = 0;
+  let absentDays = 0;
   let holidays = 0;
 
   for (const d of workingDates) {
@@ -92,21 +95,23 @@ async function computePayroll(employeeId, monthStr) {
     const lv = leaveOn(d);
     if (lv) {
       const portion = lv.half_day ? 0.5 : 1;
-      if (isPaidLeave(lv.type)) paidLeave += portion; else unpaid += portion;
+      if (isPaidLeave(lv.type)) paidLeave += portion; else unpaidLeaveDays += portion;
       // For a half day leave, the other half is treated as worked (no deduction).
       if (lv.half_day) present += 0.5;
       continue;
     }
 
     if (status === 'present') { present += 1; continue; }
-    if (status === 'half') { present += 0.5; unpaid += 0.5; continue; }
+    // Half-day attendance: half worked, the unworked half is an absence.
+    if (status === 'half') { present += 0.5; absentDays += 0.5; continue; }
 
     // A holiday with no work is a paid day (no deduction).
     if (holidaySet.has(d) && status !== 'absent') { holidays += 1; continue; }
 
     // No attendance, no leave, not a holiday, and the day has passed -> absent.
-    unpaid += 1;
+    absentDays += 1;
   }
+  const unpaid = unpaidLeaveDays + absentDays; // total unpaid days (for reference)
 
   // ---- Salary structure (earnings & deductions) ----
   let structure = null;
@@ -127,7 +132,8 @@ async function computePayroll(employeeId, monthStr) {
 
   const deductUnpaid = !settings.payroll || settings.payroll.deductUnpaidLeave !== false;
   const deductAbsent = !settings.payroll || settings.payroll.deductAbsent !== false;
-  const deductibleDays = deductUnpaid || deductAbsent ? unpaid : 0;
+  // Each policy docks only its own bucket — enabling one no longer docks both.
+  const deductibleDays = +(((deductUnpaid ? unpaidLeaveDays : 0) + (deductAbsent ? absentDays : 0))).toFixed(2);
   const lop = +(deductibleDays * perDay).toFixed(2);
 
   // ---- Deduction line items ----

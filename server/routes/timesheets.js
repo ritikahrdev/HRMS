@@ -95,6 +95,12 @@ router.post('/entry', requireLogin, async (req, res) => {
     if (typeof hours === 'string' && !/^\d+(\.\d+)?$/.test(hours.trim())) return res.status(400).json({ error: 'Hours must be a number between 0 and 24.' });
     const h = Number(hours);
     if (!Number.isFinite(h) || h <= 0 || h > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24.' });
+    // Prevent duplicate logging for the same day + project (would inflate hours
+    // and billable totals). One entry per (employee, date, project).
+    const dup = project_id
+      ? await db.prepare('SELECT id FROM timesheet_entries WHERE employee_id = ? AND date = ? AND project_id = ?').get(empId, date, project_id)
+      : await db.prepare('SELECT id FROM timesheet_entries WHERE employee_id = ? AND date = ? AND project_id IS NULL').get(empId, date);
+    if (dup) return res.status(409).json({ error: 'You already logged time for this project on this date. Edit that entry instead.' });
     const r = await db.prepare(
       'INSERT INTO timesheet_entries (employee_id, project_id, date, hours, task, billable, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(empId, project_id || null, date, h, task || null, billable === false ? 0 : 1, notes || null, 'draft');

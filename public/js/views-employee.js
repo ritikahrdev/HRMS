@@ -369,8 +369,8 @@ const EmployeeViews = {
             <div style="font-size:13px;color:#374151;margin-bottom:4px">
               📅 <strong>${UI.date(r.date)}</strong>
               &nbsp;·&nbsp; Mark as: ${UI.tag(r.requested_status)}
-              ${r.requested_in ? ` &nbsp;·&nbsp; In: <strong>${r.requested_in}</strong>` : ''}
-              ${r.requested_out ? ` Out: <strong>${r.requested_out}</strong>` : ''}
+              ${r.requested_in ? ` &nbsp;·&nbsp; In: <strong>${UI.esc(r.requested_in)}</strong>` : ''}
+              ${r.requested_out ? ` Out: <strong>${UI.esc(r.requested_out)}</strong>` : ''}
             </div>
             <div style="font-size:12px;color:#6b7280">${UI.esc(r.reason || '')}</div>
             ${expired ? `<div style="margin-top:6px;font-size:12px;background:#fff7ed;border:1px solid #fed7aa;padding:6px 10px;border-radius:6px;color:#9a3412">⏰ This request was for a past day and can no longer be approved (same-day approval only). You can reject it.</div>` : ''}

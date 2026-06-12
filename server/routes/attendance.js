@@ -548,6 +548,11 @@ router.post('/correction', requireLogin, async (req, res) => {
   }
   if (!requested_status) return res.status(400).json({ error: 'Please select what status to mark.' });
   if (!reason || !reason.trim()) return res.status(400).json({ error: 'Reason is required.' });
+  // Clock in/out must be a real HH:MM time (also blocks stored-XSS payloads).
+  const timeOk = (t) => t == null || t === '' || /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+  if (!timeOk(requested_in) || !timeOk(requested_out)) {
+    return res.status(400).json({ error: 'Clock in/out must be a valid time (HH:MM).' });
+  }
 
   // Don't allow duplicate pending requests for today
   const existing = await db.prepare("SELECT id FROM attendance_corrections WHERE employee_id = ? AND date = ? AND status = 'pending'").get(empId, date);
