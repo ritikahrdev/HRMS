@@ -1,0 +1,47 @@
+name: HRMS daily automation heartbeat
+
+# Pokes the live HRMS a few times a day so its automatic HR chores run on their
+# own — birthday & work-anniversary wishes, holiday reminders, monthly leave
+# accrual and year-end carry-forward — even on days nobody opens the app, and
+# even when HR is on leave. The free hosting tier has no built-in cron and the
+# server sleeps when idle; this workflow is that missing scheduler.
+#
+# Every chore is idempotent (each runs at most once per day), so the multiple
+# daily pings are safe. Times are UTC; the company runs on IST (UTC+5:30).
+#
+# Optional hardening: set a repo secret named CRON_KEY (Settings → Secrets and
+# variables → Actions) AND the same CRON_KEY env var on the host. Without it the
+# endpoint still works (it only triggers idempotent chores and returns counts).
+
+on:
+  schedule:
+    - cron: '30 2 * * *'    # 08:00 IST — morning wishes
+    - cron: '30 7 * * *'    # 13:00 IST — midday catch-up
+    - cron: '30 14 * * *'   # 20:00 IST — evening catch-up
+  workflow_dispatch: {}      # also runnable on demand from the Actions tab
+
+# Don't pile up overlapping runs.
+concurrency:
+  group: hrms-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger today's HR automations
+        env:
+          BASE: https://hrms-rzfs.onrender.com
+          CRON_KEY: ${{ secrets.CRON_KEY }}
+        run: |
+          URL="$BASE/api/cron/run"
+          if [ -n "$CRON_KEY" ]; then URL="$URL?key=$CRON_KEY"; fi
+          echo "Waking the server & running automations (cold start can take ~1 min)…"
+          # --retry-all-errors + long timeout rides out the free-tier cold start.
+          if curl -fsS --retry 6 --retry-all-errors --retry-delay 20 --max-time 180 "$URL"; then
+            echo ""
+            echo "✅ Automations triggered."
+          else
+            echo "cron/run did not succeed — falling back to a plain health ping to wake the server."
+            curl -fsS --retry 6 --retry-all-errors --retry-delay 20 --max-time 180 "$BASE/api/health" || true
+          fi

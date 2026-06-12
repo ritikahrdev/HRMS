@@ -101,6 +101,24 @@ app.use('/api/', (req, res, next) => { automation.dailyTick(); next(); });
 // automations fire even on a day nobody logs in.
 app.get('/api/health', (req, res) => { automation.dailyTick(); res.json({ ok: true, time: new Date().toISOString() }); });
 
+// Scheduler hook — an external cron (the committed GitHub Actions workflow, or
+// any uptime pinger) calls this daily so the HR chores (birthday & anniversary
+// wishes, holiday reminders, leave accrual, year-end carry-forward) run even
+// when nobody opens the app. Every chore is idempotent, so extra calls are
+// harmless. Optionally lock it down by setting CRON_KEY in the environment and
+// passing ?key=<value>.
+app.get('/api/cron/run', async (req, res) => {
+  if (process.env.CRON_KEY && req.query.key !== process.env.CRON_KEY) {
+    return res.status(403).json({ error: 'Invalid cron key.' });
+  }
+  try {
+    const result = await automation.runDailyAutomations();
+    res.json({ ok: true, ranAt: new Date().toISOString(), ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Middleware to attach loginLimiter to req so auth route can use it
 const attachLoginLimiter = (req, res, next) => {
   req.loginLimiter = loginLimiter;
