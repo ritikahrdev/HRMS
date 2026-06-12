@@ -586,61 +586,372 @@ const AdminViews = {
   },
 
   // ---------------- Attendance ----------------
+  // ===================== Attendance (premium redesign) =====================
   async attendance(c) {
+    this._attInjectCss();
+    let dark = false; try { dark = localStorage.getItem('attDark') === '1'; } catch (e) {}
     c.innerHTML = `
-      <div style="display:flex;gap:6px;margin-bottom:16px">
-        <button class="att-tab" data-tab="daily" style="padding:8px 18px;border:1px solid #4f46e5;background:#4f46e5;color:#fff;border-radius:20px;cursor:pointer;font-size:13px;font-weight:600">📋 Daily View</button>
-        <button class="att-tab" data-tab="insights" style="padding:8px 18px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:20px;cursor:pointer;font-size:13px;font-weight:600">📅 Monthly Insights</button>
-      </div>
-      <div id="att-tab-body"></div>`;
-    const body = c.querySelector('#att-tab-body');
-    const tabs = c.querySelectorAll('.att-tab');
+      <div class="attx${dark ? ' attx-dark' : ''}" id="attx-root">
+        <div class="attx-head">
+          <div class="attx-head-l">
+            <div class="attx-title">Attendance <span class="attx-live" id="attx-live"><span class="dot"></span>Live</span></div>
+            <div class="attx-sub">Real-time team attendance, synced from Slack &amp; check-ins</div>
+          </div>
+          <div class="attx-head-actions">
+            <div class="attx-tabs">
+              <button class="attx-tab on" data-tab="board">Live Board</button>
+              <button class="attx-tab" data-tab="analytics">Analytics</button>
+            </div>
+            ${App.has('attendance:viewAll') ? '<button class="attx-btn ghost" id="attx-import">⇪ Import</button>' : ''}
+            <button class="attx-icon-btn" id="attx-dark" title="Toggle dark mode">${dark ? '☀️' : '🌙'}</button>
+          </div>
+        </div>
+        <div id="attx-body"></div>
+      </div>`;
+    const root = c.querySelector('#attx-root');
+    const body = c.querySelector('#attx-body');
+    c.querySelector('#attx-dark').onclick = (e) => {
+      root.classList.toggle('attx-dark');
+      const on = root.classList.contains('attx-dark');
+      e.currentTarget.textContent = on ? '☀️' : '🌙';
+      try { localStorage.setItem('attDark', on ? '1' : '0'); } catch (_) {}
+    };
+    const imp = c.querySelector('#attx-import');
+    if (imp) imp.onclick = () => this.syncAttendance(c, () => this._attBoard(body));
+    const tabs = c.querySelectorAll('.attx-tab');
     const setTab = (name) => {
-      tabs.forEach((t) => {
-        const on = t.dataset.tab === name;
-        t.style.background = on ? '#4f46e5' : '#fff';
-        t.style.color = on ? '#fff' : '#374151';
-        t.style.borderColor = on ? '#4f46e5' : '#e5e7eb';
-      });
-      if (name === 'daily') this.attendanceDaily(body);
-      else this.attendanceInsights(body);
+      tabs.forEach((t) => t.classList.toggle('on', t.dataset.tab === name));
+      if (name === 'board') this._attBoard(body);
+      else { this._attStopPoll(); c.querySelector('#attx-live').style.display = 'none'; this.attendanceInsights(body); }
+      if (name === 'board') c.querySelector('#attx-live').style.display = '';
     };
     tabs.forEach((t) => t.onclick = () => setTab(t.dataset.tab));
-    setTab('daily');
+    setTab('board');
   },
 
-  async attendanceDaily(c) {
-    c.innerHTML = '<div class="muted">Loading...</div>';
-    // If the user clicked a day in the calendar, open that date instead of today.
-    const today = this._pendingAttDate || new Date().toISOString().slice(0, 10);
-    this._pendingAttDate = null;
-    const canSync = App.has('attendance:viewAll');
-    const data = await api.get('/attendance/day?date=' + today);
-    c.innerHTML = `
-      <div class="toolbar">
-        <label class="muted">Date</label><input type="date" id="date" value="${today}" />
-        ${canSync ? '<button class="btn secondary" id="sync">Import Attendance</button>' : ''}
-        <div class="spacer"></div>
-        <span class="tag present">Present <b id="s-present">${data.summary.present || 0}</b></span>
-        <span class="tag half">Half <b id="s-half">${data.summary.half || 0}</b></span>
-        <span class="tag leave">Leave <b id="s-leave">${data.summary.leave || 0}</b></span>
-        <span class="tag absent">Absent <b id="s-absent">${data.summary.absent || 0}</b></span>
-      </div>
-      <div id="holidayBanner">${data.holiday ? `<div class="card" style="border-left:3px solid #5b21b6;margin-bottom:12px"><b>🎉 Holiday:</b> ${UI.esc(data.holiday)}</div>` : ''}</div>
-      <div id="list">${this.attDayTable(data.list, today)}</div>`;
+  _attStopPoll() { if (this._attPoll) { clearInterval(this._attPoll); this._attPoll = null; } },
 
-    const reload = async () => {
-      const date = document.getElementById('date').value;
-      const d = await api.get('/attendance/day?date=' + date);
-      document.getElementById('list').innerHTML = this.attDayTable(d.list, date);
-      for (const k of ['present', 'half', 'leave', 'absent']) document.getElementById('s-' + k).textContent = d.summary[k] || 0;
-      document.getElementById('holidayBanner').innerHTML = d.holiday ? `<div class="card" style="border-left:3px solid #5b21b6;margin-bottom:12px"><b>🎉 Holiday:</b> ${UI.esc(d.holiday)}</div>` : '';
-      this.bindAttRows(c, date, reload);
+  _attInjectCss() {
+    if (document.getElementById('attx-css')) return;
+    const s = document.createElement('style');
+    s.id = 'attx-css';
+    s.textContent = `
+.attx{--bg:#f6f7fb;--card:#fff;--text:#0f172a;--muted:#667085;--border:#edeef3;--line:#f2f4f8;
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);--shadow-sm:0 1px 2px rgba(16,24,40,.05);
+  --pri:#4f46e5;--pri2:#6366f1;--pri-soft:#eef2ff;
+  --green:#16a34a;--greenb:#dcfce7;--red:#dc2626;--redb:#fee2e2;--purple:#7c3aed;--purpleb:#f3e8ff;
+  --orange:#ea580c;--orangeb:#ffedd5;--yellow:#b45309;--yellowb:#fef3c7;
+  font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:var(--text);
+  background:var(--bg);border-radius:16px;padding:18px;-webkit-font-smoothing:antialiased}
+.attx *{box-sizing:border-box}
+.attx.attx-dark{--bg:#0b1020;--card:#141a2b;--text:#e9edf7;--muted:#94a3b8;--border:#232c45;--line:#1c2440;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 14px 34px rgba(0,0,0,.42);--shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --pri:#818cf8;--pri2:#a5b4fc;--pri-soft:#1e1b4b;
+  --greenb:rgba(22,163,74,.2);--redb:rgba(220,38,38,.2);--purpleb:rgba(124,58,237,.26);--orangeb:rgba(234,88,12,.24);--yellowb:rgba(180,83,9,.3)}
+.attx-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.attx-title{font-size:22px;font-weight:800;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.attx-sub{color:var(--muted);font-size:13px;margin-top:3px}
+.attx-live{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--green);background:var(--greenb);padding:3px 10px;border-radius:20px}
+.attx-live .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(22,163,74,.5);animation:attxPulse 1.8s infinite}
+@keyframes attxPulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 7px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
+.attx-head-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.attx-tabs{display:flex;background:var(--line);border-radius:12px;padding:4px;gap:2px}
+.attx-tab{border:0;background:transparent;color:var(--muted);font-weight:600;font-size:13px;padding:7px 16px;border-radius:9px;cursor:pointer;font-family:inherit}
+.attx-tab.on{background:var(--card);color:var(--pri);box-shadow:var(--shadow-sm)}
+.attx-btn{border:1px solid var(--border);background:var(--card);color:var(--text);font-weight:600;font-size:13px;padding:8px 14px;border-radius:10px;cursor:pointer;font-family:inherit}
+.attx-btn.ghost:hover{border-color:var(--pri);color:var(--pri)}
+.attx-icon-btn{width:38px;height:38px;border:1px solid var(--border);background:var(--card);border-radius:10px;cursor:pointer;font-size:16px}
+.attx-filters{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.attx-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.attx-chip{border:1px solid var(--border);background:var(--card);color:var(--muted);font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:20px;cursor:pointer;font-family:inherit}
+.attx-chip.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.attx-datenav{display:inline-flex;align-items:center;gap:4px;margin-left:4px}
+.attx-ico{width:30px;height:30px;border:1px solid var(--border);background:var(--card);border-radius:8px;cursor:pointer;color:var(--text)}
+.attx-ico:disabled{opacity:.4;cursor:default}
+.attx-datenav input,.attx-search,.attx-select{border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:10px;padding:8px 11px;font-size:13px;font-family:inherit}
+.attx-rights{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.attx-search{min-width:210px}
+.attx-search:focus,.attx-select:focus,.attx-datenav input:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 3px var(--pri-soft)}
+.attx-holiday{background:var(--purpleb);color:var(--purple);border-radius:12px;padding:10px 14px;font-size:13px;margin-bottom:14px}
+.attx-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+.attx-kpi{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:15px 16px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px;transition:transform .15s,box-shadow .15s}
+.attx-kpi:hover{transform:translateY(-2px)}
+.attx-kpi-ico{width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:none}
+.attx-kpi-val{font-size:26px;font-weight:800;line-height:1;letter-spacing:-.02em}
+.attx-kpi-lbl{font-size:11.5px;color:var(--muted);margin-top:4px;font-weight:600}
+.k-present .attx-kpi-ico{background:var(--greenb)} .k-present .attx-kpi-val{color:var(--green)}
+.k-absent .attx-kpi-ico{background:var(--redb)} .k-absent .attx-kpi-val{color:var(--red)}
+.k-leave .attx-kpi-ico{background:var(--orangeb)} .k-leave .attx-kpi-val{color:var(--orange)}
+.k-wfh .attx-kpi-ico{background:var(--purpleb)} .k-wfh .attx-kpi-val{color:var(--purple)}
+.k-late .attx-kpi-ico{background:var(--yellowb)} .k-late .attx-kpi-val{color:var(--yellow)}
+.attx-charts{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;margin-bottom:16px}
+.attx-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+.attx-card-h{display:flex;align-items:center;justify-content:space-between;font-weight:700;font-size:14px;margin-bottom:12px;gap:10px}
+.attx-count{color:var(--muted);font-size:12px;font-weight:600}
+.attx-seg{display:flex;background:var(--line);border-radius:9px;padding:3px}
+.attx-seg button{border:0;background:transparent;color:var(--muted);font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;font-family:inherit}
+.attx-seg button.on{background:var(--card);color:var(--pri);box-shadow:var(--shadow-sm)}
+.attx-spark{width:100%;height:130px;display:block}
+.attx-spark .area{fill:url(#attxg)} .attx-spark .line{fill:none;stroke:var(--pri);stroke-width:2.4;vector-effect:non-scaling-stroke}
+.attx-spark circle{fill:var(--pri)} #attxg .g0{stop-color:var(--pri2);stop-opacity:.32} #attxg .g1{stop-color:var(--pri2);stop-opacity:0}
+.attx-spark-x{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:4px}
+.attx-depts{display:flex;flex-direction:column;gap:11px;max-height:240px;overflow:auto}
+.attx-dept-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px}
+.attx-dept-top i{color:var(--muted);font-style:normal}
+.attx-bar{height:8px;background:var(--line);border-radius:5px;overflow:hidden}
+.attx-bar-fill{height:100%;border-radius:5px;transition:width .5s ease}
+.attx-empty{color:var(--muted);font-size:13px;text-align:center;padding:22px}
+.attx-grid-card{padding:0;overflow:hidden}
+.attx-grid-card .attx-card-h{padding:16px 18px 12px}
+.attx-table-wrap{overflow:auto;max-height:560px}
+.attx-table{width:100%;border-collapse:collapse;font-size:13px}
+.attx-table thead th{position:sticky;top:0;background:var(--card);text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:11px 16px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap;z-index:2}
+.attx-table thead th:hover{color:var(--pri)} .attx-sa{font-size:9px}
+.attx-table tbody td{padding:11px 16px;border-bottom:1px solid var(--line);vertical-align:middle}
+.attx-row{cursor:pointer;transition:background .12s}
+.attx-row:hover{background:var(--pri-soft)}
+.attx-emp{display:flex;align-items:center;gap:11px;min-width:0}
+.attx-av{border-radius:50%;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:none}
+.attx-emp-meta{min-width:0} .attx-emp-meta .nm{font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.attx-emp-meta .cd{color:var(--muted);font-size:11px}
+.attx-dash{color:var(--border)} .attx-late{color:var(--yellow);font-size:11px;font-weight:700}
+.attx-badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:20px;white-space:nowrap}
+.attx-badge.b-present{background:var(--greenb);color:var(--green)}
+.attx-badge.b-absent{background:var(--redb);color:var(--red)}
+.attx-badge.b-wfh{background:var(--purpleb);color:var(--purple)}
+.attx-badge.b-leave{background:var(--orangeb);color:var(--orange)}
+.attx-badge.b-late{background:var(--yellowb);color:var(--yellow)}
+.attx-badge.b-half{background:var(--yellowb);color:var(--yellow)}
+.attx-badge.b-holiday{background:var(--purpleb);color:var(--purple)}
+.attx-srcdot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;animation:attxPulse 1.8s infinite}
+.attx-srcdot.wh{background:#0ea5e9}
+.attx-map{color:var(--pri);text-decoration:none;font-size:12px;font-weight:600}
+.attx-flash{animation:attxFlash 2s ease}
+@keyframes attxFlash{0%{background:var(--greenb)}100%{background:transparent}}
+.attx-pager{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:10px}
+.attx-pginfo{color:var(--muted);font-size:12px}
+.attx-pgbtns{display:flex;gap:6px}
+.attx-pg{border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:8px;padding:6px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.attx-pg:disabled{opacity:.4;cursor:default}
+.attx-skel{color:var(--muted);padding:40px;text-align:center}
+.attx-drawer-wrap{position:fixed;inset:0;z-index:1000}
+.attx-drawer-bd{position:absolute;inset:0;background:rgba(15,23,42,.45);opacity:0;transition:opacity .2s}
+.attx-drawer{position:absolute;top:0;right:0;height:100%;width:380px;max-width:92vw;background:var(--card);color:var(--text);box-shadow:-12px 0 40px rgba(0,0,0,.18);transform:translateX(100%);transition:transform .22s cubic-bezier(.4,0,.2,1);padding:22px;overflow:auto;font-family:'Inter',system-ui,sans-serif}
+.attx-drawer-wrap.open .attx-drawer-bd{opacity:1}
+.attx-drawer-wrap.open .attx-drawer{transform:translateX(0)}
+.attx-drawer-h{display:flex;align-items:center;gap:12px}
+.attx-drawer-id{flex:1;min-width:0} .attx-drawer-id .nm{font-weight:800;font-size:16px} .attx-drawer-id .cd{color:var(--muted);font-size:12px}
+.attx-x{border:0;background:var(--line);width:30px;height:30px;border-radius:8px;font-size:18px;cursor:pointer;color:var(--muted)}
+.attx-drawer-badge{margin:16px 0 18px}
+.attx-tl{position:relative;padding-left:6px}
+.attx-tl-i{position:relative;padding:0 0 20px 26px;border-left:2px solid var(--line)}
+.attx-tl-i:last-child{border-left-color:transparent;padding-bottom:0}
+.attx-tl-dot{position:absolute;left:-7px;top:1px;width:12px;height:12px;border-radius:50%;background:var(--border);border:2px solid var(--card)}
+.attx-tl-i.ok .attx-tl-dot{background:var(--green)} .attx-tl-i.no .attx-tl-dot{background:var(--border)}
+.attx-tl-i .t{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.attx-tl-i .v{font-size:15px;font-weight:700;margin-top:2px}
+.attx-drawer-src{margin-top:16px;color:var(--muted);font-size:12px}
+@media(max-width:1100px){.attx-charts{grid-template-columns:1fr}.attx-kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.attx-kpis{grid-template-columns:repeat(2,1fr)}.attx-filters{flex-direction:column;align-items:stretch}.attx-rights{justify-content:space-between}.attx-search{flex:1;min-width:0}.attx-head-actions{width:100%;justify-content:space-between}}
+@media(max-width:460px){.attx-kpis{grid-template-columns:1fr 1fr}.attx-title{font-size:19px}}
+`;
+    document.head.appendChild(s);
+  },
+
+  _attBoard(body) {
+    const self = this; this._attStopPoll();
+    const esc = UI.esc;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const st = { date: self._pendingAttDate || todayISO, period: self._pendingAttDate ? 'custom' : 'today', trendRange: 'week',
+      search: '', status: 'all', dept: 'all', sortKey: 'name', sortDir: 'asc', page: 1, per: 10, day: null, ins: null, prev: {} };
+    self._pendingAttDate = null; st.month = st.date.slice(0, 7);
+
+    const initials = (n) => { const p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); };
+    const hue = (n) => { let h = 7; for (const ch of String(n || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
+    const avatar = (n, sz) => `<span class="attx-av" style="width:${sz || 34}px;height:${sz || 34}px;font-size:${sz ? 14 : 12}px;background:linear-gradient(135deg,hsl(${hue(n)},66%,56%),hsl(${(hue(n) + 38) % 360},66%,46%))">${esc(initials(n))}</span>`;
+    const fmtTime = (t) => { if (!t) return null; const d = new Date(t); if (isNaN(d)) return null; let h = d.getHours(), m = d.getMinutes(), ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12; return `${h}:${String(m).padStart(2, '0')} ${ap}`; };
+    const hoursOf = (r) => { if (r.work_hours != null) return Number(r.work_hours); if (r.check_in && r.check_out) { const a = new Date(r.check_in), b = new Date(r.check_out); if (!isNaN(a) && !isNaN(b)) return Math.max(0, (b - a) / 36e5); } return null; };
+    const badge = (r) => {
+      if (r.status === 'present' && r.wfh) return '<span class="attx-badge b-wfh">WFH</span>';
+      if (r.status === 'present' && r.late_minutes > 0) return '<span class="attx-badge b-late">Late</span>';
+      if (r.status === 'present') return '<span class="attx-badge b-present">Present</span>';
+      if (r.status === 'absent') return '<span class="attx-badge b-absent">Absent</span>';
+      if (r.status === 'leave') return '<span class="attx-badge b-leave">Leave</span>';
+      if (r.status === 'half') return '<span class="attx-badge b-half">Half day</span>';
+      if (r.status === 'holiday') return '<span class="attx-badge b-holiday">Holiday</span>';
+      return `<span class="attx-badge">${esc(r.status || '-')}</span>`;
     };
-    document.getElementById('date').onchange = reload;
-    const syncBtn = document.getElementById('sync');
-    if (syncBtn) syncBtn.onclick = () => this.syncAttendance(c, reload);
-    this.bindAttRows(c, today, reload);
+    const liveTag = (r) => r.source === 'slack' ? '<span class="attx-srcdot" title="Live from Slack"></span>' : (r.source === 'webhook' ? '<span class="attx-srcdot wh" title="Live via webhook"></span>' : '');
+    const counts = () => { const L = (st.day && st.day.list) || []; return {
+      present: L.filter((r) => r.status === 'present' && !r.wfh).length,
+      wfh: L.filter((r) => r.status === 'present' && r.wfh).length,
+      absent: L.filter((r) => r.status === 'absent').length,
+      leave: L.filter((r) => r.status === 'leave' || r.status === 'half').length,
+      late: L.filter((r) => r.late_minutes > 0).length, total: L.length }; };
+    const kpiCard = (label, val, cls, icon) => `<div class="attx-kpi ${cls}"><div class="attx-kpi-ico">${icon}</div><div><div class="attx-kpi-val">${val}</div><div class="attx-kpi-lbl">${label}</div></div></div>`;
+
+    function trendsSvg() {
+      const ins = st.ins; if (!ins || !ins.days) return '<div class="attx-empty">No trend data yet.</div>';
+      let series = ins.days.filter((x) => x.type === 'working' && x.rate != null);
+      if (st.trendRange === 'week') series = series.slice(-7);
+      if (series.length < 2) return '<div class="attx-empty">Not enough data for a trend yet.</div>';
+      const W = 520, H = 130, pad = 8, n = series.length;
+      const xs = (i) => pad + (i * (W - 2 * pad) / (n - 1)), ys = (v) => H - pad - (v / 100) * (H - 2 * pad);
+      const pts = series.map((x, i) => [xs(i), ys(x.rate)]);
+      const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+      const area = line + ` L ${xs(n - 1).toFixed(1)} ${H - pad} L ${xs(0).toFixed(1)} ${H - pad} Z`;
+      const dots = pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4"><title>${series[i].date}: ${series[i].rate}%</title></circle>`).join('');
+      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="attx-spark"><defs><linearGradient id="attxg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="g0"/><stop offset="1" class="g1"/></linearGradient></defs><path d="${area}" class="area"/><path d="${line}" class="line"/>${dots}</svg><div class="attx-spark-x"><span>${UI.date(series[0].date)}</span><span>${UI.date(series[series.length - 1].date)}</span></div>`;
+    }
+    function deptBars() {
+      const d = (st.ins && st.ins.byDepartment) || [];
+      if (!d.length) return '<div class="attx-empty">No department data yet.</div>';
+      const col = (r) => r >= 90 ? 'var(--green)' : r >= 75 ? '#65a30d' : r >= 60 ? 'var(--yellow)' : r >= 40 ? 'var(--orange)' : 'var(--red)';
+      return d.map((dp) => `<div><div class="attx-dept-top"><span>${esc(dp.department || '—')} <i>(${dp.employees})</i></span><b style="color:${col(dp.avgRate)}">${dp.avgRate}%</b></div><div class="attx-bar"><div class="attx-bar-fill" style="width:${dp.avgRate}%;background:${col(dp.avgRate)}"></div></div></div>`).join('');
+    }
+    function filtered() {
+      let L = ((st.day && st.day.list) || []).slice();
+      const q = st.search.trim().toLowerCase();
+      if (q) L = L.filter((r) => (r.name || '').toLowerCase().includes(q) || (r.emp_code || '').toLowerCase().includes(q) || (r.department || '').toLowerCase().includes(q));
+      if (st.status !== 'all') L = L.filter((r) => st.status === 'present' ? (r.status === 'present' && !r.wfh) : st.status === 'wfh' ? (r.status === 'present' && r.wfh) : st.status === 'late' ? r.late_minutes > 0 : r.status === st.status);
+      if (st.dept !== 'all') L = L.filter((r) => (r.department || '—') === st.dept);
+      const dir = st.sortDir === 'asc' ? 1 : -1;
+      L.sort((a, b) => { let x, y;
+        if (st.sortKey === 'checkin') { x = a.check_in || ''; y = b.check_in || ''; }
+        else if (st.sortKey === 'hours') { x = hoursOf(a) == null ? -1 : hoursOf(a); y = hoursOf(b) == null ? -1 : hoursOf(b); }
+        else if (st.sortKey === 'status') { x = a.status || ''; y = b.status || ''; }
+        else if (st.sortKey === 'department') { x = (a.department || '').toLowerCase(); y = (b.department || '').toLowerCase(); }
+        else { x = (a.name || '').toLowerCase(); y = (b.name || '').toLowerCase(); }
+        return x < y ? -dir : x > y ? dir : 0; });
+      return L;
+    }
+    function gridHtml() {
+      const L = filtered();
+      const pages = Math.max(1, Math.ceil(L.length / st.per));
+      if (st.page > pages) st.page = pages;
+      const rows = L.slice((st.page - 1) * st.per, st.page * st.per);
+      const arrow = (k) => st.sortKey === k ? (st.sortDir === 'asc' ? '▲' : '▼') : '';
+      const th = (k, l) => `<th data-sort="${k}">${l} <span class="attx-sa">${arrow(k)}</span></th>`;
+      return `<div class="attx-table-wrap"><table class="attx-table"><thead><tr>
+        ${th('name', 'Employee')}${th('department', 'Department')}${th('checkin', 'Check In')}<th>Check Out</th>${th('hours', 'Hours')}${th('status', 'Status')}<th>Location</th>
+      </tr></thead><tbody>${rows.length ? rows.map((r) => {
+        const ci = fmtTime(r.check_in), co = fmtTime(r.check_out), h = hoursOf(r);
+        return `<tr class="attx-row" data-emp="${r.id}">
+          <td><div class="attx-emp">${avatar(r.name)}<div class="attx-emp-meta"><span class="nm">${esc(r.name)}${liveTag(r)}</span><span class="cd">${esc(r.emp_code || '—')}</span></div></div></td>
+          <td>${esc(r.department || '—')}</td>
+          <td>${ci ? `<b>${ci}</b>` : '<span class="attx-dash">—</span>'}${r.late_minutes > 0 ? ` <span class="attx-late">+${UI.duration(r.late_minutes)}</span>` : ''}</td>
+          <td>${co || '<span class="attx-dash">—</span>'}</td>
+          <td>${h != null ? h.toFixed(1) + 'h' : '<span class="attx-dash">—</span>'}</td>
+          <td>${badge(r)}</td>
+          <td>${(r.in_lat != null && r.in_lng != null) ? `<a class="attx-map" href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" rel="noopener">📍 Map</a>` : '<span class="attx-dash">—</span>'}</td>
+        </tr>`; }).join('') : '<tr><td colspan="7"><div class="attx-empty">No employees match these filters.</div></td></tr>'}</tbody></table></div>
+      <div class="attx-pager"><span class="attx-pginfo">${L.length} record${L.length !== 1 ? 's' : ''} · page ${st.page}/${pages}</span><div class="attx-pgbtns"><button class="attx-pg" data-pg="prev" ${st.page <= 1 ? 'disabled' : ''}>‹ Prev</button><button class="attx-pg" data-pg="next" ${st.page >= pages ? 'disabled' : ''}>Next ›</button></div></div>`;
+    }
+    function regrid() { const g = body.querySelector('#attx-grid'); if (g) { g.innerHTML = gridHtml(); bindGrid(); } }
+    function bindGrid() {
+      body.querySelectorAll('.attx-table th[data-sort]').forEach((th) => th.onclick = () => { const k = th.dataset.sort; if (st.sortKey === k) st.sortDir = st.sortDir === 'asc' ? 'desc' : 'asc'; else { st.sortKey = k; st.sortDir = 'asc'; } regrid(); });
+      body.querySelectorAll('.attx-pg').forEach((b) => b.onclick = () => { if (b.disabled) return; st.page += b.dataset.pg === 'next' ? 1 : -1; regrid(); });
+      body.querySelectorAll('.attx-row').forEach((tr) => tr.onclick = () => openDrawer(Number(tr.dataset.emp)));
+    }
+    function openDrawer(id) {
+      const r = ((st.day && st.day.list) || []).find((x) => x.id === id); if (!r) return;
+      const ci = fmtTime(r.check_in), co = fmtTime(r.check_out), h = hoursOf(r);
+      const root = body.closest('.attx') || document.body;
+      const w = document.createElement('div'); w.className = 'attx-drawer-wrap';
+      w.innerHTML = `<div class="attx-drawer-bd"></div><aside class="attx-drawer">
+        <div class="attx-drawer-h">${avatar(r.name, 46)}<div class="attx-drawer-id"><div class="nm">${esc(r.name)}</div><div class="cd">${esc(r.emp_code || '—')} · ${esc(r.department || '—')}</div></div><button class="attx-x">×</button></div>
+        <div class="attx-drawer-badge">${badge(r)}</div>
+        <div class="attx-tl">
+          <div class="attx-tl-i ${ci ? 'ok' : 'no'}"><span class="attx-tl-dot"></span><div><div class="t">Check In</div><div class="v">${ci || 'Not checked in'}</div></div></div>
+          <div class="attx-tl-i ${co ? 'ok' : 'no'}"><span class="attx-tl-dot"></span><div><div class="t">Check Out</div><div class="v">${co || '—'}</div></div></div>
+          <div class="attx-tl-i"><span class="attx-tl-dot"></span><div><div class="t">Total Hours</div><div class="v">${h != null ? h.toFixed(1) + ' hours' : '—'}</div></div></div>
+          <div class="attx-tl-i ${r.status === 'present' ? 'ok' : 'no'}"><span class="attx-tl-dot"></span><div><div class="t">Status</div><div class="v" style="text-transform:capitalize">${esc(r.status)}${r.wfh ? ' · WFH' : ''}${r.late_minutes > 0 ? ' · Late ' + UI.duration(r.late_minutes) : ''}</div></div></div>
+        </div>
+        ${r.source ? `<div class="attx-drawer-src">Recorded via ${r.source === 'slack' ? '💬 Slack' : r.source === 'webhook' ? '🔗 Webhook' : esc(r.source)}</div>` : ''}
+        ${(r.in_lat != null && r.in_lng != null) ? `<a class="attx-btn ghost" href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" rel="noopener" style="margin-top:14px;display:inline-block">📍 View location</a>` : ''}
+      </aside>`;
+      root.appendChild(w);
+      requestAnimationFrame(() => w.classList.add('open'));
+      const close = () => { w.classList.remove('open'); setTimeout(() => w.remove(), 240); };
+      w.querySelector('.attx-drawer-bd').onclick = close; w.querySelector('.attx-x').onclick = close;
+    }
+    function render() {
+      const c = counts();
+      const depts = [...new Set(((st.day && st.day.list) || []).map((r) => r.department || '—'))].sort();
+      const isToday = st.date === todayISO;
+      body.innerHTML = `
+        <div class="attx-filters">
+          <div class="attx-chips">
+            ${[['today', 'Today'], ['week', 'This Week'], ['month', 'This Month'], ['custom', 'Custom']].map(([v, l]) => `<button class="attx-chip ${st.period === v ? 'on' : ''}" data-period="${v}">${l}</button>`).join('')}
+            <span class="attx-datenav"><button class="attx-ico" data-nav="-1">‹</button><input type="date" id="attx-date" value="${st.date}" max="${todayISO}"><button class="attx-ico" data-nav="1" ${isToday ? 'disabled' : ''}>›</button></span>
+          </div>
+          <div class="attx-rights">
+            <input type="search" id="attx-search" class="attx-search" placeholder="Search name, code, dept…" value="${esc(st.search)}">
+            <select id="attx-fstatus" class="attx-select">${[['all', 'All status'], ['present', 'Present'], ['wfh', 'WFH'], ['late', 'Late'], ['leave', 'Leave'], ['absent', 'Absent']].map(([v, l]) => `<option value="${v}" ${st.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+            <select id="attx-fdept" class="attx-select"><option value="all">All departments</option>${depts.map((d) => `<option value="${esc(d)}" ${st.dept === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
+          </div>
+        </div>
+        ${st.day && st.day.holiday ? `<div class="attx-holiday">🎉 Holiday: <b>${esc(st.day.holiday)}</b></div>` : ''}
+        <div class="attx-kpis">
+          ${kpiCard('Present', c.present, 'k-present', '✅')}
+          ${kpiCard('Absent', c.absent, 'k-absent', '🚫')}
+          ${kpiCard('On Leave', c.leave, 'k-leave', '🌴')}
+          ${kpiCard('Work From Home', c.wfh, 'k-wfh', '🏠')}
+          ${kpiCard('Late Arrivals', c.late, 'k-late', '⏰')}
+        </div>
+        <div class="attx-charts">
+          <div class="attx-card">
+            <div class="attx-card-h"><span>📈 Attendance Trend</span><div class="attx-seg">${[['week', '7D'], ['month', 'Month']].map(([v, l]) => `<button class="${st.trendRange === v ? 'on' : ''}" data-trend="${v}">${l}</button>`).join('')}</div></div>
+            ${trendsSvg()}
+          </div>
+          <div class="attx-card">
+            <div class="attx-card-h"><span>🏢 Department-wise Attendance</span></div>
+            <div class="attx-depts">${deptBars()}</div>
+          </div>
+        </div>
+        <div class="attx-card attx-grid-card">
+          <div class="attx-card-h"><span>🗓 ${isToday ? 'Today' : UI.date(st.date)} · Team Attendance</span><span class="attx-count">${c.total} employees</span></div>
+          <div id="attx-grid">${gridHtml()}</div>
+        </div>`;
+      // bind
+      body.querySelectorAll('.attx-chip').forEach((b) => b.onclick = () => { const p = b.dataset.period; st.period = p; if (p === 'today' || p === 'week') { st.date = todayISO; st.trendRange = 'week'; } else if (p === 'month') { st.date = todayISO; st.trendRange = 'month'; } st.month = st.date.slice(0, 7); st.page = 1; loadAll(); });
+      const di = body.querySelector('#attx-date'); if (di) di.onchange = () => { st.date = di.value || todayISO; st.period = 'custom'; st.month = st.date.slice(0, 7); st.page = 1; loadAll(); };
+      body.querySelectorAll('[data-nav]').forEach((b) => b.onclick = () => { const d = new Date(st.date + 'T00:00:00'); d.setDate(d.getDate() + Number(b.dataset.nav)); const ns = d.toISOString().slice(0, 10); if (ns > todayISO) return; st.date = ns; st.period = 'custom'; st.month = st.date.slice(0, 7); st.page = 1; loadAll(); });
+      body.querySelectorAll('[data-trend]').forEach((b) => b.onclick = () => { st.trendRange = b.dataset.trend; const card = body.querySelector('.attx-charts .attx-card'); render(); });
+      const s = body.querySelector('#attx-search'); if (s) s.oninput = () => { st.search = s.value; st.page = 1; regrid(); };
+      const fs = body.querySelector('#attx-fstatus'); if (fs) fs.onchange = () => { st.status = fs.value; st.page = 1; regrid(); };
+      const fd = body.querySelector('#attx-fdept'); if (fd) fd.onchange = () => { st.dept = fd.value; st.page = 1; regrid(); };
+      bindGrid();
+    }
+    async function loadAll() {
+      self._attStopPoll();
+      body.innerHTML = '<div class="attx-skel">Loading attendance…</div>';
+      const [day, ins] = await Promise.all([
+        api.get('/attendance/day?date=' + st.date).catch(() => ({ summary: {}, list: [], holiday: null })),
+        api.get('/attendance/insights?month=' + st.month).catch(() => null),
+      ]);
+      st.day = day; st.ins = ins; st.prev = {}; (day.list || []).forEach((r) => { st.prev[r.id] = r.status + '|' + (r.check_in || ''); });
+      render();
+      startPoll();
+    }
+    function startPoll() {
+      self._attStopPoll();
+      if (st.date !== todayISO) return; // live updates only make sense for today
+      self._attPoll = setInterval(async () => {
+        if (!document.body.contains(body)) { self._attStopPoll(); return; }
+        try {
+          const d = await api.get('/attendance/day?date=' + st.date);
+          const changed = [];
+          (d.list || []).forEach((r) => { const key = r.status + '|' + (r.check_in || ''); if (st.prev[r.id] !== undefined && st.prev[r.id] !== key) changed.push(r.id); st.prev[r.id] = key; });
+          st.day = d;
+          const c = counts(); const vals = [c.present, c.absent, c.leave, c.wfh, c.late];
+          body.querySelectorAll('.attx-kpi-val').forEach((el, i) => { if (vals[i] != null) el.textContent = vals[i]; });
+          regrid();
+          changed.forEach((id) => { const tr = body.querySelector('.attx-row[data-emp="' + id + '"]'); if (tr) tr.classList.add('attx-flash'); });
+        } catch (e) {}
+      }, 30000);
+    }
+    loadAll();
   },
 
   async attendanceInsights(c) {
@@ -836,7 +1147,7 @@ const AdminViews = {
       c.querySelectorAll('.ins-day').forEach((el) => el.onclick = () => {
         AdminViews._pendingAttDate = el.dataset.date;
         const parent = c.closest('#view') || document;
-        const tabBtn = parent.querySelector('.att-tab[data-tab="daily"]');
+        const tabBtn = parent.querySelector('.attx-tab[data-tab="board"]');
         if (tabBtn) tabBtn.click();
       });
 
@@ -844,64 +1155,6 @@ const AdminViews = {
     };
 
     load(thisMonth);
-  },
-
-  attDayTable(list, date) {
-    return UI.table([
-      { key: 'emp_code', label: 'Code' },
-      { key: 'name', label: 'Employee' },
-      { key: 'department', label: 'Dept', render: (r) => UI.esc(r.department || '-') },
-      { key: 'check_in', label: 'Marked At', render: (r) => r.check_in ? '<b>' + UI.time(r.check_in) + '</b>' : '<span style="color:#cbd5e1">—</span>' },
-      { key: 'late', label: 'Late By', render: (r) => r.late_minutes > 0 ? '<span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700">⏰ ' + UI.duration(r.late_minutes) + '</span>' : (r.marked ? '<span style="color:#16a34a;font-size:12px">On time</span>' : '<span style="color:#cbd5e1">—</span>') },
-      { key: 'status', label: 'Status', render: (r) => UI.tag(r.status) + (r.wfh ? ' <span title="Work from home" style="font-size:12px">🏠</span>' : '') + (r.source === 'slack' ? ' <span title="Marked via Slack" style="font-size:11px;color:#6b7280">💬</span>' : '') },
-      { key: 'location', label: 'Location', render: (r) => (r.in_lat != null && r.in_lng != null)
-        ? `<a href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" rel="noopener" title="Marked from this location">📍 Map</a>${r.in_geofenced === 0 ? ' <span title="Outside office radius" style="font-size:11px;color:#dc2626">⚠ off-site</span>' : (r.in_geofenced === 1 ? ' <span title="At office" style="font-size:11px;color:#16a34a">✓</span>' : '')}`
-        : '<span style="color:#cbd5e1">—</span>' },
-      { key: 'mood', label: 'Mood', render: (r) => r.mood_note ? `<span title="${UI.esc(r.mood_note)}">${UI.mood(r.mood_score)}</span>` : UI.mood(r.mood_score) },
-      { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-edit="${r.id}">Edit</button> <button class="btn sm red" data-del="${r.id}">Delete</button>` },
-    ], list, 'No active employees.');
-  },
-
-  bindAttRows(c, date, reload) {
-    document.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => this.editAttendance(b.dataset.edit, date, reload));
-    document.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
-      if (!confirm('Delete this attendance record for ' + date + '?')) return;
-      try { await api.post('/attendance/delete', { employee_id: Number(b.dataset.del), date }); UI.toast('Deleted.', 'success'); reload(); }
-      catch (e) { UI.toast(e.message, 'error'); }
-    });
-  },
-
-  editAttendance(employeeId, date, reload) {
-    const hhmm = (t) => {
-      if (!t) return '';
-      const d = new Date(t); if (isNaN(d)) return '';
-      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    };
-    // Pull current row from the table to prefill.
-    const m = UI.modal({
-      title: 'Edit Attendance — ' + date,
-      bodyHtml: `
-        <div class="field"><label>Status</label>
-          <select id="status"><option value="present">Present</option><option value="half">Half Day</option><option value="leave">On Leave</option><option value="absent">Absent</option></select>
-        </div>
-        <div class="form-grid">
-          <div class="field"><label>Clock In</label><input type="time" id="cin" /></div>
-          <div class="field"><label>Clock Out</label><input type="time" id="cout" /></div>
-        </div>`,
-      footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="save">Save</button>`,
-    });
-    m.root.querySelector('[data-close-btn]').onclick = m.close;
-    m.root.querySelector('#save').onclick = async () => {
-      try {
-        await api.post('/attendance/mark', {
-          employee_id: Number(employeeId), date,
-          status: m.root.querySelector('#status').value,
-          check_in: m.root.querySelector('#cin').value,
-          check_out: m.root.querySelector('#cout').value,
-        });
-        m.close(); UI.toast('Saved.', 'success'); reload();
-      } catch (e) { UI.toast(e.message, 'error'); }
-    };
   },
 
   syncAttendance(c, reload) {
