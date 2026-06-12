@@ -8,6 +8,34 @@ const config = require('./config');
 const db = require('./db'); // Postgres adapter — schema/seed run via db.init() at startup
 const { sendFile } = require('./services/filestore');
 
+// --- Crash-proofing -------------------------------------------------------
+// Express 4 does NOT forward a rejected promise from an async route handler to
+// the error middleware; it becomes an unhandledRejection and, on modern Node,
+// kills the process. That means one malformed request (e.g. a non-numeric :id
+// reaching Postgres) could take the whole server down. Patch the router Layer
+// so async rejections are forwarded to next(err) → the central error handler.
+const Layer = require('express/lib/router/layer');
+const _handleRequest = Layer.prototype.handle_request;
+Layer.prototype.handle_request = function (req, res, next) {
+  const fn = this.handle;
+  if (fn && !fn.__asyncWrapped && typeof fn === 'function' && fn.length < 4) {
+    const wrapped = function (rq, rs, nx) {
+      let out;
+      try { out = fn.call(this, rq, rs, nx); } catch (e) { return nx(e); }
+      if (out && typeof out.then === 'function') out.catch(nx);
+      return out;
+    };
+    wrapped.__asyncWrapped = true;
+    this.handle = wrapped;
+  }
+  return _handleRequest.call(this, req, res, next);
+};
+
+// Last-resort backstops: even if something slips past the above, log and keep
+// the process alive instead of crashing the whole HRMS for every user.
+process.on('unhandledRejection', (reason) => console.error('UnhandledRejection:', reason));
+process.on('uncaughtException', (err) => console.error('UncaughtException:', err));
+
 const app = express();
 
 // Behind a hosting proxy (Railway/Render/Fly), trust the first proxy hop so
@@ -114,6 +142,28 @@ app.use('/api/automation', require('./routes/automation'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/careers', require('./routes/careers'));
 
+// --- Numeric id guard -----------------------------------------------------
+// All :id / :employeeId / :docId / :taskId / :jobId / :applicantId params map
+// to integer primary keys. A non-numeric value (e.g. /api/employees/abc) would
+// otherwise reach Postgres and throw an "invalid input syntax for integer"
+// error → an ugly 500. Register a param validator on EVERY mounted router so
+// any non-positive-integer id returns a clean 404 instead. (app.param does not
+// propagate to sub-routers, so we walk the router stack and register on each.)
+(function installIdGuards() {
+  const NUMERIC_PARAMS = ['id', 'employeeId', 'docId', 'taskId', 'jobId', 'applicantId', 'goalId', 'reviewId'];
+  const guard = (req, res, next, val) => {
+    if (!/^[1-9][0-9]{0,17}$/.test(String(val))) return res.status(404).json({ error: 'Not found.' });
+    next();
+  };
+  const stack = (app._router && app._router.stack) || [];
+  for (const layer of stack) {
+    const r = layer.handle;
+    if (r && typeof r.param === 'function' && Array.isArray(r.stack)) {
+      for (const name of NUMERIC_PARAMS) r.param(name, guard);
+    }
+  }
+})();
+
 // Public pre-boarding portal page (no login). A candidate opens this with a
 // private token to fill their joining form & upload documents before Day 1.
 app.get('/preboard/:token', (req, res) => {
@@ -143,9 +193,21 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   },
 }));
 
+// Central error handler. Map common Postgres input errors to a clean 400 so a
+// malformed value (non-numeric id, oversized number, bad date, null byte)
+// returns a friendly response instead of a 500.
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({ error: err.message || 'Server error' });
+  const code = err && err.code;
+  // Body-parser / client errors carry an explicit status (e.g. malformed JSON → 400).
+  if (err && (err.status || err.statusCode) && (err.status || err.statusCode) < 500) {
+    return res.status(err.status || err.statusCode).json({ error: 'Invalid request.' });
+  }
+  if (['22P02', '22007', '22008', '22021', '22023'].includes(code)) {
+    return res.status(400).json({ error: 'Invalid input.' });
+  }
+  if (code === '22003') return res.status(400).json({ error: 'A value is out of the allowed range.' });
+  res.status(500).json({ error: (err && err.message) || 'Server error' });
 });
 
 const port = config.port || 4000;

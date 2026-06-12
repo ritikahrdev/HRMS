@@ -24,10 +24,17 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
     const empId = myEmpId(req, res); if (!empId) return;
     const { title, amount, category } = req.body || {};
     if (!title || !amount) return res.status(400).json({ error: 'Title and amount are required.' });
+    if (typeof amount === 'string' && !/^\d+(\.\d+)?$/.test(amount.trim())) {
+      return res.status(400).json({ error: 'Amount must be a number between 1 and 10,000,000.' });
+    }
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 10000000) {
+      return res.status(400).json({ error: 'Amount must be a number between 1 and 10,000,000.' });
+    }
     const billKey = req.file ? await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname) : null;
     const r = await db.prepare(
       'INSERT INTO reimbursements (employee_id, title, category, amount, bill_file) VALUES (?, ?, ?, ?, ?)'
-    ).run(empId, title, category || '', Number(amount) || 0, billKey);
+    ).run(empId, title, category || '', amt, billKey);
 
     const id = r.lastInsertRowid;
     const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);

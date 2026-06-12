@@ -92,8 +92,9 @@ router.post('/entry', requireLogin, async (req, res) => {
     if (date > todayISO) return res.status(400).json({ error: "You can't log time for a future date." });
     const monthAgo = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
     if (date < monthAgo) return res.status(400).json({ error: 'Time entries older than 30 days are locked. Ask HR if you need a correction.' });
+    if (typeof hours === 'string' && !/^\d+(\.\d+)?$/.test(hours.trim())) return res.status(400).json({ error: 'Hours must be a number between 0 and 24.' });
     const h = Number(hours);
-    if (!(h > 0) || h > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24.' });
+    if (!Number.isFinite(h) || h <= 0 || h > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24.' });
     const r = await db.prepare(
       'INSERT INTO timesheet_entries (employee_id, project_id, date, hours, task, billable, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(empId, project_id || null, date, h, task || null, billable === false ? 0 : 1, notes || null, 'draft');

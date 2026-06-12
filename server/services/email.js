@@ -68,6 +68,14 @@ async function sendMail({ to, subject, html, text, attachments }) {
     'INSERT INTO email_log (to_addr, subject, status, error, body) VALUES (?, ?, ?, ?, ?)'
   );
 
+  // Test kill-switch: when MAIL_DISABLED=1 (used by the test suites), skip the
+  // real send entirely so automated runs never email real people. Still logged
+  // so flows that read email_log keep working.
+  if (process.env.MAIL_DISABLED === '1') {
+    await logStmt.run(to || '', subject || '', 'skipped', 'MAIL_DISABLED', text || html || '');
+    return { ok: true, skipped: true };
+  }
+
   if (!to) {
     await logStmt.run('', subject || '', 'error', 'No recipient', '');
     return { ok: false, reason: 'no-recipient' };

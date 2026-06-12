@@ -9,6 +9,14 @@ const accrual = require('../services/leaveAccrual');
 
 const router = express.Router();
 
+// True only for a real calendar date in YYYY-MM-DD form (rejects 2026-13-40,
+// 2026-02-30, etc. that pass a naive regex but aren't real dates).
+function isRealDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 function daysBetween(from, to) {
   const a = new Date(from + 'T00:00:00');
   const b = new Date(to + 'T00:00:00');
@@ -35,7 +43,10 @@ router.post('/', requireLogin, async (req, res) => {
     const { type, from_date, to_date, reason } = req.body || {};
     const halfDay = req.body && (req.body.half_day === true || req.body.half_day === 1 || req.body.half_day === '1');
     if (!type || !from_date || !to_date) return res.status(400).json({ error: 'Type, from and to dates are required.' });
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(from_date) || !/^\d{4}-\d{2}-\d{2}$/.test(to_date)) return res.status(400).json({ error: 'Dates must be valid (YYYY-MM-DD).' });
+    // The leave type must be one your company actually offers.
+    const validCodes = leaveTypes().map((t) => t.code);
+    if (!validCodes.includes(type)) return res.status(400).json({ error: 'Unknown leave type. Choose one of: ' + validCodes.join(', ') + '.' });
+    if (!isRealDate(from_date) || !isRealDate(to_date)) return res.status(400).json({ error: 'Dates must be valid calendar dates (YYYY-MM-DD).' });
     if (to_date < from_date) return res.status(400).json({ error: 'End date cannot be before start date.' });
     if (halfDay && from_date !== to_date) return res.status(400).json({ error: 'A half-day leave must be for a single date.' });
     // No backdated applications: leave starts today or later. (Missed marking a

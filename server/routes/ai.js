@@ -13,7 +13,12 @@ const router = express.Router();
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function daysBetween(from, to) { return Math.floor((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5) + 1; }
-const ISODATE = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+// Strict: real calendar date in YYYY-MM-DD (rejects 2026-13-40, 2026-02-30…).
+const ISODATE = (s) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) return false;
+  const d = new Date(s + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
 
 // ===== In-chat actions the assistant can perform (always confirmed first) =====
 // Each: { availability(req)->bool, params hint, summary(p)->text, run(req,p)->msg }.
@@ -30,6 +35,8 @@ const ACTIONS = {
       if (p.to_date < p.from_date) throw new Error('End date cannot be before start date.');
       if (p.from_date < todayStr()) throw new Error('Leave cannot start in the past. For a past date, raise an attendance request instead.');
       if (daysBetween(p.from_date, p.to_date) > 60) throw new Error('A single leave request cannot exceed 60 days.');
+      const yearAhead = new Date(); yearAhead.setFullYear(yearAhead.getFullYear() + 1);
+      if (p.from_date > yearAhead.toISOString().slice(0, 10)) throw new Error('Leave cannot be applied more than a year in advance.');
       const half = !!p.half_day;
       if (half && p.from_date !== p.to_date) throw new Error('A half-day leave must be a single date.');
       const days = half ? 0.5 : daysBetween(p.from_date, p.to_date);
