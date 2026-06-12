@@ -92,6 +92,19 @@ const App = {
   // Product branding (the software's own name; the company is separate).
   PRODUCT: { name: 'Hrika', tagline: 'your people, handled' },
 
+  // The Hrika AI bot icon (inline SVG so it's crisp at any size, white on the orb).
+  AI_ICON(size) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+      <rect x="4.5" y="8" width="15" height="11" rx="3.5"/>
+      <path d="M12 8V5.2"/>
+      <circle cx="12" cy="3.7" r="1.5" fill="#fff" stroke="none"/>
+      <circle cx="9" cy="12.6" r="1.25" fill="#fff" stroke="none"/>
+      <circle cx="15" cy="12.6" r="1.25" fill="#fff" stroke="none"/>
+      <path d="M9.3 16.1c.8.8 1.7 1.1 2.7 1.1s1.9-.3 2.7-1.1"/>
+      <path d="M2.5 12.5v3M21.5 12.5v3"/>
+    </svg>`;
+  },
+
   initials(name) {
     const parts = String(name || '?').trim().split(/\s+/);
     return ((parts[0] || '')[0] || '') + (parts.length > 1 ? (parts[parts.length - 1][0] || '') : '');
@@ -199,10 +212,10 @@ const App = {
         .ai-send:hover{filter:brightness(1.12)}.ai-chip:hover{background:#f1edff;border-color:#c4b5fd}
         #aiInput:focus{border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.18)}
       </style>
-      <div id="aiFab" title="Ask Hrika AI" style="position:fixed;right:22px;bottom:22px;z-index:60;width:60px;height:60px;border-radius:50%;background:radial-gradient(circle at 30% 28%,#a78bfa,#7c3aed 58%,#6366f1);color:#fff;font-size:27px;display:flex;align-items:center;justify-content:center;cursor:pointer;animation:aiOrbPulse 2.6s infinite">✦</div>
+      <div id="aiFab" title="Ask Hrika AI" style="position:fixed;right:22px;bottom:22px;z-index:60;width:60px;height:60px;border-radius:50%;background:radial-gradient(circle at 30% 28%,#a78bfa,#7c3aed 58%,#6366f1);color:#fff;font-size:27px;display:flex;align-items:center;justify-content:center;cursor:pointer;animation:aiOrbPulse 2.6s infinite">${this.AI_ICON(32)}</div>
       <div id="aiPanel" style="position:fixed;right:22px;bottom:96px;z-index:60;width:392px;max-width:93vw;height:560px;max-height:74vh;background:#fff;border-radius:22px;box-shadow:0 24px 60px rgba(60,40,140,.28);display:none;flex-direction:column;overflow:hidden;border:1px solid rgba(124,58,237,.14)">
         <div style="padding:15px 18px;color:#fff;background:linear-gradient(110deg,#6d28d9,#7c3aed,#c026d3,#7c3aed);background-size:220% 100%;animation:aiAurora 9s linear infinite;display:flex;align-items:center;gap:12px">
-          <div style="width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:20px">✦</div>
+          <div style="width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center">${this.AI_ICON(22)}</div>
           <div style="flex:1"><div style="font-weight:800;font-size:16px;line-height:1.1">Hrika AI</div><div style="font-size:11px;opacity:.88">your HR copilot · ask, or tell me to do it</div></div>
           <span id="aiClose" style="cursor:pointer;font-size:20px;opacity:.9">✕</span>
         </div>
@@ -265,7 +278,7 @@ const App = {
     const send = document.getElementById('aiSend');
     if (!fab) return;
     this._aiHistory = [];
-    const AV = '<div style="width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#a78bfa,#7c3aed);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;flex:none">✦</div>';
+    const AV = '<div style="width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#a78bfa,#7c3aed);color:#fff;display:flex;align-items:center;justify-content:center;flex:none">' + App.AI_ICON(16) + '</div>';
     const scroll = () => { msgs.scrollTop = msgs.scrollHeight; };
     // me -> right gradient bubble; ai -> orb + bubble (caller passes ready HTML).
     const bubble = (who, html) => {
@@ -286,7 +299,7 @@ const App = {
       msgs.insertAdjacentHTML('beforeend', `<div style="margin:2px 0 10px 34px"><button id="${id}" style="border:none;border-radius:20px;padding:8px 17px;background:linear-gradient(135deg,#7c3aed,#c026d3);color:#fff;font-weight:600;font-size:13px;cursor:pointer">→ ${UI.esc(nav.label || 'Open page')}</button></div>`);
       scroll();
       const b = document.getElementById(id);
-      if (b) b.onclick = () => { location.hash = nav.route; panel.style.display = 'none'; fab.textContent = '✦'; };
+      if (b) b.onclick = () => { location.hash = nav.route; panel.style.display = 'none'; fab.innerHTML = App.AI_ICON(32); };
     };
     const actionCard = (pa) => {
       const id = 'act' + Date.now();
@@ -343,13 +356,14 @@ const App = {
     };
 
     let opened = false;
+    const fabIcon = (open) => { fab.innerHTML = open ? '<span style="font-size:26px;line-height:1">✕</span>' : App.AI_ICON(32); };
     fab.onclick = () => {
       const show = panel.style.display === 'none';
       panel.style.display = show ? 'flex' : 'none';
-      if (show) { panel.style.animation = 'aiPop .22s ease'; fab.textContent = '✕'; if (!opened) { opened = true; greet(); } setTimeout(() => input.focus(), 60); }
-      else fab.textContent = '✦';
+      if (show) { panel.style.animation = 'aiPop .22s ease'; fabIcon(true); if (!opened) { opened = true; greet(); } setTimeout(() => input.focus(), 60); }
+      else fabIcon(false);
     };
-    document.getElementById('aiClose').onclick = () => { panel.style.display = 'none'; fab.textContent = '✦'; };
+    document.getElementById('aiClose').onclick = () => { panel.style.display = 'none'; fabIcon(false); };
     send.onclick = ask;
     input.onkeydown = (e) => { if (e.key === 'Enter') ask(); };
   },
