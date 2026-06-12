@@ -157,6 +157,11 @@ router.put('/me/onboarding', requireLogin, async (req, res) => {
   try {
     const empId = req.session.user.employeeId;
     if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
+    // Once submitted, the form is locked — changes go through HR.
+    const cur = await db.prepare('SELECT onboarding_submitted FROM employees WHERE id = ?').get(empId);
+    if (cur && cur.onboarding_submitted) {
+      return res.status(400).json({ error: 'Your onboarding form is already submitted and locked. Please contact HR to change any details.' });
+    }
     const updates = {};
     for (const f of SELF_ONBOARDING_FIELDS) {
       if (f in req.body) updates[f] = req.body[f] == null ? null : String(req.body[f]).trim();
@@ -177,6 +182,9 @@ router.post('/me/onboarding/submit', requireLogin, async (req, res) => {
     if (!empId) return res.status(400).json({ error: 'No employee record is linked to your login. Please contact HR.' });
     const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (emp.onboarding_submitted) {
+      return res.status(400).json({ error: 'Your onboarding form is already submitted. HR has been notified — no need to submit again.' });
+    }
 
     // Enforce: every field filled + every required document uploaded.
     const missingFields = ONBOARDING_REQUIRED_FIELDS.filter((f) => !String(emp[f] == null ? '' : emp[f]).trim());

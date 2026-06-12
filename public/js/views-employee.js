@@ -897,6 +897,50 @@ const EmployeeViews = {
     const required = App.requiredDocs || [];
     const submitted = !!employee.onboarding_submitted;
 
+    // Once submitted, the form is LOCKED (the server enforces this too) —
+    // show a read-only summary instead of editable fields.
+    if (submitted) {
+      const ROWS = [
+        ['Phone', 'phone'], ['Personal Email', 'personal_email'], ['Date of Birth', 'dob'],
+        ['Gender', 'gender'], ['Blood Group', 'blood_group'], ['Marital Status', 'marital_status'],
+        ['Nationality', 'nationality'], ['Languages', 'languages_known'],
+        ['Current Address', 'current_address'], ['Permanent Address', 'permanent_address'],
+        ['Emergency Contact', 'emergency_name'], ['Emergency Phone', 'emergency_phone'],
+        ['Bank', 'bank_name'], ['Account Holder', 'bank_holder_name'], ['Account No.', 'bank_account'], ['IFSC', 'ifsc'],
+        ['PAN', 'pan'], ['Aadhaar / ID', 'aadhaar'], ['Education', 'education'], ['Experience', 'experience'],
+      ];
+      c.innerHTML = `
+        <div class="toolbar"><div class="section-title" style="margin:0">📋 My Onboarding</div></div>
+        <div class="card" style="border-left:4px solid #16a34a;max-width:760px">
+          <div style="display:flex;gap:12px;align-items:center">
+            <div style="font-size:34px">✅</div>
+            <div>
+              <b style="font-size:16px">Onboarding submitted${employee.onboarding_submitted_at ? ' on ' + UI.date(employee.onboarding_submitted_at) : ''} — form locked</b>
+              <div class="muted" style="font-size:13px;margin-top:3px">HR is verifying your details and documents. Spotted a mistake? Contact HR — they can update your record.</div>
+            </div>
+          </div>
+        </div>
+        <div class="card mt" style="max-width:760px">
+          <div class="section-title">Your submitted details <span class="muted" style="font-size:12px">(read-only)</span></div>
+          <table>${ROWS.map(([l, k]) => `<tr><td class="muted" style="width:190px">${l}</td><td>${UI.esc(k === 'dob' ? String(employee[k] || '').slice(0, 10) : (employee[k] || '—'))}</td></tr>`).join('')}</table>
+        </div>
+        <div class="card mt" style="max-width:760px">
+          <div class="section-title">Your documents</div>
+          <div id="ofDocsRO" class="muted">Loading…</div>
+        </div>`;
+      api.get('/employees/' + employee.id + '/documents').then(({ documents, checklist }) => {
+        const docs = documents || [];
+        document.getElementById('ofDocsRO').innerHTML = docs.length
+          ? UI.table([
+              { key: 'title', label: 'Document', render: (d) => UI.esc(d.doc_type || d.title) },
+              { key: 'status', label: 'Verification', render: (d) => UI.tag(d.status || 'pending') },
+              { key: 'uploaded_at', label: 'Uploaded', render: (d) => UI.date(d.uploaded_at) },
+            ], docs, 'No documents.')
+          : '<div class="empty">No documents uploaded.</div>';
+      }).catch(() => { document.getElementById('ofDocsRO').innerHTML = '<div class="muted">Could not load documents.</div>'; });
+      return;
+    }
+
     const SELF_FIELDS = ['phone', 'personal_email', 'dob', 'gender', 'blood_group', 'marital_status',
       'nationality', 'languages_known', 'emergency_name', 'emergency_phone', 'address', 'current_address',
       'permanent_address', 'bank_holder_name', 'bank_name', 'bank_account', 'ifsc', 'pan', 'aadhaar',

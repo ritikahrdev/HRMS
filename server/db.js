@@ -568,8 +568,8 @@ const defaultSettings = {
   ],
   modules: {
     directory: true, notices: true, holidays: true, recognition: true, performance: true,
-    surveys: true, helpdesk: true, assets: true, loans: true, reimbursement: true, recruitment: true,
-    offboarding: true, timesheets: true,
+    surveys: true, helpdesk: true, assets: true, loans: false, reimbursement: true, recruitment: true,
+    offboarding: true, timesheets: false,
   },
   // Monthly leave accrual + year-end carry-forward. When enabled for a type,
   // that type's "allowed" balance comes from the accrual ledger instead of the
