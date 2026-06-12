@@ -41,10 +41,16 @@ function safeEqual(a, b) {
 // POST /api/webhook/attendance
 // Trusted systems push attendance here with the X-Webhook-Secret header.
 router.post('/attendance', async (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
+  const ts = new Date().toISOString();
+  console.log(`\n[webhook] ⇢ ${ts}  POST /api/webhook/attendance  from ${ip}`);
+  console.log('[webhook]   body:', JSON.stringify(req.body || {}));
+
   // 1) Validate the webhook secret.
   const secret = configuredSecret();
   const provided = req.get('X-Webhook-Secret');
   if (!secret || !provided || !safeEqual(provided, secret)) {
+    console.warn('[webhook]   ✗ 401 rejected — invalid or missing X-Webhook-Secret');
     return res.status(401).json({ success: false, error: 'Unauthorized: invalid or missing webhook secret.' });
   }
 
@@ -56,12 +62,13 @@ router.post('/attendance', async (req, res) => {
   // Optional note explaining the entry (e.g. "Sick leave", "Client visit"). Kept
   // to a sane length; omitted/blank is fine for backward compatibility.
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 300) || null : null;
-  if (!name) return res.status(400).json({ success: false, error: 'Missing required field: name.' });
-  if (!statusRaw) return res.status(400).json({ success: false, error: 'Missing required field: status.' });
-  if (!time) return res.status(400).json({ success: false, error: 'Missing required field: time.' });
+  if (!name) { console.warn('[webhook]   ✗ 400 missing field: name'); return res.status(400).json({ success: false, error: 'Missing required field: name.' }); }
+  if (!statusRaw) { console.warn('[webhook]   ✗ 400 missing field: status'); return res.status(400).json({ success: false, error: 'Missing required field: status.' }); }
+  if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
 
   const mapped = STATUS_MAP[statusRaw.toLowerCase()];
   if (!mapped) {
+    console.warn(`[webhook]   ✗ 400 unsupported status: "${statusRaw}"`);
     return res.status(400).json({ success: false, error: `Unsupported status "${statusRaw}". Supported values: Present, Absent, WFH, Holiday.` });
   }
 
@@ -79,6 +86,7 @@ router.post('/attendance', async (req, res) => {
     "ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END LIMIT 1"
   ).get(name);
   if (!emp) {
+    console.warn(`[webhook]   ✗ 404 employee not found: "${name}"`);
     return res.status(404).json({ success: false, error: `Employee not found: "${name}". No attendance was recorded.` });
   }
 
@@ -87,8 +95,10 @@ router.post('/attendance', async (req, res) => {
   try {
     await upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh, reason });
   } catch (e) {
+    console.error('[webhook]   ✗ 500 DB error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
   }
+  console.log(`[webhook]   ✓ 200 recorded: ${emp.name} | ${date} | ${mapped.status}${mapped.wfh ? ' (WFH)' : ''}${reason ? ` | reason: "${reason}"` : ''}`);
 
   // 6) Success response.
   return res.json({

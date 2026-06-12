@@ -1,3 +1,25 @@
+// Load .env into process.env (no external dependency). Host/OS env vars take
+// precedence, so this only fills what isn't already set — and is a no-op in
+// production (Render injects env vars directly; there's no .env file there).
+// This must run BEFORE any module that reads process.env (config, db, pg).
+(function loadDotEnv() {
+  try {
+    const fs = require('fs');
+    const p = require('path').join(__dirname, '..', '.env');
+    if (!fs.existsSync(p)) return;
+    for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
+      const s = line.trim();
+      if (!s || s.startsWith('#')) continue;
+      const i = s.indexOf('=');
+      if (i < 1) continue;
+      const k = s.slice(0, i).trim();
+      let v = s.slice(i + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+      if (!(k in process.env)) process.env[k] = v;
+    }
+  } catch (e) { /* ignore — fall back to OS env */ }
+})();
+
 const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
@@ -237,10 +259,24 @@ const port = config.port || 4000;
     // Best-effort: run the day's automations on boot/wake (birthdays,
     // anniversaries, holiday reminders, leave accrual, carry-forward, etc.).
     require('./services/automation').dailyTick();
-    app.listen(port, () => {
+    app.listen(port, '0.0.0.0', () => {
+      // List this machine's LAN/WiFi IPv4 addresses so the server is reachable
+      // from other devices on the same network (e.g. for webhook testing).
+      const os = require('os');
+      const lan = [];
+      for (const ifaces of Object.values(os.networkInterfaces())) {
+        for (const i of ifaces || []) if (i.family === 'IPv4' && !i.internal) lan.push(i.address);
+      }
+      // Prefer a real home/office WiFi address (192.168.x) for the convenience
+      // line, ahead of virtual adapters (Hyper-V/WSL are usually 172.x).
+      const rank = (ip) => ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : ip.startsWith('172.') ? 3 : 2;
+      lan.sort((a, b) => rank(a) - rank(b));
+      const net = lan[0] || 'localhost';
       console.log('\n==============================================');
       console.log('  HR Software is running!');
-      console.log(`  Open your browser at:  http://localhost:${port}`);
+      console.log(`  Local:    http://localhost:${port}`);
+      for (const ip of lan) console.log(`  Network:  http://${ip}:${port}`);
+      console.log(`  Webhook:  http://${net}:${port}/api/webhook/attendance`);
       console.log(`  Admin login: ${config.defaultAdmin.email}`);
       console.log('==============================================\n');
     });
