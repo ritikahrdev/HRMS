@@ -2,6 +2,17 @@
 (async function () {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const wrap = document.getElementById('jobs');
+
+  // If the visitor is a logged-in HRMS user (staff previewing the page), show a
+  // way back into the app. Candidates are never logged in, so they never see it.
+  fetch('/api/auth/me', { credentials: 'same-origin' }).then(function (r) {
+    if (!r.ok) return;
+    const b = document.createElement('a');
+    b.href = '/#/recruitment';
+    b.textContent = '← Back to HRMS';
+    b.style.cssText = 'position:fixed;top:14px;left:14px;z-index:50;background:rgba(255,255,255,.95);color:#5b21b6;font-weight:700;font-size:13px;padding:9px 16px;border-radius:20px;text-decoration:none;box-shadow:0 4px 14px rgba(0,0,0,.18)';
+    document.body.appendChild(b);
+  }).catch(function () {});
   let data;
   try {
     data = await fetch('/api/careers/jobs').then((r) => r.json());
