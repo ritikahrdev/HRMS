@@ -35,8 +35,17 @@ router.post('/', requireLogin, async (req, res) => {
     const { type, from_date, to_date, reason } = req.body || {};
     const halfDay = req.body && (req.body.half_day === true || req.body.half_day === 1 || req.body.half_day === '1');
     if (!type || !from_date || !to_date) return res.status(400).json({ error: 'Type, from and to dates are required.' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from_date) || !/^\d{4}-\d{2}-\d{2}$/.test(to_date)) return res.status(400).json({ error: 'Dates must be valid (YYYY-MM-DD).' });
     if (to_date < from_date) return res.status(400).json({ error: 'End date cannot be before start date.' });
     if (halfDay && from_date !== to_date) return res.status(400).json({ error: 'A half-day leave must be for a single date.' });
+    // No backdated applications: leave starts today or later. (Missed marking a
+    // past day? That's what Attendance Requests are for.)
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (from_date < todayISO) return res.status(400).json({ error: 'Leave cannot start in the past. For a past date, raise an Attendance Request instead.' });
+    // Sanity caps: max 60 days per request, max 1 year ahead.
+    if (daysBetween(from_date, to_date) > 60) return res.status(400).json({ error: 'A single leave request cannot exceed 60 days.' });
+    const yearAhead = new Date(); yearAhead.setFullYear(yearAhead.getFullYear() + 1);
+    if (from_date > yearAhead.toISOString().slice(0, 10)) return res.status(400).json({ error: 'Leave cannot be applied more than a year in advance.' });
 
     const days = halfDay ? 0.5 : daysBetween(from_date, to_date);
     const r = await db.prepare(

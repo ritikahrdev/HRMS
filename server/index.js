@@ -112,11 +112,18 @@ app.use('/api/timesheets', require('./routes/timesheets'));
 app.use('/api/birthdays', require('./routes/birthdays'));
 app.use('/api/automation', require('./routes/automation'));
 app.use('/api/ai', require('./routes/ai'));
+app.use('/api/careers', require('./routes/careers'));
 
 // Public pre-boarding portal page (no login). A candidate opens this with a
 // private token to fill their joining form & upload documents before Day 1.
 app.get('/preboard/:token', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'preboard.html'));
+});
+
+// Public careers page (no login) — the shareable "apply here" link for job
+// posts on LinkedIn or anywhere else.
+app.get('/careers', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'careers.html'));
 });
 
 // Serve uploaded logo (read-only) for branding.

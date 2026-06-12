@@ -37,43 +37,59 @@ const AdminViews = {
 
     c.innerHTML = `
       <div class="cards">
-        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/employees'"><div class="stat-ico">👥</div><div class="label">Active Employees</div><div class="value">${o.totalEmployees}</div></div>
-        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/attendance'"><div class="stat-ico">✅</div><div class="label">Present Today</div><div class="value green">${o.presentToday}</div></div>
-        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/attendance'"><div class="stat-ico">🚫</div><div class="label">Absent Today</div><div class="value red">${o.absentToday}</div></div>
-        <div class="card stat" style="cursor:pointer" onclick="location.hash='#/leave-approvals'"><div class="stat-ico">⏳</div><div class="label">Pending Leave Approvals</div><div class="value amber">${o.pendingLeaves || 0}</div></div>
+        <div class="card stat" style="cursor:pointer" data-nav="#/employees"><div class="stat-ico">👥</div><div class="label">Active Employees</div><div class="value">${o.totalEmployees}</div></div>
+        <div class="card stat" style="cursor:pointer" data-nav="#/attendance"><div class="stat-ico">✅</div><div class="label">Present Today</div><div class="value green">${o.presentToday}</div></div>
+        <div class="card stat" style="cursor:pointer" data-nav="#/attendance"><div class="stat-ico">🚫</div><div class="label">Absent Today</div><div class="value red">${o.absentToday}</div></div>
+        <div class="card stat" style="cursor:pointer" data-nav="#/leave-approvals"><div class="stat-ico">⏳</div><div class="label">Pending Leave Approvals</div><div class="value amber">${o.pendingLeaves || 0}</div></div>
       </div>
       <div class="section-title mt">Quick Actions</div>
       <div class="btn-row">
-        <button class="btn" onclick="location.hash='#/employees'">Add Employee</button>
-        <button class="btn secondary" onclick="location.hash='#/import'">Import from Excel</button>
-        <button class="btn secondary" onclick="location.hash='#/payroll'">Run Payroll</button>
-        <button class="btn secondary" onclick="location.hash='#/attendance'">View Attendance</button>
+        <button class="btn" data-nav="#/employees">Add Employee</button>
+        <button class="btn secondary" data-nav="#/import">Import from Excel</button>
+        <button class="btn secondary" data-nav="#/payroll">Run Payroll</button>
+        <button class="btn secondary" data-nav="#/attendance">View Attendance</button>
       </div>
       <div class="cards mt" style="align-items:flex-start">
         <div class="card" style="flex:1;min-width:300px">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="font-weight:650">🌴 On Leave Today <span class="muted" style="font-size:12px">(${(o.onLeaveToday || []).length})</span></div>
-            <button class="btn sm secondary" onclick="location.hash='#/leave-calendar'">Calendar</button>
+            <button class="btn sm secondary" data-nav="#/leave-calendar">Calendar</button>
           </div>
           ${onLeaveRows || '<div class="muted" style="font-size:13px;padding:10px 0">Nobody is on leave today. 🎉</div>'}
         </div>
         <div class="card" style="flex:1;min-width:300px">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="font-weight:650">⏳ Pending Leave Requests <span class="muted" style="font-size:12px">(${o.pendingLeaves || 0})</span></div>
-            <button class="btn sm" onclick="location.hash='#/leave-approvals'">Review</button>
+            <button class="btn sm" data-nav="#/leave-approvals">Review</button>
           </div>
           ${pendingRows || '<div class="muted" style="font-size:13px;padding:10px 0">Nothing waiting — all caught up. ✅</div>'}
         </div>
         ${corrRows ? `<div class="card" style="flex:1;min-width:300px">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="font-weight:650">✏️ Attendance Requests</div>
-            <button class="btn sm" onclick="location.hash='#/corrections'">Review</button>
+            <button class="btn sm" data-nav="#/corrections">Review</button>
           </div>
           ${corrRows}
         </div>` : ''}
       </div>
       <div id="celebrations"></div>`;
     AdminViews.celebrationsCard(document.getElementById('celebrations'));
+  },
+
+  // A friendly "what is this page for?" banner used on modules whose purpose
+  // isn't obvious. steps = [[emoji, text], ...].
+  explainBanner(icon, title, blurb, steps) {
+    return `
+      <div style="background:linear-gradient(115deg,#eef2ff,#faf5ff);border:1px solid #e4e4f7;border-radius:16px;padding:16px 20px;margin-bottom:18px">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div style="font-size:30px;line-height:1">${icon}</div>
+          <div style="flex:1">
+            <div style="font-weight:750;font-size:15px;color:#3730a3">${UI.esc(title)}</div>
+            <div style="font-size:13px;color:#4b5563;margin-top:2px">${blurb}</div>
+            ${steps && steps.length ? `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">${steps.map(([e, t]) => `<div style="display:flex;gap:6px;align-items:center;font-size:12px;color:#374151;background:#fff;border:1px solid #eceaf8;border-radius:10px;padding:6px 10px">${e} ${t}</div>`).join('')}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
   },
 
   // Upcoming birthdays & work anniversaries (Keka-style celebrations widget).
@@ -117,10 +133,10 @@ const AdminViews = {
       </div>
       <div class="section-title mt">Quick Actions</div>
       <div class="btn-row">
-        <button class="btn secondary" onclick="location.hash='#/team'">My Team</button>
-        <button class="btn secondary" onclick="location.hash='#/leave-approvals'">Leave Approvals</button>
-        <button class="btn secondary" onclick="location.hash='#/reimb-approvals'">Reimbursement Approvals</button>
-        <button class="btn secondary" onclick="location.hash='#/attendance'">Team Attendance</button>
+        <button class="btn secondary" data-nav="#/team">My Team</button>
+        <button class="btn secondary" data-nav="#/leave-approvals">Leave Approvals</button>
+        <button class="btn secondary" data-nav="#/reimb-approvals">Reimbursement Approvals</button>
+        <button class="btn secondary" data-nav="#/attendance">Team Attendance</button>
       </div>`;
   },
 
@@ -2032,12 +2048,14 @@ const AdminViews = {
   async directory(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { employees } = await api.get('/employees/directory');
+    // Reporting structure (manager column / org chart) is staff-only; regular
+    // employees see contact info without the hierarchy.
+    const staff = App.isStaff();
     c.innerHTML = `
       <div class="toolbar">
         <input id="search" placeholder="Search name / dept / designation..." />
         <div class="spacer"></div>
-        <button class="btn sm secondary" id="viewList">☰ List</button>
-        <button class="btn sm secondary" id="viewChart">🌳 Org Chart</button>
+        ${staff ? '<button class="btn sm secondary" id="viewList">☰ List</button><button class="btn sm secondary" id="viewChart">🌳 Org Chart</button>' : ''}
         <span class="muted">${employees.length} people</span>
       </div>
       <div id="list"></div>`;
@@ -2047,7 +2065,7 @@ const AdminViews = {
         { key: 'name', label: 'Name', render: (r) => `<div style="display:flex;align-items:center;gap:10px"><span class="avatar sm">${UI.esc(App.initials(r.name))}</span><span><b>${UI.esc(r.name)}</b><br/><span class="muted" style="font-size:12px">${UI.esc(r.emp_code || '')}</span></span></div>` },
         { key: 'designation', label: 'Designation', render: (r) => UI.esc(r.designation || '-') },
         { key: 'department', label: 'Department', render: (r) => UI.esc(r.department || '-') },
-        { key: 'manager_name', label: 'Manager', render: (r) => UI.esc(r.manager_name || '-') },
+        ...(staff ? [{ key: 'manager_name', label: 'Manager', render: (r) => UI.esc(r.manager_name || '-') }] : []),
         { key: 'email', label: 'Email', render: (r) => r.email ? `<a href="mailto:${UI.esc(r.email)}">${UI.esc(r.email)}</a>` : '-' },
         { key: 'phone', label: 'Phone', render: (r) => UI.esc(r.phone || '-') },
       ], rows, 'No employees.');
@@ -2080,12 +2098,15 @@ const AdminViews = {
     let mode = 'list';
     const setMode = (m) => {
       mode = m;
-      document.getElementById('viewList').className = 'btn sm' + (m === 'list' ? '' : ' secondary');
-      document.getElementById('viewChart').className = 'btn sm' + (m === 'chart' ? '' : ' secondary');
+      const vl = document.getElementById('viewList'), vc = document.getElementById('viewChart');
+      if (vl) vl.className = 'btn sm' + (m === 'list' ? '' : ' secondary');
+      if (vc) vc.className = 'btn sm' + (m === 'chart' ? '' : ' secondary');
       if (m === 'list') renderList(employees); else renderChart();
     };
-    document.getElementById('viewList').onclick = () => setMode('list');
-    document.getElementById('viewChart').onclick = () => setMode('chart');
+    if (staff) {
+      document.getElementById('viewList').onclick = () => setMode('list');
+      document.getElementById('viewChart').onclick = () => setMode('chart');
+    }
     document.getElementById('search').oninput = (e) => {
       const q = e.target.value.toLowerCase();
       if (mode !== 'list') setMode('list');
@@ -2099,16 +2120,60 @@ const AdminViews = {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const canManage = App.has('settings:manage');
     const { announcements } = await api.get('/announcements');
+    // "time ago" label for freshness.
+    const ago = (ts) => {
+      const d = new Date(String(ts).replace(' ', 'T') + (String(ts).includes('Z') ? '' : 'Z'));
+      const mins = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+      if (isNaN(mins)) return UI.date(ts);
+      if (mins < 60) return mins <= 1 ? 'just now' : mins + ' min ago';
+      const h = Math.floor(mins / 60); if (h < 24) return h + 'h ago';
+      const days = Math.floor(h / 24); if (days < 7) return days + 'd ago';
+      return UI.date(ts);
+    };
+    const isNew = (ts) => (Date.now() - new Date(String(ts).replace(' ', 'T') + 'Z').getTime()) < 3 * 864e5;
+    const pinned = announcements.filter((a) => a.pinned);
+    const rest = announcements.filter((a) => !a.pinned);
+    const card = (a, i) => `
+      <div class="notice-card${a.pinned ? ' pinned' : ''}" style="animation-delay:${Math.min(i * 70, 500)}ms">
+        ${a.pinned ? '<div class="notice-pin">📌 PINNED</div>' : ''}
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div class="notice-ava">${UI.esc(App.initials(a.author || 'A'))}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <h4 style="margin:0;font-size:16px">${UI.esc(a.title)}</h4>
+              ${isNew(a.created_at) ? '<span class="notice-new">NEW</span>' : ''}
+            </div>
+            <div class="muted" style="font-size:12px;margin:3px 0 8px">${UI.esc(a.author || 'Admin')} · ${ago(a.created_at)}</div>
+            <div style="white-space:pre-wrap;color:#374151;font-size:14px;line-height:1.6">${UI.esc(a.body || '')}</div>
+            ${canManage ? `<div class="mt"><button class="btn sm red" data-del="${a.id}">Delete</button></div>` : ''}
+          </div>
+        </div>
+      </div>`;
     c.innerHTML = `
-      <div class="toolbar"><div class="section-title" style="margin:0">Notice Board</div><div class="spacer"></div>${canManage ? '<button class="btn" id="add">Post Announcement</button>' : ''}</div>
-      ${canManage ? '<div class="card" style="background:#f0fdf4;border-left:4px solid #16a34a;margin-bottom:16px;padding:12px"><div style="font-size:13px;color:#166534"><strong>💡 Tip:</strong> Announcements posted here will automatically be sent to your Slack channel and emailed to all employees.</div></div>' : ''}
-      <div id="list">${announcements.length ? announcements.map((a) => `
-        <div class="announcement">
-          <h4>${a.pinned ? '📌 ' : ''}${UI.esc(a.title)}</h4>
-          <div class="meta">${UI.esc(a.author || 'Admin')} &middot; ${UI.date(a.created_at)}</div>
-          <div style="margin-top:6px;white-space:pre-wrap">${UI.esc(a.body || '')}</div>
-          ${canManage ? `<div class="mt"><button class="btn sm red" data-del="${a.id}">Delete</button></div>` : ''}
-        </div>`).join('') : '<div class="empty">No announcements yet.</div>'}</div>`;
+      <style>
+        @keyframes noticeIn{0%{opacity:0;transform:translateY(16px)}100%{opacity:1;transform:translateY(0)}}
+        @keyframes pinGlow{0%,100%{box-shadow:0 4px 16px rgba(217,119,6,.12)}50%{box-shadow:0 4px 24px rgba(217,119,6,.28)}}
+        @keyframes newPulse{0%,100%{opacity:1}50%{opacity:.55}}
+        .notice-card{background:#fff;border:1px solid #ecedf3;border-radius:16px;padding:18px 20px;margin-bottom:14px;animation:noticeIn .45s ease both;transition:transform .15s ease,box-shadow .15s ease;position:relative}
+        .notice-card:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(60,60,120,.10)}
+        .notice-card.pinned{border:1.5px solid #fbbf24;background:linear-gradient(180deg,#fffdf5,#fff);animation:noticeIn .45s ease both,pinGlow 3s ease infinite}
+        .notice-pin{position:absolute;top:-10px;left:18px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-size:10px;font-weight:800;letter-spacing:.6px;padding:3px 10px;border-radius:10px}
+        .notice-ava{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex:none}
+        .notice-new{background:linear-gradient(135deg,#ec4899,#f43f5e);color:#fff;font-size:9px;font-weight:800;padding:2px 8px;border-radius:9px;letter-spacing:.5px;animation:newPulse 1.6s infinite}
+        .notice-hero{background:linear-gradient(115deg,#4f46e5,#7c3aed 55%,#a855f7);border-radius:18px;color:#fff;padding:22px 26px;margin-bottom:18px;display:flex;align-items:center;gap:14px;animation:noticeIn .4s ease both}
+      </style>
+      <div class="notice-hero">
+        <div style="font-size:34px">📢</div>
+        <div style="flex:1">
+          <div style="font-weight:800;font-size:19px">Notice Board</div>
+          <div style="font-size:13px;opacity:.85">Company announcements — what's happening at ${UI.esc(App.branding.companyName || 'the company')}</div>
+        </div>
+        ${canManage ? '<button class="btn" id="add" style="background:#fff;color:#5b21b6;font-weight:700">+ Post Announcement</button>' : ''}
+      </div>
+      ${canManage ? '<div class="muted" style="font-size:12px;margin:-8px 0 14px 4px">💡 New posts are automatically sent to Slack and emailed to all employees.</div>' : ''}
+      <div id="list">
+        ${announcements.length ? [...pinned, ...rest].map((a, i) => card(a, i)).join('') : '<div class="empty" style="padding:50px 0;text-align:center"><div style="font-size:44px">🗞️</div><div style="margin-top:8px">No announcements yet.</div></div>'}
+      </div>`;
     if (canManage) {
       const add = document.getElementById('add');
       if (add) add.onclick = () => {
@@ -2619,6 +2684,10 @@ const AdminViews = {
     const mine = App.user.employeeId ? (await api.get('/goals/mine')).goals : [];
     const myReviews = App.user.employeeId ? (await api.get('/reviews/mine')).reviews : [];
     c.innerHTML = `
+      ${this.explainBanner('🎯', 'What is Performance?', 'This is where you and your manager track how work is going — in two simple parts:', [
+        ['🥅', '<b>Goals</b> — targets you\'re working toward (e.g. "Close 10 deals this quarter"). Update the % as you progress.'],
+        ['⭐', '<b>Reviews</b> — your manager\'s periodic feedback: a rating, your strengths, and what to improve.'],
+      ])}
       <div class="toolbar"><div class="section-title" style="margin:0">My Goals</div><div class="spacer"></div>${App.user.employeeId ? '<button class="btn" id="addGoal">Add Goal</button>' : ''}</div>
       <div id="goals">${this.goalTable(mine)}</div>
       <div class="section-title mt">My Reviews</div>
@@ -2728,6 +2797,11 @@ const AdminViews = {
     const categoryIcons = { engagement: '🎯', satisfaction: '😊', performance: '📊', feedback: '💬', pulse: '⚡' };
 
     c.innerHTML = `
+      ${this.explainBanner('📝', 'What are Surveys?', 'A simple way for HR to ask the whole team questions and collect honest answers — like a quick opinion poll inside the HRMS.', [
+        ['🧑‍💼', isAdmin ? '<b>You (HR)</b> create a survey — e.g. "How happy are you with the new office?"' : '<b>HR</b> posts a few questions — e.g. about the office, benefits, or how you\'re doing.'],
+        ['🙋', '<b>Employees</b> tap Fill and answer — surveys can be anonymous, so people can be honest.'],
+        ['📊', isAdmin ? '<b>Results</b> shows everyone\'s answers together so you can act on them.' : 'Your answers help the company improve things for everyone.'],
+      ])}
       <div class="toolbar"><div class="section-title" style="margin:0">Surveys</div><div class="spacer"></div>${isAdmin ? '<button class="btn" id="create">Create Survey</button>' : ''}</div>
       ${surveys.length ? surveys.map((s) => {
         const statusTag = !s.active ? '<span class="tag inactive">🔒 Closed</span>' : s.isExpired ? '<span class="tag warning">⏰ Expired</span>' : s.daysRemaining <= 3 && s.daysRemaining > 0 ? '<span class="tag warning">⏰ Ending soon</span>' : '<span class="tag approved">✓ Active</span>';
@@ -3509,8 +3583,15 @@ const AdminViews = {
   async recruitment(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { jobs } = await api.get('/recruitment/jobs');
+    const applyLink = (id) => location.origin + '/careers#job-' + id;
     c.innerHTML = `
-      <div class="toolbar"><div class="section-title" style="margin:0">Recruitment</div><div class="spacer"></div><button class="btn" id="newJob">+ New Job</button></div>
+      ${this.explainBanner('🧲', 'Hire on autopilot', 'Post a job here, share its <b>apply link</b> on LinkedIn (or anywhere) — and every application flows straight into your pipeline, gets scored against the job, AI-screened, and strong matches are <b>auto-shortlisted</b> for you.', [
+        ['1️⃣', 'Create the job & copy its <b>apply link</b>'],
+        ['2️⃣', 'Paste the link in your LinkedIn post ("apply via link")'],
+        ['3️⃣', 'Candidates apply → auto-scored + AI-screened'],
+        ['4️⃣', 'You review the <b>shortlist</b>, interview, hire 🎉'],
+      ])}
+      <div class="toolbar"><div class="section-title" style="margin:0">Recruitment</div><div class="spacer"></div><button class="btn sm secondary" id="openCareers">👀 View public careers page</button><button class="btn" id="newJob">+ New Job</button></div>
       <div class="cards">${jobs.length ? jobs.map((j) => `
         <div class="card">
           <div style="display:flex;align-items:start;gap:8px">
@@ -3523,6 +3604,7 @@ const AdminViews = {
           <div class="mt" style="font-size:13px"><b>${j.applicants}</b> applicants · <b>${j.hired}</b> hired</div>
           <div class="btn-row mt">
             <button class="btn sm" data-open="${j.id}">Open Pipeline</button>
+            <button class="btn sm secondary" data-copylink="${j.id}">🔗 Copy apply link</button>
             <button class="btn sm secondary" data-linkedin="${j.id}">Post on LinkedIn</button>
             <button class="btn sm secondary" data-edit="${j.id}">Edit</button>
             <button class="btn sm red" data-del="${j.id}">Delete</button>
@@ -3530,6 +3612,7 @@ const AdminViews = {
         </div>`).join('') : '<div class="empty">No job openings yet. Click “New Job”.</div>'}</div>`;
 
     document.getElementById('newJob').onclick = () => this.jobForm(c, null);
+    document.getElementById('openCareers').onclick = () => window.open('/careers', '_blank');
     document.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => this.jobBoard(c, b.dataset.open));
     document.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => this.jobForm(c, jobs.find((j) => j.id == b.dataset.edit)));
     document.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
@@ -3537,11 +3620,15 @@ const AdminViews = {
       try { await api.request('DELETE', '/recruitment/jobs/' + b.dataset.del); UI.toast('Deleted.', 'success'); this.recruitment(c); }
       catch (e) { UI.toast(e.message, 'error'); }
     });
+    document.querySelectorAll('[data-copylink]').forEach((b) => b.onclick = async () => {
+      try { await navigator.clipboard.writeText(applyLink(b.dataset.copylink)); UI.toast('🔗 Apply link copied — paste it into your LinkedIn job post. Applications will flow in automatically.', 'success'); }
+      catch { UI.toast(applyLink(b.dataset.copylink), 'success'); }
+    });
     document.querySelectorAll('[data-linkedin]').forEach((b) => b.onclick = () => {
       const j = jobs.find((x) => x.id == b.dataset.linkedin);
-      const text = `${j.title}${j.location ? ' — ' + j.location : ''}\n${j.type || ''}\n\n${j.description || ''}\n\nRequired skills: ${j.skills || '-'}\nMin experience: ${j.min_experience || 0} yrs`;
+      const text = `${j.title}${j.location ? ' — ' + j.location : ''}\n${j.type || ''}\n\n${j.description || ''}\n\nRequired skills: ${j.skills || '-'}\nMin experience: ${j.min_experience || 0} yrs\n\n👉 Apply here: ${applyLink(j.id)}`;
       if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
-      UI.toast('Job details copied — paste them into LinkedIn.', 'success');
+      UI.toast('Job post (incl. apply link) copied — paste it into LinkedIn.', 'success');
       window.open('https://www.linkedin.com/job-posting/', '_blank');
     });
   },
@@ -3583,7 +3670,8 @@ const AdminViews = {
         <div class="kcard">
           <div style="display:flex;justify-content:space-between;gap:6px"><b>${UI.esc(a.name)}</b><span class="tag ${a.score >= 60 ? 'approved' : (a.score >= 40 ? 'pending' : 'rejected')}">${a.score != null ? a.score + '%' : '-'}</span></div>
           <div class="muted" style="font-size:12px">${UI.esc(a.experience_years || 0)} yrs · ${UI.esc((a.skills || '').slice(0, 40))}</div>
-          <div class="muted" style="font-size:11px">${UI.esc(a.email || '')}</div>
+          <div class="muted" style="font-size:11px">${UI.esc(a.email || '')}${a.source === 'careers' ? ' · <span style="color:#7c3aed">🔗 via apply link</span>' : ''}</div>
+          ${a.ai_recommendation ? `<div style="font-size:11px;margin-top:3px;color:${a.ai_recommendation === 'strong' ? '#16a34a' : a.ai_recommendation === 'weak' ? '#dc2626' : '#d97706'}" title="${UI.esc(a.ai_summary || '')}">✨ AI: ${UI.esc(a.ai_recommendation)} fit (${a.ai_score != null ? a.ai_score : '?'}/100)</div>` : ''}
           <div class="btn-row mt" style="gap:4px">
             <select class="kmove" data-id="${a.id}" style="font-size:11px;padding:3px 6px;width:auto">${stageOpts(a.stage)}</select>
             ${a.resume_file ? `<a class="btn sm secondary" href="/api/recruitment/applicants/${a.id}/resume" target="_blank">CV</a>` : ''}
@@ -4173,6 +4261,11 @@ const AdminViews = {
     let tab = 'approvals';
     const render = async () => {
       c.innerHTML = `
+        ${this.explainBanner('⏱️', 'What are Timesheets?', 'A work diary: employees log how many hours they spent on which project each day. Useful if you bill clients by the hour or want to see where the team\'s time goes. <b>Don\'t need it? Turn it off in Settings → Modules.</b>', [
+          ['📁', '<b>Projects</b> — create the projects people log time against.'],
+          ['🧑‍💻', '<b>Employees</b> log hours per day on My Timesheet, then submit the week.'],
+          ['✅', '<b>You approve</b> the week here, and <b>Summary</b> totals hours per project/person.'],
+        ])}
         <div class="toolbar">
           <button class="btn sm ${tab === 'approvals' ? '' : 'secondary'}" data-tab="approvals">Approvals</button>
           <button class="btn sm ${tab === 'projects' ? '' : 'secondary'}" data-tab="projects">Projects</button>

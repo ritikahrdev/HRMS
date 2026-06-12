@@ -482,6 +482,10 @@ const COLUMN_MIGRATIONS = [
   "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS out_lng REAL",
   "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS geo_accuracy REAL",
   "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS in_geofenced INTEGER",
+  // AI screening results for candidates who apply via the public careers page.
+  "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_score INTEGER",
+  "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_recommendation TEXT",
+  "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_summary TEXT",
 ];
 
 const INVENTORY_SEED = [

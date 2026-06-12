@@ -87,6 +87,11 @@ router.post('/entry', requireLogin, async (req, res) => {
     const empId = myEmpId(req, res); if (!empId) return;
     const { project_id, date, hours, task, billable, notes } = req.body || {};
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'A valid date is required.' });
+    // Time entries are a record of work done: no future dates, and nothing older than 30 days.
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (date > todayISO) return res.status(400).json({ error: "You can't log time for a future date." });
+    const monthAgo = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    if (date < monthAgo) return res.status(400).json({ error: 'Time entries older than 30 days are locked. Ask HR if you need a correction.' });
     const h = Number(hours);
     if (!(h > 0) || h > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24.' });
     const r = await db.prepare(

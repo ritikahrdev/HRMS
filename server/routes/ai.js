@@ -28,6 +28,8 @@ const ACTIONS = {
       if (!p.type || !codes.includes(p.type)) throw new Error(`Pick a valid leave type (${codes.join(', ')}).`);
       if (!ISODATE(p.from_date) || !ISODATE(p.to_date)) throw new Error('Please give valid from/to dates (YYYY-MM-DD).');
       if (p.to_date < p.from_date) throw new Error('End date cannot be before start date.');
+      if (p.from_date < todayStr()) throw new Error('Leave cannot start in the past. For a past date, raise an attendance request instead.');
+      if (daysBetween(p.from_date, p.to_date) > 60) throw new Error('A single leave request cannot exceed 60 days.');
       const half = !!p.half_day;
       if (half && p.from_date !== p.to_date) throw new Error('A half-day leave must be a single date.');
       const days = half ? 0.5 : daysBetween(p.from_date, p.to_date);

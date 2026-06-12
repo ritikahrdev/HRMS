@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Careers — Join Us</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #f4f3fb; color: #1f2937; }
+    .hero { background: linear-gradient(115deg, #4f46e5, #7c3aed 55%, #a855f7); color: #fff; padding: 44px 20px 38px; text-align: center; }
+    .hero img { height: 52px; border-radius: 12px; background: #fff; padding: 6px; margin-bottom: 12px; }
+    .hero h1 { font-size: 30px; }
+    .hero p { opacity: .9; margin-top: 6px; }
+    .wrap { max-width: 760px; margin: -22px auto 60px; padding: 0 16px; }
+    .job { background: #fff; border-radius: 16px; padding: 22px 24px; margin-bottom: 16px; box-shadow: 0 6px 24px rgba(70,50,160,.08); animation: in .4s ease both; }
+    @keyframes in { 0% { opacity: 0; transform: translateY(14px) } 100% { opacity: 1; transform: none } }
+    .job h2 { font-size: 19px; }
+    .meta { color: #6b7280; font-size: 13px; margin: 6px 0 10px; display: flex; gap: 14px; flex-wrap: wrap; }
+    .desc { font-size: 14px; line-height: 1.6; color: #374151; white-space: pre-wrap; }
+    .skills { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .skill { background: #eef2ff; color: #4338ca; font-size: 12px; padding: 4px 10px; border-radius: 12px; }
+    .btn { display: inline-block; border: none; cursor: pointer; background: linear-gradient(135deg, #7c3aed, #c026d3); color: #fff; font-weight: 700; font-size: 14px; padding: 11px 22px; border-radius: 22px; margin-top: 14px; }
+    .btn.secondary { background: #fff; color: #6d28d9; border: 1.5px solid #ddd6fe; }
+    form { margin-top: 16px; border-top: 1px dashed #e5e7eb; padding-top: 16px; display: none; }
+    form.open { display: block; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid .full { grid-column: 1 / -1; }
+    label { font-size: 12px; font-weight: 600; color: #4b5563; display: block; margin-bottom: 4px; }
+    input, textarea { width: 100%; border: 1px solid #e2e0f0; border-radius: 10px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+    input:focus, textarea:focus { outline: none; border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,.15); }
+    .ok { background: #f0fdf4; border: 1.5px solid #86efac; color: #166534; border-radius: 12px; padding: 14px 16px; margin-top: 14px; font-size: 14px; display: none; }
+    .err { background: #fef2f2; border: 1.5px solid #fecaca; color: #991b1b; border-radius: 12px; padding: 12px 14px; margin-top: 12px; font-size: 13px; display: none; }
+    .empty { text-align: center; padding: 70px 0; color: #6b7280; }
+    .foot { text-align: center; color: #9ca3af; font-size: 12px; margin: 30px 0; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr } }
+  </style>
+</head>
+<body>
+  <div class="hero" id="hero">
+    <h1 id="coName">Careers</h1>
+    <p>We'd love to meet you — apply below 👇</p>
+  </div>
+  <div class="wrap" id="jobs"><div class="empty">Loading open roles…</div></div>
+  <div class="foot">Powered by Hrika HRMS</div>
+  <script src="/careers.js"></script>
+</body>
+</html>

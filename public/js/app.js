@@ -100,6 +100,13 @@ const App = {
   modOn(key) { return !this.modules || this.modules[key] !== false; },
 
   async init() {
+    // Delegated navigation clicks. Inline onclick attributes are blocked by the
+    // CSP (helmet script-src-attr 'none'), so clickable cards/buttons carry a
+    // data-nav attribute and this single listener routes them.
+    document.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-nav]');
+      if (t && t.dataset.nav) location.hash = t.dataset.nav;
+    });
     try { this.branding = await api.get('/settings/public'); } catch (e) {}
     this.modules = (this.branding && this.branding.modules) || {};
     this.requiredDocs = (this.branding && this.branding.requiredDocs) || [];

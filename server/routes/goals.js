@@ -31,6 +31,9 @@ router.post('/', requireLogin, async (req, res) => {
     const { employee_id, title, description, target_date } = req.body || {};
     const empId = employee_id || req.session.user.employeeId;
     if (!empId || !title) return res.status(400).json({ error: 'Title is required.' });
+    if (target_date && target_date < new Date().toISOString().slice(0, 10)) {
+      return res.status(400).json({ error: "A goal's target date cannot be in the past." });
+    }
     if (!await canActOnEmployee(req, empId)) return res.status(403).json({ error: 'No access.' });
     const r = await db.prepare('INSERT INTO goals (employee_id, title, description, target_date, created_by) VALUES (?, ?, ?, ?, ?)')
       .run(empId, title, description || '', target_date || null, req.session.user.id);

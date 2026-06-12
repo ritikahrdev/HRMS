@@ -55,7 +55,7 @@ const EmployeeViews = {
         <div class="card" style="flex:1;min-width:300px">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="font-weight:650">🌴 My Leave Requests</div>
-            <button class="btn sm secondary" onclick="location.hash='#/my-leave'">View all / Apply</button>
+            <button class="btn sm secondary" data-nav="#/my-leave">View all / Apply</button>
           </div>
           ${myLeaves.length ? myLeaves.map((r) => `
             <div style="padding:8px 0;border-bottom:1px dashed #eef1f6">
@@ -813,6 +813,11 @@ const EmployeeViews = {
           : entries.some((e) => e.status === 'rejected') ? UI.tag('rejected') : UI.tag('draft'))
         : '';
       c.innerHTML = `
+        ${AdminViews.explainBanner('⏱️', 'What is My Timesheet?', 'Your work diary — log how many hours you worked on which project each day, then submit the week so your manager can approve it. (Only needed if your company tracks project hours.)', [
+          ['➕', 'Add an entry per day: project + hours + what you did.'],
+          ['📤', 'Submit the week when it\'s complete.'],
+          ['✅', 'Your manager approves it.'],
+        ])}
         <div class="toolbar">
           <button class="btn sm secondary" id="prev">← Prev</button>
           <b>Week of ${dayName(weekStart)} – ${dayName(weekEnd)}</b>
