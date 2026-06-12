@@ -602,23 +602,38 @@ const EmployeeViews = {
       ], leaves, 'You have not applied for any leave.')}`;
 
     document.getElementById('apply').onclick = () => {
+      // Date window matches the server rules: today → one year ahead. Past
+      // dates are greyed out in the picker (and rejected server-side too).
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const maxISO = new Date(Date.now() + 365 * 864e5).toISOString().slice(0, 10);
       const m = UI.modal({
         title: 'Apply for Leave',
         bodyHtml: `
           <div class="field"><label>Leave Type</label><select id="type">${types.map((t) => `<option value="${t.code}">${UI.esc(t.name)}${t.paid === false ? ' (unpaid)' : ''}</option>`).join('')}</select></div>
           <div class="form-grid">
-            <div class="field"><label>From</label><input type="date" id="from" /></div>
-            <div class="field"><label>To</label><input type="date" id="to" /></div>
+            <div class="field"><label>From</label><input type="date" id="from" value="${todayISO}" min="${todayISO}" max="${maxISO}" /></div>
+            <div class="field"><label>To</label><input type="date" id="to" value="${todayISO}" min="${todayISO}" max="${maxISO}" /></div>
           </div>
+          <p class="muted" style="font-size:11px;margin:-6px 0 10px">Leave can start from today onwards. For a past day, raise an Attendance Request instead.</p>
           <label class="checkbox-row" style="margin-bottom:12px"><input type="checkbox" id="half" /> Half day (single date only)</label>
           <div class="field"><label>Reason</label><textarea id="reason" rows="3"></textarea></div>`,
         footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="submit">Submit</button>`,
       });
       m.root.querySelector('[data-close-btn]').onclick = m.close;
-      // When half-day is ticked, force To = From.
+      const fromEl = m.root.querySelector('#from');
+      const toEl = m.root.querySelector('#to');
       const halfEl = m.root.querySelector('#half');
-      halfEl.onchange = () => { if (halfEl.checked) m.root.querySelector('#to').value = m.root.querySelector('#from').value; };
-      m.root.querySelector('#from').onchange = () => { if (halfEl.checked) m.root.querySelector('#to').value = m.root.querySelector('#from').value; };
+      // Keep the rules live: clamp manual typing of past dates, keep To ≥ From,
+      // and force To = From for half-days.
+      const syncDates = () => {
+        if (fromEl.value && fromEl.value < todayISO) fromEl.value = todayISO;
+        toEl.min = fromEl.value || todayISO;
+        if (toEl.value && fromEl.value && toEl.value < fromEl.value) toEl.value = fromEl.value;
+        if (halfEl.checked) toEl.value = fromEl.value;
+      };
+      halfEl.onchange = syncDates;
+      fromEl.onchange = syncDates;
+      toEl.onchange = () => { if (toEl.value && toEl.value < (fromEl.value || todayISO)) toEl.value = fromEl.value || todayISO; };
       m.root.querySelector('#submit').onclick = async () => {
         try {
           await api.post('/leave', {
