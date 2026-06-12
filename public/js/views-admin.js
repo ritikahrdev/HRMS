@@ -703,7 +703,7 @@ const AdminViews = {
 .attx-empty{color:var(--muted);font-size:13px;text-align:center;padding:22px}
 .attx-grid-card{padding:0;overflow:hidden}
 .attx-grid-card .attx-card-h{padding:16px 18px 12px}
-.attx-table-wrap{overflow:auto;max-height:560px}
+.attx-table-wrap{overflow-x:auto}
 .attx-table{width:100%;border-collapse:collapse;font-size:13px}
 .attx-table thead th{position:sticky;top:0;background:var(--card);text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:11px 16px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap;z-index:2}
 .attx-table thead th:hover{color:var(--pri)} .attx-sa{font-size:9px}
@@ -790,19 +790,6 @@ const AdminViews = {
       late: L.filter((r) => r.late_minutes > 0).length, total: L.length }; };
     const kpiCard = (label, val, cls, icon) => `<div class="attx-kpi ${cls}"><div class="attx-kpi-ico">${icon}</div><div><div class="attx-kpi-val">${val}</div><div class="attx-kpi-lbl">${label}</div></div></div>`;
 
-    function trendsSvg() {
-      const ins = st.ins; if (!ins || !ins.days) return '<div class="attx-empty">No trend data yet.</div>';
-      let series = ins.days.filter((x) => x.type === 'working' && x.rate != null);
-      if (st.trendRange === 'week') series = series.slice(-7);
-      if (series.length < 2) return '<div class="attx-empty">Not enough data for a trend yet.</div>';
-      const W = 520, H = 130, pad = 8, n = series.length;
-      const xs = (i) => pad + (i * (W - 2 * pad) / (n - 1)), ys = (v) => H - pad - (v / 100) * (H - 2 * pad);
-      const pts = series.map((x, i) => [xs(i), ys(x.rate)]);
-      const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
-      const area = line + ` L ${xs(n - 1).toFixed(1)} ${H - pad} L ${xs(0).toFixed(1)} ${H - pad} Z`;
-      const dots = pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4"><title>${series[i].date}: ${series[i].rate}%</title></circle>`).join('');
-      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="attx-spark"><defs><linearGradient id="attxg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="g0"/><stop offset="1" class="g1"/></linearGradient></defs><path d="${area}" class="area"/><path d="${line}" class="line"/>${dots}</svg><div class="attx-spark-x"><span>${UI.date(series[0].date)}</span><span>${UI.date(series[series.length - 1].date)}</span></div>`;
-    }
     function deptBars() {
       const d = (st.ins && st.ins.byDepartment) || [];
       if (!d.length) return '<div class="attx-empty">No department data yet.</div>';
@@ -827,14 +814,11 @@ const AdminViews = {
     }
     function gridHtml() {
       const L = filtered();
-      const pages = Math.max(1, Math.ceil(L.length / st.per));
-      if (st.page > pages) st.page = pages;
-      const rows = L.slice((st.page - 1) * st.per, st.page * st.per);
       const arrow = (k) => st.sortKey === k ? (st.sortDir === 'asc' ? '▲' : '▼') : '';
       const th = (k, l) => `<th data-sort="${k}">${l} <span class="attx-sa">${arrow(k)}</span></th>`;
       return `<div class="attx-table-wrap"><table class="attx-table"><thead><tr>
         ${th('name', 'Employee')}${th('department', 'Department')}${th('checkin', 'Check In')}<th>Check Out</th>${th('hours', 'Hours')}${th('status', 'Status')}<th>Location</th>
-      </tr></thead><tbody>${rows.length ? rows.map((r) => {
+      </tr></thead><tbody>${L.length ? L.map((r) => {
         const ci = fmtTime(r.check_in), co = fmtTime(r.check_out), h = hoursOf(r);
         return `<tr class="attx-row" data-emp="${r.id}">
           <td><div class="attx-emp">${avatar(r.name)}<div class="attx-emp-meta"><span class="nm">${esc(r.name)}${liveTag(r)}</span><span class="cd">${esc(r.emp_code || '—')}</span></div></div></td>
@@ -845,12 +829,11 @@ const AdminViews = {
           <td>${badge(r)}</td>
           <td>${(r.in_lat != null && r.in_lng != null) ? `<a class="attx-map" href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" rel="noopener">📍 Map</a>` : '<span class="attx-dash">—</span>'}</td>
         </tr>`; }).join('') : '<tr><td colspan="7"><div class="attx-empty">No employees match these filters.</div></td></tr>'}</tbody></table></div>
-      <div class="attx-pager"><span class="attx-pginfo">${L.length} record${L.length !== 1 ? 's' : ''} · page ${st.page}/${pages}</span><div class="attx-pgbtns"><button class="attx-pg" data-pg="prev" ${st.page <= 1 ? 'disabled' : ''}>‹ Prev</button><button class="attx-pg" data-pg="next" ${st.page >= pages ? 'disabled' : ''}>Next ›</button></div></div>`;
+      <div class="attx-pager"><span class="attx-pginfo">Showing all ${L.length} employee${L.length !== 1 ? 's' : ''}</span></div>`;
     }
     function regrid() { const g = body.querySelector('#attx-grid'); if (g) { g.innerHTML = gridHtml(); bindGrid(); } }
     function bindGrid() {
       body.querySelectorAll('.attx-table th[data-sort]').forEach((th) => th.onclick = () => { const k = th.dataset.sort; if (st.sortKey === k) st.sortDir = st.sortDir === 'asc' ? 'desc' : 'asc'; else { st.sortKey = k; st.sortDir = 'asc'; } regrid(); });
-      body.querySelectorAll('.attx-pg').forEach((b) => b.onclick = () => { if (b.disabled) return; st.page += b.dataset.pg === 'next' ? 1 : -1; regrid(); });
       body.querySelectorAll('.attx-row').forEach((tr) => tr.onclick = () => openDrawer(Number(tr.dataset.emp)));
     }
     function openDrawer(id) {
@@ -899,15 +882,9 @@ const AdminViews = {
           ${kpiCard('Work From Home', c.wfh, 'k-wfh', '🏠')}
           ${kpiCard('Late Arrivals', c.late, 'k-late', '⏰')}
         </div>
-        <div class="attx-charts">
-          <div class="attx-card">
-            <div class="attx-card-h"><span>📈 Attendance Trend</span><div class="attx-seg">${[['week', '7D'], ['month', 'Month']].map(([v, l]) => `<button class="${st.trendRange === v ? 'on' : ''}" data-trend="${v}">${l}</button>`).join('')}</div></div>
-            ${trendsSvg()}
-          </div>
-          <div class="attx-card">
-            <div class="attx-card-h"><span>🏢 Department-wise Attendance</span></div>
-            <div class="attx-depts">${deptBars()}</div>
-          </div>
+        <div class="attx-card" style="margin-bottom:16px">
+          <div class="attx-card-h"><span>🏢 Department-wise Attendance</span></div>
+          <div class="attx-depts">${deptBars()}</div>
         </div>
         <div class="attx-card attx-grid-card">
           <div class="attx-card-h"><span>🗓 ${isToday ? 'Today' : UI.date(st.date)} · Team Attendance</span><span class="attx-count">${c.total} employees</span></div>
@@ -917,7 +894,6 @@ const AdminViews = {
       body.querySelectorAll('.attx-chip').forEach((b) => b.onclick = () => { const p = b.dataset.period; st.period = p; if (p === 'today' || p === 'week') { st.date = todayISO; st.trendRange = 'week'; } else if (p === 'month') { st.date = todayISO; st.trendRange = 'month'; } st.month = st.date.slice(0, 7); st.page = 1; loadAll(); });
       const di = body.querySelector('#attx-date'); if (di) di.onchange = () => { st.date = di.value || todayISO; st.period = 'custom'; st.month = st.date.slice(0, 7); st.page = 1; loadAll(); };
       body.querySelectorAll('[data-nav]').forEach((b) => b.onclick = () => { const d = new Date(st.date + 'T00:00:00'); d.setDate(d.getDate() + Number(b.dataset.nav)); const ns = d.toISOString().slice(0, 10); if (ns > todayISO) return; st.date = ns; st.period = 'custom'; st.month = st.date.slice(0, 7); st.page = 1; loadAll(); });
-      body.querySelectorAll('[data-trend]').forEach((b) => b.onclick = () => { st.trendRange = b.dataset.trend; const card = body.querySelector('.attx-charts .attx-card'); render(); });
       const s = body.querySelector('#attx-search'); if (s) s.oninput = () => { st.search = s.value; st.page = 1; regrid(); };
       const fs = body.querySelector('#attx-fstatus'); if (fs) fs.onchange = () => { st.status = fs.value; st.page = 1; regrid(); };
       const fd = body.querySelector('#attx-fdept'); if (fd) fd.onchange = () => { st.dept = fd.value; st.page = 1; regrid(); };
