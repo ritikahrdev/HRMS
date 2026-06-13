@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { requireLogin, requirePerm } = require('../middleware/auth');
+const { requireLogin, requirePerm, teamEmployeeIds } = require('../middleware/auth');
 const { can } = require('../services/permissions');
 const { getSettings } = require('../services/settings');
 const { sendMail } = require('../services/email');
@@ -146,12 +146,25 @@ async function buildContext(req) {
       if (bal) lines.push('Their leave balance this year — ' + bal + '.');
       const pend = await db.prepare("SELECT type, from_date, to_date FROM leave_requests WHERE employee_id=? AND status='pending'").all(u.employeeId);
       if (pend.length) lines.push('Their pending leave requests: ' + pend.map((p) => `${p.type} ${p.from_date}→${p.to_date}`).join(', ') + '.');
+      // Their OWN attendance this month, latest payslip, and open requests.
+      const ym = todayStr().slice(0, 7);
+      const att = await db.prepare("SELECT status, COUNT(*) c FROM attendance WHERE employee_id=? AND substr(date,1,7)=? GROUP BY status").all(u.employeeId, ym);
+      if (att.length) lines.push('Their attendance this month: ' + att.map((a) => `${a.c} ${a.status}`).join(', ') + '.');
+      const slip = await db.prepare('SELECT month, net_salary FROM payslips WHERE employee_id=? ORDER BY month DESC LIMIT 1').get(u.employeeId);
+      if (slip) lines.push(`Their latest payslip: ${slip.month}, net ${s.currency || '₹'}${slip.net_salary}.`);
+      const reimbP = (await db.prepare("SELECT COUNT(*) c FROM reimbursements WHERE employee_id=? AND status='pending'").get(u.employeeId)).c;
+      const corrP = (await db.prepare("SELECT COUNT(*) c FROM attendance_corrections WHERE employee_id=? AND status='pending'").get(u.employeeId)).c;
+      if (reimbP || corrP) lines.push(`Their open requests: ${reimbP} reimbursement(s) and ${corrP} attendance request(s) pending.`);
     }
   }
 
-  // Org-wide aggregates for staff who may see everyone's data.
-  if (can(role, 'attendance:viewAll') || can(role, 'reports:view')) {
-    lines.push('--- Org snapshot (staff view) ---');
+  // ----- Role-scoped data tiers (RBAC, enforced by what we put in context) -----
+  // HR / Admin / Finance (org-wide viewers) → organisation-wide aggregates.
+  // Manager (not an org viewer) → ONLY their own team's data.
+  // Employee → only their own data (added above); nothing extra here.
+  const orgViewer = can(role, 'attendance:viewAll') || can(role, 'reports:view');
+  if (orgViewer) {
+    lines.push('--- Org snapshot (HR / admin view) ---');
     const total = (await db.prepare("SELECT COUNT(*) c FROM employees WHERE status='active'").get()).c;
     lines.push(`Active employees: ${total}.`);
     const onLeave = await db.prepare("SELECT e.name FROM leave_requests lr JOIN employees e ON e.id=lr.employee_id WHERE lr.status='approved' AND lr.from_date<=? AND lr.to_date>=?").all(todayStr(), todayStr());
@@ -160,10 +173,26 @@ async function buildContext(req) {
     lines.push(`Marked present today: ${present}.`);
     const byDept = await db.prepare("SELECT department, COUNT(*) c FROM employees WHERE status='active' GROUP BY department ORDER BY c DESC").all();
     lines.push('Headcount by department: ' + byDept.map((d) => `${d.department || 'None'}=${d.c}`).join(', ') + '.');
-  }
-  if (can(role, 'leave:approve')) {
-    const p = (await db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get()).c;
-    lines.push(`Pending leave approvals: ${p}.`);
+    if (can(role, 'leave:approve')) {
+      const p = (await db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get()).c;
+      lines.push(`Pending leave approvals (org-wide): ${p}.`);
+    }
+  } else if (role === 'MANAGER' || can(role, 'team:view')) {
+    const teamIds = await teamEmployeeIds(req);
+    lines.push('--- Your team (manager view — your direct reports only) ---');
+    if (!teamIds.length) {
+      lines.push('You have no direct reports on record.');
+    } else {
+      const ph = teamIds.map(() => '?').join(',');
+      const team = await db.prepare(`SELECT name, department FROM employees WHERE id IN (${ph})`).all(...teamIds);
+      lines.push(`Direct reports (${team.length}): ${team.map((t) => t.name).join(', ')}.`);
+      const present = (await db.prepare(`SELECT COUNT(*) c FROM attendance WHERE date=? AND employee_id IN (${ph}) AND (status='present' OR check_in IS NOT NULL)`).get(todayStr(), ...teamIds)).c;
+      lines.push(`Team present today: ${present} of ${team.length}.`);
+      const tLeave = await db.prepare(`SELECT e.name FROM leave_requests lr JOIN employees e ON e.id=lr.employee_id WHERE lr.status='approved' AND lr.from_date<=? AND lr.to_date>=? AND lr.employee_id IN (${ph})`).all(todayStr(), todayStr(), ...teamIds);
+      lines.push(`Team on leave today: ${tLeave.map((x) => x.name).join(', ') || 'nobody'}.`);
+      const tPend = (await db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending' AND employee_id IN (${ph})`).get(...teamIds)).c;
+      lines.push(`Pending leave requests from your team: ${tPend}.`);
+    }
   }
   return lines.join('\n');
 }
