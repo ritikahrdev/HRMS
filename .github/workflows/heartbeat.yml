@@ -16,6 +16,7 @@ name: HRMS daily automation heartbeat
 on:
   schedule:
     - cron: '30 2 * * *'    # 08:00 IST — morning wishes
+    - cron: '45 5 * * *'    # 11:15 IST — attendance reminder (after the 11:00 cutoff)
     - cron: '30 7 * * *'    # 13:00 IST — midday catch-up
     - cron: '30 14 * * *'   # 20:00 IST — evening catch-up
   workflow_dispatch: {}      # also runnable on demand from the Actions tab

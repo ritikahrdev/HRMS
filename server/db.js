@@ -593,6 +593,9 @@ const defaultSettings = {
     holidayReminders: true,
     leaveAccrual: true,
     slackBackupSync: false,
+    // Slack-ping anyone who hasn't marked attendance after this time on a working day.
+    attendanceReminder: true,
+    attendanceReminderTime: '11:00',
   },
   // Server-managed snapshot of the last automation run (read-only in the UI).
   automationState: { lastRunDate: null, lastRunAt: null, results: {} },

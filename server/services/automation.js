@@ -16,6 +16,11 @@ function nowStamp() {
   try { return new Intl.DateTimeFormat('en-CA', { timeZone: getSettings().timezone || 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
   catch (e) { return new Date().toISOString(); }
 }
+// Current time in company timezone as "HH:MM" (24h) — for the cutoff comparison.
+function nowHM() {
+  try { return new Intl.DateTimeFormat('en-GB', { timeZone: getSettings().timezone || 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()); }
+  catch (e) { return new Date().toISOString().slice(11, 16); }
+}
 function firstName(name) { return String(name || '').trim().split(/\s+/)[0] || 'there'; }
 
 // ---- Work anniversary poster (email-safe HTML) ----
@@ -81,6 +86,56 @@ async function sendTodaysAnniversaries() {
   return { sent, skipped };
 }
 
+// ---- Attendance reminder: ping anyone who hasn't marked by the cutoff ----
+// Posts ONE Slack message tagging everyone still unmarked (after ~11am on a
+// working day). Idempotent (once/day). Sending needs the Slack bot token in
+// Settings → Slack; without it the function still computes who WOULD be pinged.
+async function sendUnmarkedReminders(opts = {}) {
+  const s = getSettings();
+  const auto = s.automation || {};
+  if (auto.attendanceReminder === false && !opts.force) return { skipped: 'disabled' };
+  const today = companyToday();
+  const cutoff = auto.attendanceReminderTime || '11:00';
+
+  if (!opts.force) {
+    // Working day only (skip weekends + holidays), and only after the cutoff.
+    const dow = new Date(today + 'T12:00:00Z').getUTCDay(); // 0=Sun..6=Sat
+    const workingDays = s.workingDays || [1, 2, 3, 4, 5];
+    if (!workingDays.includes(dow)) return { skipped: 'non_working_day' };
+    if (await db.prepare('SELECT 1 FROM holidays WHERE date = ?').get(today)) return { skipped: 'holiday' };
+    if (nowHM() < cutoff) return { skipped: 'before_cutoff', cutoff };
+  }
+
+  // Who has NOT marked attendance today? (a real check-in, any marked status, or
+  // an approved leave all count as "handled".)
+  const marked = new Set((await db.prepare(
+    "SELECT employee_id FROM attendance WHERE date = ? AND (check_in IS NOT NULL OR status IN ('present','half','wfh','leave','holiday','absent'))"
+  ).all(today)).map((r) => r.employee_id));
+  for (const r of await db.prepare("SELECT employee_id FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(today, today)) marked.add(r.employee_id);
+  const emps = await db.prepare("SELECT id, name, slack_id FROM employees WHERE status='active'").all();
+  const unmarked = emps.filter((e) => !marked.has(e.id));
+  if (!unmarked.length) return { unmarked: 0, note: 'everyone has marked' };
+
+  const slack = s.slack || {};
+  const slackConfigured = !!(slack.enabled && slack.botToken);
+  const names = unmarked.map((e) => e.name);
+  // Not connected yet → report who would be pinged, but DON'T claim the marker,
+  // so it fires the moment the Slack bot token is added.
+  if (!slackConfigured) return { unmarked: unmarked.length, names, slackConfigured: false, sent: false };
+
+  // Send once per day.
+  const { claimOnce } = require('./markers');
+  if (!opts.force && !(await claimOnce(`attreminder:${today}`))) return { unmarked: unmarked.length, alreadySent: true };
+
+  const mention = (e) => (e.slack_id ? `<@${e.slack_id}>` : e.name);
+  const list = unmarked.map(mention).join(' ');
+  const co = s.companyName ? ` at ${s.companyName}` : '';
+  const msg = `⏰ *Attendance reminder*${co} — it's past ${cutoff} and these teammates haven't marked attendance yet:\n${list}\n\nPlease post your status for today (e.g. \`present\`, \`WFH\`, \`leave\`, \`half day\`). ✅`;
+  let sent = false;
+  try { const { postToSlack } = require('./slackSync'); sent = await postToSlack(msg); } catch (e) { /* non-fatal */ }
+  return { unmarked: unmarked.length, names, slackConfigured: true, sent };
+}
+
 // ---- The orchestrator ----
 async function runDailyAutomations(opts = {}) {
   const s = getSettings();
@@ -116,6 +171,10 @@ async function runDailyAutomations(opts = {}) {
       results.slack = await syncFromSlack(today);
     } catch (e) { results.slack = { error: e.message }; }
   }
+  // Ping anyone who hasn't marked attendance by the cutoff (after ~11am).
+  if (auto.attendanceReminder !== false) {
+    try { results.attendanceReminder = await sendUnmarkedReminders({ force: opts.force }); } catch (e) { results.attendanceReminder = { error: e.message }; }
+  }
 
   await saveSettings({ automationState: { lastRunDate: today, lastRunAt: nowStamp(), results } }).catch(() => {});
   if (Object.keys(results).length) console.log(`⚙️  Automations ran (${today}):`, JSON.stringify(results));
@@ -135,4 +194,4 @@ async function dailyTick() {
   }
 }
 
-module.exports = { runDailyAutomations, dailyTick, sendTodaysAnniversaries, companyToday };
+module.exports = { runDailyAutomations, dailyTick, sendTodaysAnniversaries, sendUnmarkedReminders, companyToday };

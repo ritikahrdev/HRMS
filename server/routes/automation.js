@@ -24,4 +24,13 @@ router.post('/run', requirePerm('settings:manage'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Preview / send the "you haven't marked attendance" reminder right now. Returns
+// who is still unmarked and whether it could actually post to Slack.
+router.post('/remind', requirePerm('settings:manage'), async (req, res) => {
+  try {
+    const result = await automation.sendUnmarkedReminders({ force: true });
+    res.json({ ok: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
