@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { getSettings } = require('../services/settings');
+const { classifyMessage } = require('../services/slackSync');
 
 const router = express.Router();
 
@@ -103,10 +104,17 @@ router.post('/attendance', async (req, res) => {
   if (!statusRaw) { console.warn('[webhook]   ✗ 400 missing field: status'); return res.status(400).json({ success: false, error: 'Missing required field: status.' }); }
   if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
 
-  const mapped = STATUS_MAP[statusRaw.toLowerCase()];
+  // Accept a clean label (present/absent/wfh/holiday) OR a natural Slack message
+  // ("Present ✅", "in", "wfh today", "on leave", "half day") read with the same
+  // classifier the Slack integration uses — so decorated messages don't 400.
+  let mapped = STATUS_MAP[statusRaw.toLowerCase()];
   if (!mapped) {
-    console.warn(`[webhook]   ✗ 400 unsupported status: "${statusRaw}"`);
-    return res.status(400).json({ success: false, error: `Unsupported status "${statusRaw}". Supported values: Present, Absent, WFH, Holiday.` });
+    const cls = classifyMessage(statusRaw, getSettings().slack || {});
+    if (cls.valid) mapped = { status: cls.status, wfh: cls.wfh ? 1 : 0 };
+  }
+  if (!mapped) {
+    console.warn(`[webhook]   ✗ 400 unreadable status: "${statusRaw}"`);
+    return res.status(400).json({ success: false, error: `Couldn't read a status from "${statusRaw}". Use Present, Absent, WFH, Half day, Leave, or Holiday.` });
   }
 
   // 3) Resolve the attendance date from the provided time.
@@ -133,7 +141,7 @@ router.post('/attendance', async (req, res) => {
   }
 
   // 5) Upsert attendance (idempotent — never creates duplicates for the same day).
-  const check_in = mapped.status === 'present' ? parsed.toISOString() : null;
+  const check_in = (mapped.status === 'present' || mapped.status === 'half') ? parsed.toISOString() : null;
   try {
     await upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh, reason });
   } catch (e) {
