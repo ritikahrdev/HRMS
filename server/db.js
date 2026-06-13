@@ -4,11 +4,17 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const config = require('./config');
-const { prepare, exec, withTransaction, pool } = require('./pg');
+
+// Driver selection. Production always uses Postgres (Supabase). Setting
+// DB_DRIVER=sqlite (used ONLY by the local test harness) swaps in an isolated
+// node:sqlite database so destructive/security/load tests never touch live data.
+const DRIVER = (process.env.DB_DRIVER || 'pg').toLowerCase();
+const SQLITE = DRIVER === 'sqlite';
+const { prepare, exec, withTransaction, pool } = require(SQLITE ? './sqlite' : './pg');
 
 // Timestamp/date defaults that match SQLite's old text format exactly.
-const TS = "to_char((now() at time zone 'utc'),'YYYY-MM-DD HH24:MI:SS')";
-const DT = "to_char((now() at time zone 'utc'),'YYYY-MM-DD')";
+const TS = SQLITE ? 'CURRENT_TIMESTAMP' : "to_char((now() at time zone 'utc'),'YYYY-MM-DD HH24:MI:SS')";
+const DT = SQLITE ? 'CURRENT_DATE' : "to_char((now() at time zone 'utc'),'YYYY-MM-DD')";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -623,12 +629,24 @@ const defaultSettings = {
 
 let initialized = false;
 
+// Translate the Postgres schema to SQLite (test harness only).
+function sqliteizeSchema(sql) {
+  return sql
+    .replace(/SERIAL PRIMARY KEY/g, 'INTEGER PRIMARY KEY AUTOINCREMENT')
+    .replace(/\bBYTEA\b/g, 'BLOB');
+}
+
 async function init() {
   if (initialized) return;
-  await exec(SCHEMA);
+  await exec(SQLITE ? sqliteizeSchema(SCHEMA) : SCHEMA);
 
-  // Add any columns introduced after the table's first release.
-  for (const stmt of COLUMN_MIGRATIONS) await exec(stmt);
+  // Add any columns introduced after the table's first release. SQLite has no
+  // "ADD COLUMN IF NOT EXISTS", so on a fresh test DB we strip it and ignore
+  // duplicate-column errors.
+  for (const stmt of COLUMN_MIGRATIONS) {
+    try { await exec(SQLITE ? stmt.replace(/\s+IF NOT EXISTS/i, '') : stmt); }
+    catch (e) { if (!SQLITE) throw e; /* sqlite: column already exists — ignore */ }
+  }
 
   // Normalise any legacy role values (harmless on a fresh DB).
   await exec("UPDATE users SET role='SUPER_ADMIN' WHERE role='admin'");

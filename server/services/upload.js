@@ -51,8 +51,10 @@ const documentFileFilter = (req, file, cb) => {
     return cb(new Error(`Invalid file type. Only PDF and images are allowed.`), false);
   }
 
-  // Block dangerous extensions even if MIME type matches
-  const dangerousExtensions = ['.exe', '.sh', '.bat', '.cmd', '.com', '.pif', '.zip', '.rar', '.7z'];
+  // Block dangerous extensions even if MIME type matches. Includes markup types
+  // (.html/.svg/.xml) that a browser could render and execute script from.
+  const dangerousExtensions = ['.exe', '.sh', '.bat', '.cmd', '.com', '.pif', '.zip', '.rar', '.7z',
+    '.html', '.htm', '.svg', '.xml', '.xhtml', '.js', '.mjs'];
   if (dangerousExtensions.includes(ext)) {
     return cb(new Error(`File type not allowed.`), false);
   }

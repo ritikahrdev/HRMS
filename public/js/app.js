@@ -287,7 +287,34 @@ const App = {
         : `<div style="display:flex;gap:8px;margin:9px 0;align-items:flex-end">${AV}<div style="max-width:80%;padding:9px 13px;border-radius:15px 15px 15px 4px;background:#fff;border:1px solid #ece7f8;color:#1f2937">${html}</div></div>`);
       scroll();
     };
-    const fmt = (t) => UI.esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^[-•]\s?/gm, '• ').replace(/\n/g, '<br/>');
+    // Lightweight, XSS-safe markdown for the Copilot: escape first, THEN render a
+    // small subset (headings, bold, bullets, simple tables) so structured report
+    // answers display nicely in the compact chat. Tables scroll horizontally.
+    const fmt = (t) => {
+      let s = UI.esc(String(t == null ? '' : t));
+      // Markdown tables: consecutive lines that look like | a | b |
+      s = s.replace(/(?:^\|.*\|[ \t]*\n?)+/gm, (block) => {
+        const lines = block.trim().split('\n').map((r) => r.trim()).filter(Boolean);
+        const rows = lines.filter((r) => !/^\|[\s:|-]+\|$/.test(r))
+          .map((r) => r.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim()));
+        if (!rows.length) return block;
+        const cell = (c) => c.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+        const head = '<tr>' + rows[0].map((c) => `<th style="text-align:left;padding:4px 8px;border-bottom:1px solid #e5e7eb;font-weight:700">${cell(c)}</th>`).join('') + '</tr>';
+        const body = rows.slice(1).map((r) => '<tr>' + r.map((c) => `<td style="padding:4px 8px;border-bottom:1px solid #f1f1f4">${cell(c)}</td>`).join('') + '</tr>').join('');
+        return `<div style="overflow-x:auto;margin:6px 0"><table style="border-collapse:collapse;font-size:12px;width:100%"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+      });
+      s = s
+        .replace(/^###\s?(.+)$/gm, '<div style="font-weight:700;margin:7px 0 1px">$1</div>')
+        .replace(/^##\s?(.+)$/gm, '<div style="font-weight:800;font-size:14px;margin:8px 0 2px">$1</div>')
+        .replace(/^#\s?(.+)$/gm, '<div style="font-weight:800;font-size:15px;margin:9px 0 2px;color:#5b21b6">$1</div>')
+        .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+        .replace(/^[-•]\s?/gm, '• ')
+        .replace(/\n/g, '<br/>')
+        // tidy up: no stray line-break right before/after our block elements
+        .replace(/<br\/>\s*(<div style="font-weight)/g, '$1')
+        .replace(/(<\/div>)<br\/>/g, '$1');
+      return s;
+    };
     const showTyping = () => {
       const id = 'typ' + Date.now();
       msgs.insertAdjacentHTML('beforeend', `<div id="${id}" style="display:flex;gap:8px;margin:9px 0;align-items:flex-end">${AV}<div style="padding:12px 15px;border-radius:15px 15px 15px 4px;background:#fff;border:1px solid #ece7f8"><span class="ai-dot"></span> <span class="ai-dot"></span> <span class="ai-dot"></span></div></div>`);

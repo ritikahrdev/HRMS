@@ -1,11 +1,12 @@
 const express = require('express');
 const db = require('../db');
-const { requireLogin, requirePerm } = require('../middleware/auth');
+const { requireLogin, requirePerm, requireSuperAdmin } = require('../middleware/auth');
 const { can } = require('../services/permissions');
 const { computePayroll, generatePayslip } = require('../services/payroll');
 const { buildPayslipPdf } = require('../services/pdf');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -117,11 +118,14 @@ router.post('/approve', requirePerm('payroll:manage'), async (req, res) => {
   }
 });
 
-// Unlock an approved run (Super Admin only) so it can be regenerated.
-router.post('/unlock', requirePerm('payroll:manage'), async (req, res) => {
+// Unlock an approved run (Super Admin only) so it can be regenerated. This is
+// deliberately stricter than payroll:manage — a Finance Admin can run/approve
+// payroll, but only a Super Admin may break the lock on an approved month.
+router.post('/unlock', requireSuperAdmin, async (req, res) => {
   try {
     const { month } = req.body || {};
     if (!month) return res.status(400).json({ error: 'month required' });
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format. Use YYYY-MM' });
     await db.prepare("UPDATE payroll_runs SET status='draft', updated_at=datetime('now') WHERE month = ?").run(month);
     res.json({ ok: true, run: await getRun(month) });
   } catch (e) {
@@ -184,7 +188,7 @@ router.post('/:id/email', requirePerm('payroll:manage'), async (req, res) => {
   const result = await sendMail({
     to: emp.email,
     subject: `Payslip for ${slip.month}`,
-    html: `<p>Hi ${emp.name},</p><p>Please find attached your payslip for ${slip.month}.</p><p>${s.companyName || ''}</p>`,
+    html: `<p>Hi ${escapeHtml(emp.name)},</p><p>Please find attached your payslip for ${escapeHtml(slip.month)}.</p><p>${escapeHtml(s.companyName || '')}</p>`,
     attachments: [{ filename: `payslip-${slip.month}.pdf`, path: filePath }],
   });
   res.json({ ok: result.ok, reason: result.reason });

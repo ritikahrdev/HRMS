@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../db');
 const { getSettings } = require('../services/settings');
 const { classifyMessage } = require('../services/slackSync');
@@ -34,13 +35,34 @@ function configuredSecret() {
   return process.env.ATTENDANCE_WEBHOOK_SECRET || (getSettings().webhookSecret || '');
 }
 
-// Constant-time-ish comparison to avoid leaking timing info on the secret.
+// Constant-time comparison that doesn't even leak the secret's length: both
+// sides are SHA-256 hashed to a fixed 32 bytes, then compared in constant time.
 function safeEqual(a, b) {
-  a = String(a || ''); b = String(b || '');
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+  const ha = crypto.createHash('sha256').update(String(a || '')).digest();
+  const hb = crypto.createHash('sha256').update(String(b || '')).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Interpret an incoming time. If it carries an explicit timezone (a trailing Z
+// or ±HH:MM) we trust it. A NAIVE wall-clock (e.g. "2026-06-13T09:23:40" or
+// "2026-06-13 09:23") is interpreted in the COMPANY timezone (Settings →
+// timezone, default Asia/Kolkata) — NOT UTC. Otherwise a 9:23am IST check-in
+// gets stored as 09:23 UTC and shows up 5h30 late (2:53pm) on an IST screen.
+function hasExplicitTZ(s) { return /(?:[zZ]|[+\-]\d{2}:?\d{2})\s*$/.test(String(s).trim()); }
+function wallToUtcMs(naive, tz) {
+  const m = String(naive).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return new Date(naive).getTime();
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  const dtf = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const p = {}; for (const part of dtf.formatToParts(new Date(guess))) if (part.type !== 'literal') p[part.type] = Number(part.value);
+  const asTz = Date.UTC(p.year, p.month - 1, p.day, p.hour === 24 ? 0 : p.hour, p.minute, p.second);
+  return guess - (asTz - guess); // shift by the tz offset so the wall-clock is preserved
+}
+function parseTime(s) {
+  if (s == null || s === '') return new Date(NaN);
+  const str = String(s).trim();
+  if (hasExplicitTZ(str)) return new Date(str);
+  return new Date(wallToUtcMs(str, (getSettings().timezone) || 'Asia/Kolkata'));
 }
 
 const lc = (x) => String(x == null ? '' : x).toLowerCase().trim();
@@ -111,8 +133,9 @@ router.post('/attendance', async (req, res) => {
   if (!statusRaw && !checkOutRaw && explicitHours == null) { console.warn('[webhook]   ✗ 400 missing status'); return res.status(400).json({ success: false, error: 'Provide a status (e.g. Present) or a check-out.' }); }
   if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
 
-  // 3) Resolve the attendance date from the provided time.
-  const parsed = new Date(time);
+  // 3) Resolve the attendance date from the provided time. A naive wall-clock is
+  // read in the company timezone (see parseTime) so stored instants are correct.
+  const parsed = parseTime(time);
   if (isNaN(parsed.getTime())) {
     return res.status(400).json({ success: false, error: 'Invalid time format. Use ISO 8601, e.g. "2026-06-09T09:15:00Z".' });
   }
@@ -147,7 +170,7 @@ router.post('/attendance', async (req, res) => {
   if (isCheckout) {
     action = 'check-out';
     let coTime = parsed;
-    if (checkOutRaw) { const c = new Date(checkOutRaw); if (!isNaN(c.getTime())) coTime = c; }
+    if (checkOutRaw) { const c = parseTime(checkOutRaw); if (!isNaN(c.getTime())) coTime = c; }
     check_out = coTime.toISOString();
     const ex = await db.prepare('SELECT check_in, status, wfh FROM attendance WHERE employee_id = ? AND date = ?').get(emp.id, date);
     status = (ex && ex.status) ? ex.status : 'present';
@@ -166,7 +189,7 @@ router.post('/attendance', async (req, res) => {
     }
     status = mapped.status; wfh = mapped.wfh;
     check_in = (status === 'present' || status === 'half') ? parsed.toISOString() : null;
-    if (checkOutRaw) { const c = new Date(checkOutRaw); if (!isNaN(c.getTime())) check_out = c.toISOString(); }
+    if (checkOutRaw) { const c = parseTime(checkOutRaw); if (!isNaN(c.getTime())) check_out = c.toISOString(); }
     if (explicitHours != null) work_hours = round2(explicitHours);
     else if (check_in && check_out) { const h = (new Date(check_out) - new Date(check_in)) / 36e5; work_hours = h > 0 ? round2(h) : 0; }
   }

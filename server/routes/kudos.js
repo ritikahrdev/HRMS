@@ -4,6 +4,7 @@ const { requireLogin } = require('../middleware/auth');
 const { notifyEveryone } = require('../services/notify');
 const { sendMail } = require('../services/email');
 const { postToSlack } = require('../services/slackSync');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -48,18 +49,25 @@ router.post('/', requireLogin, async (req, res) => {
   try {
     const { employee_id, message, badge } = req.body || {};
     if (!employee_id || !message) return res.status(400).json({ error: 'Recipient and message are required.' });
+    // The recipient must be a real employee (no kudos to a non-existent id).
+    const recipient = await db.prepare('SELECT name FROM employees WHERE id = ?').get(employee_id);
+    if (!recipient) return res.status(400).json({ error: 'Recipient not found.' });
     const r = await db.prepare('INSERT INTO kudos (from_user, employee_id, badge, message) VALUES (?, ?, ?, ?)')
       .run(req.session.user.id, employee_id, badge || '👏', message);
 
-    const recipient = await db.prepare('SELECT name FROM employees WHERE id = ?').get(employee_id);
     const giver = req.session.user.name || 'Someone';
-    const recName = recipient ? recipient.name : 'a teammate';
+    const recName = recipient.name;
+    // Escape user-controlled text before it lands in notification bodies (rendered
+    // via innerHTML), email HTML, and Slack messages.
+    const safeMsg = escapeHtml(message);
+    const safeGiver = escapeHtml(giver);
+    const safeRec = escapeHtml(recName);
 
     // In-app notification to everyone (except the giver).
     await notifyEveryone(req.session.user.id, {
       type: 'kudos',
-      title: `${badge || '👏'} Shoutout for ${recName}`,
-      body: `${giver}: ${message}`,
+      title: `${badge || '👏'} Shoutout for ${safeRec}`,
+      body: `${safeGiver}: ${safeMsg}`,
       link: '#/recognition',
     });
 
@@ -72,7 +80,7 @@ router.post('/', requireLogin, async (req, res) => {
       sendMail({
         to: emails.join(','),
         subject: `${badge || '👏'} Shoutout for ${recName}`,
-        html: `<p><b>${giver}</b> gave a shoutout to <b>${recName}</b>:</p><blockquote>${message}</blockquote><p>Open the HR portal → Recognition to cheer it!</p>`,
+        html: `<p><b>${safeGiver}</b> gave a shoutout to <b>${safeRec}</b>:</p><blockquote>${safeMsg}</blockquote><p>Open the HR portal → Recognition to cheer it!</p>`,
       }).catch(() => {});
     }
 

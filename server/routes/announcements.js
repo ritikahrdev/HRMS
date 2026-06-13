@@ -4,6 +4,7 @@ const { requireLogin, requirePerm } = require('../middleware/auth');
 const { postToSlack } = require('../services/slackSync');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -51,10 +52,10 @@ router.post('/', requirePerm('settings:manage'), async (req, res) => {
           to: emails.join(','),
           subject: `📢 Announcement: ${title}`,
           html: `<div style="font-family: Arial, sans-serif; line-height: 1.6;">
-            <h2 style="color: #333;">${title}</h2>
-            <p style="color: #666; white-space: pre-wrap;">${body || '(No details)'}</p>
+            <h2 style="color: #333;">${escapeHtml(title)}</h2>
+            <p style="color: #666; white-space: pre-wrap;">${escapeHtml(body || '(No details)')}</p>
             <p style="color: #999; font-size: 12px; margin-top: 20px;">
-              Posted by: ${authorName}<br/>
+              Posted by: ${escapeHtml(authorName)}<br/>
               Check the HR portal for more announcements.
             </p>
           </div>`,

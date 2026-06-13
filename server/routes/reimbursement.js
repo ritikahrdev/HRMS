@@ -9,6 +9,7 @@ const { saveFile, getFile, deleteFile, sendFile } = require('../services/filesto
 const { sendMail } = require('../services/email');
 const { applyReimbursementDecision, approversFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -43,12 +44,12 @@ router.post('/', requireLogin, upload.single('bill'), async (req, res) => {
       await sendMail({
         to: ap.email,
         subject: `Reimbursement request from ${emp ? emp.name : 'an employee'}`,
-        html: `<p><b>${emp ? emp.name : 'An employee'}</b> submitted a reimbursement: <b>${title}</b> (${category || 'general'}) for amount <b>${amount}</b>.</p>
+        html: `<p><b>${escapeHtml(emp ? emp.name : 'An employee')}</b> submitted a reimbursement: <b>${escapeHtml(title)}</b> (${escapeHtml(category || 'general')}) for amount <b>${escapeHtml(amount)}</b>.</p>
           <p>
             <a href="${actionUrl('reimbursement', id, 'approved', ap.userId)}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
             <a href="${actionUrl('reimbursement', id, 'rejected', ap.userId)}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a>
           </p>
-          <p style="color:#888;font-size:12px">This link is personal to you (${ap.name}) — the decision will be recorded in your name. Or open the HR portal to review the bill and decide.</p>`,
+          <p style="color:#888;font-size:12px">This link is personal to you (${escapeHtml(ap.name)}) — the decision will be recorded in your name. Or open the HR portal to review the bill and decide.</p>`,
       }).catch(() => {});
     }
     res.json({ id });

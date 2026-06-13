@@ -439,11 +439,19 @@ router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
     }
+    // Status must be one of the known attendance states (no arbitrary values).
+    const VALID_STATUS = ['present', 'absent', 'half', 'leave', 'wfh', 'holiday'];
+    if (!VALID_STATUS.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Use one of: ' + VALID_STATUS.join(', ') });
+    }
 
     const ci = req.body.check_in ? `${date}T${req.body.check_in}:00` : null;
     const co = req.body.check_out ? `${date}T${req.body.check_out}:00` : null;
     let hours = 0;
-    if (ci && co) hours = +(((new Date(co) - new Date(ci)) / 36e5) || 0).toFixed(2);
+    if (ci && co) {
+      hours = +(((new Date(co) - new Date(ci)) / 36e5) || 0).toFixed(2);
+      if (hours < 0) return res.status(400).json({ error: 'Check-out cannot be before check-in.' });
+    }
 
     // Atomic read-modify-write (node:sqlite has no db.transaction(); use BEGIN/COMMIT).
     await db.withTransaction(async (tx) => {

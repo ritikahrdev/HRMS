@@ -6,6 +6,7 @@ const { memoryUpload } = require('../services/upload');
 const { createEmployee } = require('../services/employees');
 const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -118,14 +119,16 @@ router.post('/commit', requirePerm('employees:write'), async (req, res) => {
 
   for (const r of rows) {
     try {
+      // Bulk import never assigns privileged roles (allowRole defaults to false),
+      // so a spreadsheet/JSON row can't mint an HR/Finance/Super-Admin login.
       const { employee, tempPassword } = await createEmployee(r);
       results.created++;
       if (tempPassword && employee.email) {
         await sendMail({
           to: employee.email,
           subject: `Welcome to ${s.companyName || 'the company'}`,
-          html: `<p>Hi ${employee.name},</p><p>Your HR account is ready.</p>
-            <p><b>Login:</b> ${employee.email}<br/><b>Temporary password:</b> ${tempPassword}</p>`,
+          html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Your HR account is ready.</p>
+            <p><b>Login:</b> ${escapeHtml(employee.email)}<br/><b>Temporary password:</b> ${escapeHtml(tempPassword)}</p>`,
         });
       }
     } catch (e) {

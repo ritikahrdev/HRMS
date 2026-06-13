@@ -6,6 +6,7 @@ const { getSettings } = require('../services/settings');
 const { applyLeaveDecision, approversFor } = require('../services/decisions');
 const { actionUrl } = require('../services/tokens');
 const accrual = require('../services/leaveAccrual');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -59,6 +60,24 @@ router.post('/', requireLogin, async (req, res) => {
     if (from_date > yearAhead.toISOString().slice(0, 10)) return res.status(400).json({ error: 'Leave cannot be applied more than a year in advance.' });
 
     const days = halfDay ? 0.5 : daysBetween(from_date, to_date);
+
+    // Balance guard: don't let a quota-limited paid leave type be over-drawn.
+    // 'unpaid' is unlimited. Pending requests are counted too so they can't be
+    // stacked past the remaining balance. (Best-effort: never blocks on a
+    // balance-calc error.)
+    try {
+      const b = (await balanceFor(empId)).balance[type];
+      if (b && type !== 'unpaid') {
+        const yr = String(new Date().getFullYear());
+        const pending = (await db.prepare(
+          "SELECT COALESCE(SUM(days),0) AS d FROM leave_requests WHERE employee_id=? AND type=? AND status='pending' AND substr(from_date,1,4)=?"
+        ).get(empId, type, yr)).d;
+        if (days + pending > b.remaining + 1e-9) {
+          return res.status(400).json({ error: `Insufficient ${b.name} balance — ${b.remaining} day(s) left${pending ? ` (${pending} already pending)` : ''}, but you requested ${days}.` });
+        }
+      }
+    } catch (e) { /* don't block apply on a balance-calc error */ }
+
     const r = await db.prepare(
       'INSERT INTO leave_requests (employee_id, type, from_date, to_date, days, reason, half_day) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(empId, type, from_date, to_date, days, reason || '', halfDay ? 1 : 0);
@@ -72,8 +91,8 @@ router.post('/', requireLogin, async (req, res) => {
       await sendMail({
         to: ap.email,
         subject: `Leave request from ${emp ? emp.name : 'an employee'}`,
-        html: `<p><b>${emp ? emp.name : 'An employee'}</b> applied for <b>${type}</b> leave from <b>${from_date}</b> to <b>${to_date}</b> (${days} day(s)).</p>
-          <p>Reason: ${reason || '-'}</p>
+        html: `<p><b>${escapeHtml(emp ? emp.name : 'An employee')}</b> applied for <b>${escapeHtml(type)}</b> leave from <b>${escapeHtml(from_date)}</b> to <b>${escapeHtml(to_date)}</b> (${days} day(s)).</p>
+          <p>Reason: ${escapeHtml(reason || '-')}</p>
           <p>
             <a href="${actionUrl('leave', id, 'approved', ap.userId)}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px">Approve</a>
             <a href="${actionUrl('leave', id, 'rejected', ap.userId)}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Reject</a>
@@ -188,9 +207,11 @@ router.post('/compoff', requirePerm('leave:approve'), async (req, res) => {
   try {
     const { employee_id, days, reason } = req.body || {};
     if (!employee_id || !days) return res.status(400).json({ error: 'Employee and days are required.' });
+    const d = Number(days);
+    if (!Number.isFinite(d) || d <= 0 || d > 31) return res.status(400).json({ error: 'Days must be a number between 0 and 31.' });
     if (!(await canActOnEmployee(req, employee_id))) return res.status(403).json({ error: 'Not in your team.' });
     const r = await db.prepare('INSERT INTO comp_off_credits (employee_id, days, reason, granted_by) VALUES (?, ?, ?, ?)')
-      .run(employee_id, Number(days) || 0, reason || '', req.session.user.id);
+      .run(employee_id, d, reason || '', req.session.user.id);
     res.json({ id: r.lastInsertRowid });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -300,11 +321,13 @@ router.post('/ledger/adjust', requirePerm('settings:manage'), async (req, res) =
   try {
     const { employee_id, type, amount, note } = req.body || {};
     if (!employee_id || !type || amount == null) return res.status(400).json({ error: 'employee_id, type and amount are required.' });
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || Math.abs(amt) > 365) return res.status(400).json({ error: 'Amount must be a number between -365 and 365.' });
     if (!(await canActOnEmployee(req, employee_id))) return res.status(403).json({ error: 'Not in your team.' });
     const period = String(new Date().getFullYear());
     // adjustments stack, so make each unique by appending a counter to the period key.
     const n = (await db.prepare("SELECT COUNT(*) AS c FROM leave_ledger WHERE employee_id=? AND type=? AND kind='adjustment' AND substr(period,1,4)=?").get(employee_id, type, period)).c;
-    await accrual.addEntry(employee_id, type, Number(amount), 'adjustment', `${period}#${Number(n) + 1}`, note || 'Manual adjustment', req.session.user.id);
+    await accrual.addEntry(employee_id, type, amt, 'adjustment', `${period}#${Number(n) + 1}`, note || 'Manual adjustment', req.session.user.id);
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });

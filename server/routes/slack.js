@@ -18,9 +18,17 @@ router.post('/events', express.raw({ type: '*/*' }), (req, res) => {
     return res.json({ challenge: body.challenge });
   }
 
-  // 2) Optional signature verification (recommended — set a Signing Secret in Settings).
+  // 2) MANDATORY signature verification. Slack always signs its requests with
+  // the app's Signing Secret. Without a configured secret we cannot trust a
+  // request, so we refuse to process events — otherwise anyone could POST a
+  // forged "message" event and inject/alter attendance (unsafe-by-default).
   const s = getSettings().slack || {};
-  if (s.signingSecret) {
+  if (!s.signingSecret) {
+    // No secret configured → we can't verify, so we never process events.
+    console.warn('[slack] event ignored — no Signing Secret configured in Settings → Slack.');
+    return res.status(401).send('signing secret not configured');
+  }
+  {
     const ts = req.headers['x-slack-request-timestamp'];
     const sig = req.headers['x-slack-signature'];
     if (!ts || !sig) return res.status(401).send('unsigned');

@@ -2,6 +2,8 @@ const express = require('express');
 const db = require('../db');
 const { requireLogin, requirePerm } = require('../middleware/auth');
 const { sendMail } = require('../services/email');
+const { can } = require('../services/permissions');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -57,8 +59,9 @@ router.post('/', requireLogin, async (req, res) => {
     const r = await db.prepare('INSERT INTO tickets (employee_id, category, subject, description, status) VALUES (?, ?, ?, ?, ?)')
       .run(empId, category, subject, description || '', 'open');
 
-    // Send notification to HR team
-    const hrUsers = await db.prepare("SELECT id, email FROM users WHERE permissions LIKE '%settings:manage%'").all();
+    // Send notification to HR team. (Recipients are users whose ROLE grants
+    // settings:manage — the users table has no `permissions` column.)
+    const hrUsers = (await db.prepare('SELECT id, email, role FROM users').all()).filter((u) => u.email && can(u.role, 'settings:manage'));
     const emp = await db.prepare('SELECT name, email FROM employees WHERE id = ?').get(empId);
     const categoryName = CATEGORY_NAMES[category] || category;
     const categoryIcon = CATEGORY_ICONS[category] || '❓';
@@ -69,12 +72,12 @@ router.post('/', requireLogin, async (req, res) => {
         to: hrEmails,
         subject: `🎫 New Support Ticket: ${categoryIcon} ${subject}`,
         html: `
-          <p><strong>New ticket raised by ${emp.name}</strong></p>
+          <p><strong>New ticket raised by ${escapeHtml(emp.name)}</strong></p>
           <div style="background:#f0f9ff;padding:12px;border-radius:6px;border-left:4px solid #0ea5e9;margin:12px 0">
-            <p><strong>Category:</strong> ${categoryIcon} ${categoryName}</p>
-            <p><strong>Subject:</strong> ${subject}</p>
+            <p><strong>Category:</strong> ${categoryIcon} ${escapeHtml(categoryName)}</p>
+            <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
             <p><strong>Ticket ID:</strong> #${r.lastInsertRowid}</p>
-            ${description ? `<p><strong>Details:</strong><br>${description}</p>` : ''}
+            ${description ? `<p><strong>Details:</strong><br>${escapeHtml(description)}</p>` : ''}
           </div>
           <p>Please review and respond to this ticket in the HR system.</p>
         `
@@ -106,12 +109,12 @@ router.put('/:id', requirePerm('settings:manage'), async (req, res) => {
           to: emp.email,
           subject: `✅ Your ticket #${t.id} has been resolved`,
           html: `
-            <p>Hi <strong>${emp.name}</strong>,</p>
+            <p>Hi <strong>${escapeHtml(emp.name)}</strong>,</p>
             <p>Your support ticket has been resolved:</p>
             <div style="background:#f0fdf4;padding:12px;border-radius:6px;border-left:4px solid #22c55e;margin:12px 0">
-              <p><strong>Ticket #${t.id}</strong> - ${categoryIcon} ${categoryName}</p>
-              <p><strong>Subject:</strong> ${t.subject}</p>
-              ${resolution ? `<p><strong>Resolution:</strong><br>${resolution}</p>` : ''}
+              <p><strong>Ticket #${t.id}</strong> - ${categoryIcon} ${escapeHtml(categoryName)}</p>
+              <p><strong>Subject:</strong> ${escapeHtml(t.subject)}</p>
+              ${resolution ? `<p><strong>Resolution:</strong><br>${escapeHtml(resolution)}</p>` : ''}
             </div>
             <p>If you need further assistance, feel free to raise another ticket.</p>
             <p>Best regards,<br>HR Team</p>

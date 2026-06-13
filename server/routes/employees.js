@@ -15,6 +15,7 @@ const aadhaarOffline = require('../services/aadhaarOffline');
 const { notifyUsers } = require('../services/notify');
 const { can } = require('../services/permissions');
 const { syncAutomatedTasks } = require('../services/onboardingJourney');
+const { escapeHtml } = require('../services/escape');
 
 const router = express.Router();
 
@@ -214,8 +215,8 @@ router.post('/me/onboarding/submit', requireLogin, async (req, res) => {
     recipients.delete(req.session.user.id);
     await notifyUsers([...recipients], {
       type: 'onboarding',
-      title: `Onboarding form submitted: ${emp.name}`,
-      body: `${emp.name} has completed their joining form and uploaded their documents. Please review and verify.`,
+      title: `Onboarding form submitted: ${escapeHtml(emp.name)}`,
+      body: `${escapeHtml(emp.name)} has completed their joining form and uploaded their documents. Please review and verify.`,
       link: '#/onboarding',
     });
     res.json({ ok: true });
@@ -239,16 +240,18 @@ router.get('/:id', requireLogin, async (req, res) => {
 // Create employee.
 router.post('/', requirePerm('employees:write'), async (req, res) => {
   try {
-    const { employee, tempPassword } = await createEmployee(req.body || {});
+    // Only a Super Admin may assign a non-default role at creation time.
+    const allowRole = req.session.user.role === 'SUPER_ADMIN';
+    const { employee, tempPassword } = await createEmployee(req.body || {}, { allowRole });
     if (tempPassword && employee.email) {
       const s = getSettings();
       await sendMail({
         to: employee.email,
         subject: `Welcome to ${s.companyName || 'the company'}`,
-        html: `<p>Hi ${employee.name},</p>
+        html: `<p>Hi ${escapeHtml(employee.name)},</p>
           <p>Your HR portal account has been created.</p>
-          <p><b>Login email:</b> ${employee.email}<br/>
-          <b>Temporary password:</b> ${tempPassword}</p>
+          <p><b>Login email:</b> ${escapeHtml(employee.email)}<br/>
+          <b>Temporary password:</b> ${escapeHtml(tempPassword)}</p>
           <p>Please log in and change your password.</p>`,
       });
     }
@@ -266,7 +269,7 @@ router.put('/:id', requirePerm('employees:write'), async (req, res) => {
 
     const updates = {};
     for (const f of FIELDS) if (f in req.body) updates[f] = req.body[f];
-    if ('monthly_salary' in updates) updates.monthly_salary = Number(updates.monthly_salary) || 0;
+    if ('monthly_salary' in updates) updates.monthly_salary = Math.max(0, Number(updates.monthly_salary) || 0);
     if ('manager_id' in updates) updates.manager_id = updates.manager_id ? Number(updates.manager_id) : null;
 
     const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
@@ -354,7 +357,7 @@ router.post('/:id/reset-password', requirePerm('employees:write'), async (req, r
       await sendMail({
         to: emp.email,
         subject: 'Your HR portal password was reset',
-        html: `<p>Hi ${emp.name},</p><p>Your new temporary password is <b>${temp}</b>. Please log in and change it.</p>`,
+        html: `<p>Hi ${escapeHtml(emp.name)},</p><p>Your new temporary password is <b>${escapeHtml(temp)}</b>. Please log in and change it.</p>`,
       });
     }
     res.json({ tempPassword: temp });
@@ -381,10 +384,10 @@ router.put('/:id/salary', requirePerm('payroll:manage'), async (req, res) => {
     const emp = await db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Not found' });
     const earnings = (req.body && Array.isArray(req.body.earnings) ? req.body.earnings : [])
-      .map((e) => ({ name: String(e.name || 'Earning'), amount: +e.amount || 0 }))
+      .map((e) => ({ name: String(e.name || 'Earning'), amount: Math.max(0, +e.amount || 0) }))
       .filter((e) => e.name);
     const deductions = (req.body && Array.isArray(req.body.deductions) ? req.body.deductions : [])
-      .map((d) => ({ name: String(d.name || 'Deduction'), amount: +d.amount || 0 }))
+      .map((d) => ({ name: String(d.name || 'Deduction'), amount: Math.max(0, +d.amount || 0) }))
       .filter((d) => d.name);
     const gross = +earnings.reduce((s, e) => s + e.amount, 0).toFixed(2);
     const structure = { earnings, deductions };

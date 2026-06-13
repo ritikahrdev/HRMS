@@ -58,17 +58,21 @@ async function nextEmpCode() {
  * Creates an employee and (optionally) a matching login account.
  * Returns { employee, tempPassword }.
  */
-async function createEmployee(data, { createLogin = true, defaultPassword } = {}) {
+async function createEmployee(data, { createLogin = true, defaultPassword, allowRole = false } = {}) {
   const emp = {};
   for (const f of FIELDS) emp[f] = data[f] != null ? data[f] : null;
   emp.name = (emp.name || '').trim();
   if (!emp.name) throw new Error('Name is required');
-  emp.monthly_salary = Number(emp.monthly_salary) || 0;
+  emp.monthly_salary = Math.max(0, Number(emp.monthly_salary) || 0);
   emp.status = emp.status || 'active';
   emp.manager_id = emp.manager_id ? Number(emp.manager_id) : null;
   if (!emp.emp_code) emp.emp_code = await nextEmpCode();
 
-  const role = normaliseRole(data.role);
+  // Privilege-safety: a caller-supplied role is honoured ONLY when the route
+  // explicitly opts in (and only a Super Admin should do that). Otherwise every
+  // created login defaults to EMPLOYEE — so bulk import / generic create can
+  // never mint an HR/Finance/Super-Admin account via mass assignment.
+  const role = allowRole ? normaliseRole(data.role) : 'EMPLOYEE';
   let userId = null;
   let tempPassword = null;
 
