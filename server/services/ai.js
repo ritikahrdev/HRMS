@@ -154,11 +154,19 @@ async function callAzure({ apiKey, model, endpoint, system, messages, maxTokens 
     ? base + '/chat/completions'
     : base + `/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=2024-08-01-preview`;
   const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
-  const r = await safeFetch(url, {
+  const post = (tokenKey) => safeFetch(url, {
     method: 'POST',
     headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages: msgs, max_tokens: maxTokens }),
+    body: JSON.stringify({ model, messages: msgs, [tokenKey]: maxTokens }),
   }, 'Azure OpenAI');
+  // Newer Azure models (gpt-5 / o-series reasoning models) reject `max_tokens`
+  // and require `max_completion_tokens`. Send the classic param first, and if the
+  // model rejects it, transparently retry with the new one (works for both).
+  let r = await post('max_tokens');
+  if (!r.ok && r.status === 400) {
+    const t = await r.clone().text().catch(() => '');
+    if (/max_completion_tokens/i.test(t)) r = await post('max_completion_tokens');
+  }
   if (!r.ok) {
     let d = ''; try { const j = await r.json(); d = (j.error && j.error.message) || ''; } catch (e) {}
     if (r.status === 401) throw keyError('azure');
