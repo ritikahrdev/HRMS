@@ -38,6 +38,42 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
+const lc = (x) => String(x == null ? '' : x).toLowerCase().trim();
+// Normalise a person's name: lowercase, treat . and _ as spaces (so a Slack
+// handle like "suraj.shukla" matches "Suraj Shukla"), and collapse whitespace.
+const norm = (x) => lc(x).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Forgiving employee lookup. Tries the strongest identifiers first
+// (slack_id → email → emp_code → exact name), then UNIQUE fuzzy name matches
+// among ACTIVE employees only — so "Suraj", "suraj shukla", "Shukla Suraj", a
+// Slack handle, or a different spelling still resolve instead of a 404 (which is
+// what makes the Slack side post a warning). Fuzzy matches resolve only when
+// exactly one active employee fits, so it never picks the wrong person.
+async function resolveEmployee(body) {
+  const all = await db.prepare('SELECT id, name, email, emp_code, slack_id, status FROM employees').all();
+  const activeFirst = (rows) => rows.slice().sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1));
+  const pick = (rows, by) => (rows.length ? { emp: activeFirst(rows)[0], by } : null);
+
+  const slackId = body.slack_id || body.slackId || body.user_id;
+  if (slackId) { const m = pick(all.filter((e) => e.slack_id && lc(e.slack_id) === lc(slackId)), 'slack_id'); if (m) return m; }
+  if (body.email) { const m = pick(all.filter((e) => e.email && lc(e.email) === lc(body.email)), 'email'); if (m) return m; }
+  if (body.emp_code) { const m = pick(all.filter((e) => e.emp_code && lc(e.emp_code) === lc(body.emp_code)), 'emp_code'); if (m) return m; }
+
+  const n = norm(body.name);
+  if (!n) return null;
+  let m = pick(all.filter((e) => norm(e.name) === n), 'name'); if (m) return m;
+
+  // Fuzzy — unique active match only.
+  const act = all.filter((e) => e.status === 'active');
+  const toks = n.split(' ').filter(Boolean);
+  let c = act.filter((e) => { const w = norm(e.name).split(' '); return toks.every((t) => w.includes(t)); }); // all tokens present, any order
+  if (c.length === 1) return { emp: c[0], by: 'name~tokens' };
+  c = act.filter((e) => norm(e.name) === n || norm(e.name).startsWith(n + ' ')); // input is a name prefix
+  if (c.length === 1) return { emp: c[0], by: 'name~prefix' };
+  if (toks.length === 1) { c = act.filter((e) => norm(e.name).split(' ')[0] === toks[0]); if (c.length === 1) return { emp: c[0], by: 'firstname' }; } // unique first name
+  return null;
+}
+
 // POST /api/webhook/attendance
 // Trusted systems push attendance here with the X-Webhook-Secret header.
 router.post('/attendance', async (req, res) => {
@@ -62,7 +98,8 @@ router.post('/attendance', async (req, res) => {
   // Optional note explaining the entry (e.g. "Sick leave", "Client visit"). Kept
   // to a sane length; omitted/blank is fine for backward compatibility.
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 300) || null : null;
-  if (!name) { console.warn('[webhook]   ✗ 400 missing field: name'); return res.status(400).json({ success: false, error: 'Missing required field: name.' }); }
+  const hasIdentity = name || body.email || body.slack_id || body.slackId || body.user_id || body.emp_code;
+  if (!hasIdentity) { console.warn('[webhook]   ✗ 400 missing identity'); return res.status(400).json({ success: false, error: 'Provide a name, email, or Slack ID to identify the employee.' }); }
   if (!statusRaw) { console.warn('[webhook]   ✗ 400 missing field: status'); return res.status(400).json({ success: false, error: 'Missing required field: status.' }); }
   if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
 
@@ -80,14 +117,19 @@ router.post('/attendance', async (req, res) => {
   const dateMatch = time.match(/^(\d{4}-\d{2}-\d{2})/);
   const date = dateMatch ? dateMatch[1] : parsed.toISOString().slice(0, 10);
 
-  // 4) Find the employee by name (prefer an active match).
-  const emp = await db.prepare(
-    "SELECT id, name FROM employees WHERE lower(trim(name)) = lower(trim(?)) " +
-    "ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END LIMIT 1"
-  ).get(name);
-  if (!emp) {
-    console.warn(`[webhook]   ✗ 404 employee not found: "${name}"`);
-    return res.status(404).json({ success: false, error: `Employee not found: "${name}". No attendance was recorded.` });
+  // 4) Find the employee (forgiving match: slack_id / email / code / name).
+  const match = await resolveEmployee(body);
+  if (!match) {
+    const who = name || body.email || body.slack_id || body.slackId || body.user_id || '';
+    console.warn(`[webhook]   ✗ 404 employee not found: "${who}"`);
+    return res.status(404).json({ success: false, error: `Employee not found: "${who}". No attendance was recorded.` });
+  }
+  const emp = match.emp;
+  // Remember the Slack ID the first time we see it, so future lookups are instant
+  // and the directory shows the person as Slack-mapped.
+  const incomingSlackId = body.slack_id || body.slackId || body.user_id;
+  if (incomingSlackId && !emp.slack_id) {
+    try { await db.prepare('UPDATE employees SET slack_id = ? WHERE id = ?').run(String(incomingSlackId), emp.id); } catch (e) { /* non-fatal */ }
   }
 
   // 5) Upsert attendance (idempotent — never creates duplicates for the same day).
@@ -98,13 +140,14 @@ router.post('/attendance', async (req, res) => {
     console.error('[webhook]   ✗ 500 DB error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
   }
-  console.log(`[webhook]   ✓ 200 recorded: ${emp.name} | ${date} | ${mapped.status}${mapped.wfh ? ' (WFH)' : ''}${reason ? ` | reason: "${reason}"` : ''}`);
+  console.log(`[webhook]   ✓ 200 recorded: ${emp.name} (matched by ${match.by}) | ${date} | ${mapped.status}${mapped.wfh ? ' (WFH)' : ''}${reason ? ` | reason: "${reason}"` : ''}`);
 
   // 6) Success response.
   return res.json({
     success: true,
     message: 'Attendance updated successfully',
     employee: emp.name,
+    matchedBy: match.by,
     status: statusRaw,
     time,
     date,
