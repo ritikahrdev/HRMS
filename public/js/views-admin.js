@@ -715,6 +715,8 @@ const AdminViews = {
 .attx-emp-meta{min-width:0} .attx-emp-meta .nm{font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap}
 .attx-emp-meta .cd{color:var(--muted);font-size:11px}
 .attx-dash{color:var(--border)} .attx-late{color:var(--yellow);font-size:11px;font-weight:700}
+.attx-hlive{color:var(--pri);font-weight:800}
+.attx-hlive::after{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--green);margin-left:5px;vertical-align:middle;animation:attxPulse 1.8s infinite}
 .attx-badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:20px;white-space:nowrap}
 .attx-badge.b-present{background:var(--greenb);color:var(--green)}
 .attx-badge.b-absent{background:var(--redb);color:var(--red)}
@@ -770,7 +772,20 @@ const AdminViews = {
     const hue = (n) => { let h = 7; for (const ch of String(n || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
     const avatar = (n, sz) => `<span class="attx-av" style="width:${sz || 34}px;height:${sz || 34}px;font-size:${sz ? 14 : 12}px;background:linear-gradient(135deg,hsl(${hue(n)},66%,56%),hsl(${(hue(n) + 38) % 360},66%,46%))">${esc(initials(n))}</span>`;
     const fmtTime = (t) => { if (!t) return null; const d = new Date(t); if (isNaN(d)) return null; let h = d.getHours(), m = d.getMinutes(), ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12; return `${h}:${String(m).padStart(2, '0')} ${ap}`; };
-    const hoursOf = (r) => { if (r.work_hours != null) return Number(r.work_hours); if (r.check_in && r.check_out) { const a = new Date(r.check_in), b = new Date(r.check_out); if (!isNaN(a) && !isNaN(b)) return Math.max(0, (b - a) / 36e5); } return null; };
+    // Hours worked: from a completed check-out if present, else LIVE — the time
+    // elapsed since check-in for someone still marked present today.
+    // A recorded total only counts if it's > 0 (the column defaults to 0).
+    const recordedHrs = (r) => (r.work_hours != null && Number(r.work_hours) > 0) ? Number(r.work_hours) : null;
+    const hoursOf = (r) => {
+      if (r.check_in && r.check_out) { const a = new Date(r.check_in), b = new Date(r.check_out); if (!isNaN(a) && !isNaN(b)) return Math.max(0, (b - a) / 36e5); }
+      const rec = recordedHrs(r); if (rec != null) return rec;
+      if (r.check_in && (r.status === 'present' || r.status === 'half') && st.date === todayISO) {
+        const a = new Date(r.check_in); if (!isNaN(a)) { const h = (Date.now() - a.getTime()) / 36e5; if (h >= 0 && h < 24) return h; }
+      }
+      return null;
+    };
+    // True when the hours shown are still ticking (checked in, not yet out).
+    const liveHours = (r) => !r.check_out && recordedHrs(r) == null && !!r.check_in && (r.status === 'present' || r.status === 'half') && st.date === todayISO;
     const badge = (r) => {
       if (r.status === 'present' && r.wfh) return '<span class="attx-badge b-wfh">WFH</span>';
       if (r.status === 'present' && r.late_minutes > 0) return '<span class="attx-badge b-late">Late</span>';
@@ -819,13 +834,13 @@ const AdminViews = {
       return `<div class="attx-table-wrap"><table class="attx-table"><thead><tr>
         ${th('name', 'Employee')}${th('department', 'Department')}${th('checkin', 'Check In')}<th>Check Out</th>${th('hours', 'Hours')}${th('status', 'Status')}<th>Location</th>
       </tr></thead><tbody>${L.length ? L.map((r) => {
-        const ci = fmtTime(r.check_in), co = fmtTime(r.check_out), h = hoursOf(r);
+        const ci = fmtTime(r.check_in), co = fmtTime(r.check_out), h = hoursOf(r), lh = liveHours(r);
         return `<tr class="attx-row" data-emp="${r.id}">
           <td><div class="attx-emp">${avatar(r.name)}<div class="attx-emp-meta"><span class="nm">${esc(r.name)}${liveTag(r)}</span><span class="cd">${esc(r.emp_code || '—')}</span></div></div></td>
           <td>${esc(r.department || '—')}</td>
           <td>${ci ? `<b>${ci}</b>` : '<span class="attx-dash">—</span>'}${r.late_minutes > 0 ? ` <span class="attx-late">+${UI.duration(r.late_minutes)}</span>` : ''}</td>
-          <td>${co || '<span class="attx-dash">—</span>'}</td>
-          <td>${h != null ? h.toFixed(1) + 'h' : '<span class="attx-dash">—</span>'}</td>
+          <td>${co || (lh ? '<span class="attx-dash" title="Still clocked in">· · ·</span>' : '<span class="attx-dash">—</span>')}</td>
+          <td>${h != null ? (lh ? `<span class="attx-hlive" title="Hours since check-in (still in)">${h.toFixed(1)}h</span>` : `<b>${h.toFixed(1)}h</b>`) : '<span class="attx-dash">—</span>'}</td>
           <td>${badge(r)}</td>
           <td>${(r.in_lat != null && r.in_lng != null) ? `<a class="attx-map" href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" rel="noopener">📍 Map</a>` : '<span class="attx-dash">—</span>'}</td>
         </tr>`; }).join('') : '<tr><td colspan="7"><div class="attx-empty">No employees match these filters.</div></td></tr>'}</tbody></table></div>
@@ -847,7 +862,7 @@ const AdminViews = {
         <div class="attx-tl">
           <div class="attx-tl-i ${ci ? 'ok' : 'no'}"><span class="attx-tl-dot"></span><div><div class="t">Check In</div><div class="v">${ci || 'Not checked in'}</div></div></div>
           <div class="attx-tl-i ${co ? 'ok' : 'no'}"><span class="attx-tl-dot"></span><div><div class="t">Check Out</div><div class="v">${co || '—'}</div></div></div>
-          <div class="attx-tl-i"><span class="attx-tl-dot"></span><div><div class="t">Total Hours</div><div class="v">${h != null ? h.toFixed(1) + ' hours' : '—'}</div></div></div>
+          <div class="attx-tl-i"><span class="attx-tl-dot"></span><div><div class="t">${liveHours(r) ? 'Hours so far' : 'Total Hours'}</div><div class="v">${h != null ? h.toFixed(1) + ' hours' : '—'}</div></div></div>
           <div class="attx-tl-i ${r.status === 'present' ? 'ok' : 'no'}"><span class="attx-tl-dot"></span><div><div class="t">Status</div><div class="v" style="text-transform:capitalize">${esc(r.status)}${r.wfh ? ' · WFH' : ''}${r.late_minutes > 0 ? ' · Late ' + UI.duration(r.late_minutes) : ''}</div></div></div>
         </div>
         ${r.source ? `<div class="attx-drawer-src">Recorded via ${r.source === 'slack' ? '💬 Slack' : r.source === 'webhook' ? '🔗 Webhook' : esc(r.source)}</div>` : ''}
