@@ -674,8 +674,12 @@ const AdminViews = {
 .attx-search:focus,.attx-select:focus,.attx-datenav input:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 3px var(--pri-soft)}
 .attx-holiday{background:var(--purpleb);color:var(--purple);border-radius:12px;padding:10px 14px;font-size:13px;margin-bottom:14px}
 .attx-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
-.attx-kpi{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:15px 16px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px;transition:transform .15s,box-shadow .15s}
+.attx-kpi{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:15px 16px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px;transition:transform .15s,box-shadow .15s,border-color .15s;cursor:pointer;user-select:none}
 .attx-kpi:hover{transform:translateY(-2px)}
+.attx-kpi:focus-visible{outline:3px solid var(--pri);outline-offset:2px}
+.attx-kpi.on{border-color:var(--pri);box-shadow:0 0 0 2px var(--pri-soft),var(--shadow)}
+.attx-kpi.on::after{content:'✓ Filtering';position:absolute;top:8px;right:10px;font-size:9.5px;font-weight:800;color:var(--pri);letter-spacing:.02em}
+.attx-kpi{position:relative}
 .attx-kpi-ico{width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:none}
 .attx-kpi-val{font-size:26px;font-weight:800;line-height:1;letter-spacing:-.02em}
 .attx-kpi-lbl{font-size:11.5px;color:var(--muted);margin-top:4px;font-weight:600}
@@ -805,7 +809,13 @@ const AdminViews = {
       absent: L.filter((r) => r.status === 'absent').length,
       leave: L.filter((r) => r.status === 'leave' || r.status === 'half').length,
       late: L.filter((r) => r.late_minutes > 0).length, total: L.length }; };
-    const kpiCard = (label, val, cls, icon) => `<div class="attx-kpi ${cls}"><div class="attx-kpi-ico">${icon}</div><div><div class="attx-kpi-val">${val}</div><div class="attx-kpi-lbl">${label}</div></div></div>`;
+    const kpiCard = (label, val, cls, icon, key) => {
+      const on = st.status === key;
+      return `<div class="attx-kpi ${cls}${on ? ' on' : ''}" role="button" tabindex="0" data-kpi="${key}" aria-pressed="${on}" aria-label="${label}: ${val} employee${val === 1 ? '' : 's'}. ${on ? 'Filter active — activate to clear.' : 'Activate to filter the list to ' + label.toLowerCase() + '.'}">
+        <div class="attx-kpi-ico" aria-hidden="true">${icon}</div>
+        <div><div class="attx-kpi-val">${val}</div><div class="attx-kpi-lbl">${label}</div></div>
+      </div>`;
+    };
 
     function deptBars() {
       const d = (st.ins && st.ins.byDepartment) || [];
@@ -817,7 +827,7 @@ const AdminViews = {
       let L = ((st.day && st.day.list) || []).slice();
       const q = st.search.trim().toLowerCase();
       if (q) L = L.filter((r) => (r.name || '').toLowerCase().includes(q) || (r.emp_code || '').toLowerCase().includes(q) || (r.department || '').toLowerCase().includes(q));
-      if (st.status !== 'all') L = L.filter((r) => st.status === 'present' ? (r.status === 'present' && !r.wfh) : st.status === 'wfh' ? (r.status === 'present' && r.wfh) : st.status === 'late' ? r.late_minutes > 0 : r.status === st.status);
+      if (st.status !== 'all') L = L.filter((r) => st.status === 'present' ? (r.status === 'present' && !r.wfh) : st.status === 'wfh' ? (r.status === 'present' && r.wfh) : st.status === 'late' ? r.late_minutes > 0 : st.status === 'leave' ? (r.status === 'leave' || r.status === 'half') : r.status === st.status);
       if (st.dept !== 'all') L = L.filter((r) => (r.department || '—') === st.dept);
       const dir = st.sortDir === 'asc' ? 1 : -1;
       L.sort((a, b) => { let x, y;
@@ -891,11 +901,11 @@ const AdminViews = {
         </div>
         ${st.day && st.day.holiday ? `<div class="attx-holiday">🎉 Holiday: <b>${esc(st.day.holiday)}</b></div>` : ''}
         <div class="attx-kpis">
-          ${kpiCard('Present', c.present, 'k-present', '✅')}
-          ${kpiCard('Absent', c.absent, 'k-absent', '🚫')}
-          ${kpiCard('On Leave', c.leave, 'k-leave', '🌴')}
-          ${kpiCard('Work From Home', c.wfh, 'k-wfh', '🏠')}
-          ${kpiCard('Late Arrivals', c.late, 'k-late', '⏰')}
+          ${kpiCard('Present', c.present, 'k-present', '✅', 'present')}
+          ${kpiCard('Absent', c.absent, 'k-absent', '🚫', 'absent')}
+          ${kpiCard('On Leave', c.leave, 'k-leave', '🌴', 'leave')}
+          ${kpiCard('Work From Home', c.wfh, 'k-wfh', '🏠', 'wfh')}
+          ${kpiCard('Late Arrivals', c.late, 'k-late', '⏰', 'late')}
         </div>
         <div class="attx-card" style="margin-bottom:16px">
           <div class="attx-card-h"><span>🏢 Department-wise Attendance</span></div>
@@ -912,6 +922,12 @@ const AdminViews = {
       const s = body.querySelector('#attx-search'); if (s) s.oninput = () => { st.search = s.value; st.page = 1; regrid(); };
       const fs = body.querySelector('#attx-fstatus'); if (fs) fs.onchange = () => { st.status = fs.value; st.page = 1; regrid(); };
       const fd = body.querySelector('#attx-fdept'); if (fd) fd.onchange = () => { st.dept = fd.value; st.page = 1; regrid(); };
+      // KPI cards act as filter toggles — clickable and keyboard-accessible.
+      body.querySelectorAll('[data-kpi]').forEach((el) => {
+        const act = () => { const k = el.dataset.kpi; st.status = (st.status === k) ? 'all' : k; st.page = 1; render(); };
+        el.onclick = act;
+        el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); act(); } };
+      });
       bindGrid();
     }
     async function loadAll() {
