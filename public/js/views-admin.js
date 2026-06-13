@@ -1947,6 +1947,11 @@ const AdminViews = {
         <div class="section-title">Slack Attendance</div>
         <p class="muted" style="font-size:12px">Employees post their status in a Slack channel (e.g. <i>present</i>, <i>WFH</i>, <i>leave</i>) and it syncs here. The bot also reacts 👍 to valid messages and ❌ + a reminder to unreadable ones. <b>Scopes needed:</b> channels:history, chat:write, reactions:write, users:read, users:read.email.</p>
         <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="slackEnabled" ${(s.slack || {}).enabled ? 'checked' : ''}/> Enable Slack integration</label></div>
+        <div class="card" style="box-shadow:none;border:1px solid var(--border);background:#f0fdf4;margin-bottom:12px">
+          <div class="section-title" style="margin-top:0">⚡ Easiest: Incoming Webhook URL (for sending reminders &amp; notices)</div>
+          <p class="muted" style="font-size:12px;margin:2px 0 8px">The simplest way to let the HRMS <b>post into Slack</b> (e.g. the "you haven't marked attendance" reminder) — <b>no bot token or scopes needed</b>. In Slack: <i>your app → Incoming Webhooks → Activate → Add New Webhook to Workspace → pick the channel → copy the URL</i> and paste it below.</p>
+          <div class="field full"><label>Incoming Webhook URL</label><input id="slackWebhookUrl" value="${UI.esc((s.slack || {}).incomingWebhookUrl || '')}" placeholder="https://hooks.slack.com/services/T.../B.../..." /></div>
+        </div>
         <div class="form-grid">
           <div class="field"><label>Bot Token (xoxb-…)</label><input id="slackToken" value="${UI.esc((s.slack || {}).botToken || '')}" placeholder="xoxb-..." /></div>
           <div class="field"><label>Channel ID</label><input id="slackChannel" value="${UI.esc((s.slack || {}).channelId || '')}" placeholder="C0XXXXXXX" /></div>
@@ -2123,6 +2128,7 @@ const AdminViews = {
           botToken: val('slackToken').trim(),
           channelId: val('slackChannel').trim(),
           signingSecret: val('slackSigning').trim(),
+          incomingWebhookUrl: val('slackWebhookUrl').trim(),
           presentKeywords: val('slackPresent').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
           wfhKeywords: val('slackWfh').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
           halfKeywords: val('slackHalf').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),

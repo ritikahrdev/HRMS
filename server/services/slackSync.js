@@ -258,9 +258,18 @@ async function processSlackEvent(event) {
   return { ok: true, empId, valid: cls.valid, status: cls.status, wfh: cls.wfh, date };
 }
 
-// Post a message to a Slack channel (e.g., announcements)
+// Post a message to a Slack channel (e.g., announcements, reminders).
+// Two ways, simplest first:
+//   1) an Incoming Webhook URL (no bot token / OAuth needed), or
+//   2) the bot token via chat.postMessage.
 async function postToSlack(message, channel) {
   const s = getSettings().slack || {};
+  if (s.incomingWebhookUrl) {
+    try {
+      const r = await fetch(s.incomingWebhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: message }) });
+      return r.ok;
+    } catch (e) { console.error('Error posting to Slack webhook:', e.message); return false; }
+  }
   if (!s.enabled || !s.botToken) return false;
   const channelId = channel || s.channelId;
   if (!channelId) return false;

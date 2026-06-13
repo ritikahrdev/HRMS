@@ -117,7 +117,8 @@ async function sendUnmarkedReminders(opts = {}) {
   if (!unmarked.length) return { unmarked: 0, note: 'everyone has marked' };
 
   const slack = s.slack || {};
-  const slackConfigured = !!(slack.enabled && slack.botToken);
+  // Can we post to Slack? Either an Incoming Webhook URL or an enabled bot token.
+  const slackConfigured = !!(slack.incomingWebhookUrl || (slack.enabled && slack.botToken));
   const names = unmarked.map((e) => e.name);
   // Not connected yet → report who would be pinged, but DON'T claim the marker,
   // so it fires the moment the Slack bot token is added.
