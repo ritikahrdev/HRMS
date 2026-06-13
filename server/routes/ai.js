@@ -293,6 +293,9 @@ router.post('/chat', requireLogin, async (req, res) => {
 ${context}
 
 --- PAGES YOU CAN SEND THE USER TO (use ONLY these routes) ---
+To open a page for the user, put this directive ALONE on the final line (never inside a sentence):
+[[GOTO:#/route|Button Label]]
+Use ONLY a route id from the list below, plus a short Button Label (e.g. "Open My Payslips"). Always include the | and a label.
 ${routeList}
 
 --- ACTIONS YOU CAN PERFORM (the user will tap Confirm before anything runs, so it is safe to propose) ---
@@ -317,10 +320,13 @@ Rules: NEVER invent dates, amounts, names, or leave types — if a required deta
     }
     // GOTO directive (navigate) — only if no action proposed.
     if (!proposedAction) {
-      const gm = raw.match(/\[\[\s*GOTO\s*:\s*(#\/[\w-]*)\s*\|\s*([^\]]+?)\s*\]\]/i);
+      // Label is optional: accept [[GOTO:#/route]] or [[GOTO:#/route|Label]].
+      // When the model omits the label, use the page's own label from the catalogue.
+      const gm = raw.match(/\[\[\s*GOTO\s*:\s*(#\/[\w-]*)\s*(?:\|\s*([^\]]+?))?\s*\]\]/i);
       if (gm) {
         const route = gm[1].trim();
-        if (routes.some((x) => x.route === route)) navigate = { route, label: gm[2].trim().slice(0, 40) };
+        const known = routes.find((x) => x.route === route);
+        if (known) navigate = { route, label: (gm[2] && gm[2].trim().slice(0, 40)) || known.label };
         answer = raw.replace(gm[0], '').trim();
       }
     }

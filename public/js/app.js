@@ -292,6 +292,9 @@ const App = {
     // answers display nicely in the compact chat. Tables scroll horizontally.
     const fmt = (t) => {
       let s = UI.esc(String(t == null ? '' : t));
+      // Safety net: never render a raw [[GOTO:...]] / [[ACTION:...]] directive that
+      // slipped past the server parser — strip it from the visible bubble.
+      s = s.replace(/\[\[\s*(?:GOTO|ACTION)\s*:[^\]]*\]\]/gi, '').trim();
       // Markdown tables: consecutive lines that look like | a | b |
       s = s.replace(/(?:^\|.*\|[ \t]*\n?)+/gm, (block) => {
         const lines = block.trim().split('\n').map((r) => r.trim()).filter(Boolean);
