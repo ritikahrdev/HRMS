@@ -17,3 +17,8 @@ secrets.*
 # build/runtime logs
 pgsrv.log
 pgsrv.err
+
+# Local scratch / test artifacts
+tmp-*.js
+pgsrv.log
+pgsrv.err
