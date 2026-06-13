@@ -700,6 +700,11 @@ const AdminViews = {
 .attx-spark circle{fill:var(--pri)} #attxg .g0{stop-color:var(--pri2);stop-opacity:.32} #attxg .g1{stop-color:var(--pri2);stop-opacity:0}
 .attx-spark-x{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:4px}
 .attx-depts{display:flex;flex-direction:column;gap:11px;max-height:240px;overflow:auto}
+.attx-teambar{display:flex;height:28px;border-radius:8px;overflow:hidden;background:var(--line)}
+.attx-teambar>div{transition:width .5s ease}
+.attx-legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--text)}
+.attx-leg{display:inline-flex;align-items:center;gap:6px}
+.attx-leg i{width:11px;height:11px;border-radius:3px;display:inline-block}
 .attx-dept-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px}
 .attx-dept-top i{color:var(--muted);font-style:normal}
 .attx-bar{height:8px;background:var(--line);border-radius:5px;overflow:hidden}
@@ -817,11 +822,19 @@ const AdminViews = {
       </div>`;
     };
 
-    function deptBars() {
-      const d = (st.ins && st.ins.byDepartment) || [];
-      if (!d.length) return '<div class="attx-empty">No department data yet.</div>';
-      const col = (r) => r >= 90 ? 'var(--green)' : r >= 75 ? '#65a30d' : r >= 60 ? 'var(--yellow)' : r >= 40 ? 'var(--orange)' : 'var(--red)';
-      return d.map((dp) => `<div><div class="attx-dept-top"><span>${esc(dp.department || '—')} <i>(${dp.employees})</i></span><b style="color:${col(dp.avgRate)}">${dp.avgRate}%</b></div><div class="attx-bar"><div class="attx-bar-fill" style="width:${dp.avgRate}%;background:${col(dp.avgRate)}"></div></div></div>`).join('');
+    // Overall team attendance for the selected day — one stacked bar + legend.
+    function teamBar() {
+      const c = counts();
+      const total = c.total || 1;
+      const segs = [
+        { n: c.present, label: 'Present', color: 'var(--green)' },
+        { n: c.wfh, label: 'WFH', color: 'var(--purple)' },
+        { n: c.leave, label: 'On Leave', color: 'var(--orange)' },
+        { n: c.absent, label: 'Absent', color: 'var(--red)' },
+      ];
+      const bar = segs.filter((x) => x.n > 0).map((x) => `<div title="${x.label}: ${x.n}" style="width:${(x.n / total * 100).toFixed(1)}%;background:${x.color}"></div>`).join('') || '<div style="width:100%;background:var(--line)"></div>';
+      const legend = segs.map((x) => `<span class="attx-leg"><i style="background:${x.color}"></i>${x.label} <b>${x.n}</b> <span style="color:var(--muted)">(${Math.round(x.n / total * 100)}%)</span></span>`).join('');
+      return `<div class="attx-teambar">${bar}</div><div class="attx-legend">${legend}</div>`;
     }
     function filtered() {
       let L = ((st.day && st.day.list) || []).slice();
@@ -908,8 +921,8 @@ const AdminViews = {
           ${kpiCard('Late Arrivals', c.late, 'k-late', '⏰', 'late')}
         </div>
         <div class="attx-card" style="margin-bottom:16px">
-          <div class="attx-card-h"><span>🏢 Department-wise Attendance</span></div>
-          <div class="attx-depts">${deptBars()}</div>
+          <div class="attx-card-h"><span>👥 Overall Team Attendance</span><span class="attx-count">${Math.round(((c.present + c.wfh) / (c.total || 1)) * 100)}% present today</span></div>
+          ${teamBar()}
         </div>
         <div class="attx-card attx-grid-card">
           <div class="attx-card-h"><span>🗓 ${isToday ? 'Today' : UI.date(st.date)} · Team Attendance</span><span class="attx-count">${c.total} employees</span></div>
@@ -933,11 +946,8 @@ const AdminViews = {
     async function loadAll() {
       self._attStopPoll();
       body.innerHTML = '<div class="attx-skel">Loading attendance…</div>';
-      const [day, ins] = await Promise.all([
-        api.get('/attendance/day?date=' + st.date).catch(() => ({ summary: {}, list: [], holiday: null })),
-        api.get('/attendance/insights?month=' + st.month).catch(() => null),
-      ]);
-      st.day = day; st.ins = ins; st.prev = {}; (day.list || []).forEach((r) => { st.prev[r.id] = r.status + '|' + (r.check_in || ''); });
+      const day = await api.get('/attendance/day?date=' + st.date).catch(() => ({ summary: {}, list: [], holiday: null }));
+      st.day = day; st.prev = {}; (day.list || []).forEach((r) => { st.prev[r.id] = r.status + '|' + (r.check_in || ''); });
       render();
       startPoll();
     }
