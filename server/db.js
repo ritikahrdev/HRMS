@@ -342,6 +342,15 @@ CREATE TABLE IF NOT EXISTS kudos_reactions (
   UNIQUE (kudos_id, user_id, emoji)
 );
 
+CREATE TABLE IF NOT EXISTS kudos_comments (
+  id SERIAL PRIMARY KEY,
+  kudos_id INTEGER NOT NULL REFERENCES kudos(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comment TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
+CREATE INDEX IF NOT EXISTS kudos_comments_kid ON kudos_comments(kudos_id);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -2921,17 +2921,52 @@ const AdminViews = {
       } catch (e) { UI.toast(e.message, 'error'); }
     };
     this.bindCheers(c);
+    this.bindComments(c);
   },
   REACTIONS: ['👏', '❤️', '🎉', '🔥', '💯', '🙌', '🚀', '👍', '⭐', '😂'],
+  // initials-in-a-gradient-circle avatar (deterministic colour from the name).
+  kAvatar(name, sz) {
+    const n = String(name || '?').trim();
+    const init = (n.split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?').toUpperCase();
+    let h = 7; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) >>> 0; h = h % 360;
+    return `<span style="width:${sz}px;height:${sz}px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:${Math.round(sz * 0.4)}px;font-weight:700;color:#fff;background:linear-gradient(135deg,hsl(${h},66%,56%),hsl(${(h + 38) % 360},66%,46%))">${UI.esc(init)}</span>`;
+  },
+  commentLine(cm, when) {
+    return `<div style="display:flex;gap:8px;align-items:flex-start;margin:8px 0">
+      ${this.kAvatar(cm.author, 26)}
+      <div style="background:#f6f5fb;border-radius:11px;padding:6px 12px;flex:1;min-width:0">
+        <div style="font-size:12px"><b>${UI.esc(cm.author || 'Someone')}</b> <span style="color:#9ca3af">· ${when || UI.date(cm.created_at)}</span></div>
+        <div style="font-size:13.5px;color:#374151;margin-top:1px;white-space:pre-wrap;word-break:break-word">${UI.esc(cm.comment)}</div>
+      </div></div>`;
+  },
+  commentsBlock(kid, comments) {
+    const list = (comments || []).map((cm) => this.commentLine(cm)).join('');
+    return `<div data-comments="${kid}" style="margin-top:10px;border-top:1px solid #f1eefb;padding-top:6px">
+      ${list}
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <input data-cinput="${kid}" maxlength="500" placeholder="Add a comment…" style="flex:1;border:1px solid #e5e1f3;border-radius:20px;padding:7px 14px;font-size:13px;outline:none" />
+        <button class="btn" data-csend="${kid}" style="padding:7px 16px;font-size:13px">Post</button>
+      </div></div>`;
+  },
   kudosWall(kudos) {
     if (!kudos.length) return '<div class="empty">No shoutouts yet — be the first to recognise a teammate!</div>';
     const badgeName = (e) => (this.BADGES.find((b) => b[0] === e) || [, ''])[1];
     return kudos.map((k) => `
-      <div class="announcement" style="border-left-color:#7c3aed">
-        <h4>${UI.esc(k.badge || '👏')} ${UI.esc(k.to_name)} <span class="tag" style="background:#ede9fe;color:#5b21b6;font-weight:600">${UI.esc(badgeName(k.badge) || 'Kudos')}</span></h4>
-        <div style="margin:6px 0;font-size:15px">${UI.esc(k.message)}</div>
-        <div class="meta">from ${UI.esc(k.from_name || 'Someone')} &middot; ${UI.date(k.created_at)}</div>
+      <div style="background:#fff;border:1px solid #ece7f8;border-radius:14px;padding:14px 16px;margin:0 0 14px;box-shadow:0 2px 10px rgba(124,58,237,.06)">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          ${this.kAvatar(k.to_name, 44)}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+              <span style="font-size:18px">${UI.esc(k.badge || '👏')}</span>
+              <b style="font-size:15px">${UI.esc(k.to_name)}</b>
+              <span style="background:#ede9fe;color:#5b21b6;font-weight:600;font-size:11px;padding:2px 9px;border-radius:20px">${UI.esc(badgeName(k.badge) || 'Kudos')}</span>
+            </div>
+            <div style="margin:5px 0 0;font-size:14.5px;color:#374151;white-space:pre-wrap;word-break:break-word">${UI.esc(k.message)}</div>
+            <div style="margin-top:7px;font-size:12px;color:#9ca3af;display:flex;align-items:center;gap:6px">${this.kAvatar(k.from_name, 18)} from <b style="color:#6b7280;font-weight:600">${UI.esc(k.from_name || 'Someone')}</b> · ${UI.date(k.created_at)}</div>
+          </div>
+        </div>
         ${this.reactionBar(k.id, k.reactions)}
+        ${this.commentsBlock(k.id, k.comments)}
       </div>`).join('');
   },
   reactionBar(kid, reactions) {
@@ -2956,6 +2991,27 @@ const AdminViews = {
       e.stopPropagation();
       const pal = c.querySelector('[data-pal="' + b.dataset.pick + '"]');
       if (pal) pal.style.display = pal.style.display === 'none' ? 'inline-flex' : 'none';
+    });
+  },
+  bindComments(c) {
+    const submit = async (kid, input) => {
+      const text = input.value.trim();
+      if (!text) return;
+      input.disabled = true;
+      try {
+        const r = await api.post('/kudos/' + kid + '/comment', { comment: text });
+        input.value = '';
+        const wrap = c.querySelector('[data-comments="' + kid + '"]');
+        if (wrap && r.comment) wrap.lastElementChild.insertAdjacentHTML('beforebegin', this.commentLine(r.comment, 'just now'));
+      } catch (e) { UI.toast(e.message, 'error'); }
+      finally { input.disabled = false; input.focus(); }
+    };
+    c.querySelectorAll('[data-csend]').forEach((b) => b.onclick = () => {
+      const input = c.querySelector('[data-cinput="' + b.dataset.csend + '"]');
+      if (input) submit(b.dataset.csend, input);
+    });
+    c.querySelectorAll('[data-cinput]').forEach((inp) => inp.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(inp.dataset.cinput, inp); }
     });
   },
 

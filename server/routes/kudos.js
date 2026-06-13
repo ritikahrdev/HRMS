@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireLogin } = require('../middleware/auth');
-const { notifyEveryone } = require('../services/notify');
+const { notifyEveryone, notifyUsers } = require('../services/notify');
 const { sendMail } = require('../services/email');
 const { postToSlack } = require('../services/slackSync');
 const { escapeHtml } = require('../services/escape');
@@ -24,7 +24,24 @@ async function reactionsFor(ids, userId) {
   return byKudos;
 }
 
-// Praise wall — everyone sees recent kudos with their reactions.
+// Comments for a set of kudos ids, oldest first, with the commenter's name.
+async function commentsFor(ids) {
+  if (!ids.length) return {};
+  const rows = await db.prepare(
+    `SELECT kc.kudos_id, kc.comment, kc.created_at,
+            COALESCE(fe.name, fu.email) AS author
+     FROM kudos_comments kc
+     LEFT JOIN users fu ON fu.id = kc.user_id
+     LEFT JOIN employees fe ON fe.user_id = kc.user_id
+     WHERE kc.kudos_id IN (${ids.map(() => '?').join(',')})
+     ORDER BY kc.created_at ASC, kc.id ASC`
+  ).all(...ids);
+  const by = {};
+  for (const r of rows) (by[r.kudos_id] = by[r.kudos_id] || []).push({ author: r.author, comment: r.comment, created_at: r.created_at });
+  return by;
+}
+
+// Praise wall — everyone sees recent kudos with their reactions + comments.
 router.get('/', requireLogin, async (req, res) => {
   try {
     const rows = await db.prepare(
@@ -36,8 +53,10 @@ router.get('/', requireLogin, async (req, res) => {
        LEFT JOIN employees fe ON fe.user_id = k.from_user
        ORDER BY k.created_at DESC LIMIT 100`
     ).all();
-    const reacts = await reactionsFor(rows.map((r) => r.id), req.session.user.id);
-    for (const r of rows) r.reactions = reacts[r.id] || [];
+    const ids = rows.map((r) => r.id);
+    const reacts = await reactionsFor(ids, req.session.user.id);
+    const cmts = await commentsFor(ids);
+    for (const r of rows) { r.reactions = reacts[r.id] || []; r.comments = cmts[r.id] || []; }
     res.json({ kudos: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -119,6 +138,27 @@ router.post('/:id/cheer', requireLogin, async (req, res) => {
     if (ex) await db.prepare('DELETE FROM kudos_reactions WHERE id = ?').run(ex.id);
     else await db.prepare("INSERT INTO kudos_reactions (kudos_id, user_id, emoji) VALUES (?, ?, '👏')").run(k.id, uid);
     res.json({ reactions: (await reactionsFor([k.id], uid))[k.id] || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Add a comment to a shoutout. Body: { comment }.
+router.post('/:id/comment', requireLogin, async (req, res) => {
+  try {
+    const text = (req.body && req.body.comment || '').toString().trim();
+    if (!text) return res.status(400).json({ error: 'Write a comment.' });
+    if (text.length > 500) return res.status(400).json({ error: 'Comment is too long (max 500 characters).' });
+    const k = await db.prepare('SELECT id, employee_id FROM kudos WHERE id = ?').get(req.params.id);
+    if (!k) return res.status(404).json({ error: 'Not found' });
+    await db.prepare('INSERT INTO kudos_comments (kudos_id, user_id, comment) VALUES (?, ?, ?)').run(k.id, req.session.user.id, text);
+    const author = req.session.user.name || 'Someone';
+    // Tell the recipient (in-app bell) that someone commented on their shoutout.
+    const rec = await db.prepare('SELECT user_id FROM employees WHERE id = ?').get(k.employee_id);
+    if (rec && rec.user_id && rec.user_id !== req.session.user.id) {
+      await notifyUsers([rec.user_id], { type: 'kudos', title: '💬 New comment on your shoutout', body: `${escapeHtml(author)}: ${escapeHtml(text)}`, link: '#/recognition' }).catch(() => {});
+    }
+    res.json({ comment: { author, comment: text, created_at: new Date().toISOString() } });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
