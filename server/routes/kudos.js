@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireLogin } = require('../middleware/auth');
 const { notifyEveryone } = require('../services/notify');
 const { sendMail } = require('../services/email');
+const { postToSlack } = require('../services/slackSync');
 
 const router = express.Router();
 
@@ -61,6 +62,9 @@ router.post('/', requireLogin, async (req, res) => {
       body: `${giver}: ${message}`,
       link: '#/recognition',
     });
+
+    // Post the shoutout to Slack (its own channel, if configured).
+    await postToSlack(`${badge || '👏'} *Shoutout for ${recName}*\n${giver}: ${message}`, { purpose: 'shoutout' }).catch(() => {});
 
     // Optional email broadcast (only sends if email is enabled in config).
     const emails = (await db.prepare("SELECT email FROM employees WHERE status='active' AND email IS NOT NULL AND email != ''").all()).map((e) => e.email);

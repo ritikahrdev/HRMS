@@ -79,7 +79,7 @@ async function sendHolidayNotifications(opts = {}) {
 
       // Post to Slack
       const slackMessage = `${style.emoji} *${holiday.name}* (${dayName})\n${style.message}\n_Type: ${style.desc}_`;
-      await postToSlack(slackMessage);
+      await postToSlack(slackMessage, { purpose: 'notice' });
 
       // Send emails to all employees
       if (settings.email && settings.email.enabled && employees.length > 0) {

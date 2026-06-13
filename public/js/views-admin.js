@@ -1958,9 +1958,13 @@ const AdminViews = {
         <p class="muted" style="font-size:12px">Employees post their status in a Slack channel (e.g. <i>present</i>, <i>WFH</i>, <i>leave</i>) and it syncs here. The bot also reacts 👍 to valid messages and ❌ + a reminder to unreadable ones. <b>Scopes needed:</b> channels:history, chat:write, reactions:write, users:read, users:read.email.</p>
         <div class="checkbox-row" style="margin-bottom:10px"><label><input type="checkbox" id="slackEnabled" ${(s.slack || {}).enabled ? 'checked' : ''}/> Enable Slack integration</label></div>
         <div class="card" style="box-shadow:none;border:1px solid var(--border);background:#f0fdf4;margin-bottom:12px">
-          <div class="section-title" style="margin-top:0">⚡ Easiest: Incoming Webhook URL (for sending reminders &amp; notices)</div>
-          <p class="muted" style="font-size:12px;margin:2px 0 8px">The simplest way to let the HRMS <b>post into Slack</b> (e.g. the "you haven't marked attendance" reminder) — <b>no bot token or scopes needed</b>. In Slack: <i>your app → Incoming Webhooks → Activate → Add New Webhook to Workspace → pick the channel → copy the URL</i> and paste it below.</p>
-          <div class="field full"><label>Incoming Webhook URL</label><input id="slackWebhookUrl" value="${UI.esc((s.slack || {}).incomingWebhookUrl || '')}" placeholder="https://hooks.slack.com/services/T.../B.../..." /></div>
+          <div class="section-title" style="margin-top:0">⚡ Easiest: Slack Incoming Webhooks (post into Slack — no bot token needed)</div>
+          <p class="muted" style="font-size:12px;margin:2px 0 8px">On your Slack app, create one webhook <b>per channel</b> (<i>Incoming Webhooks → Add New Webhook to Workspace → pick a channel → copy URL</i>) and paste them below. The <b>same app</b> can have several. Each action goes to its own channel; anything left blank uses the <b>General</b> one.</p>
+          <div class="form-grid">
+            <div class="field full"><label>General / Notices URL <span style="color:#9ca3af;font-weight:400">— announcements &amp; holidays (the default)</span></label><input id="slackWebhookUrl" value="${UI.esc((s.slack || {}).incomingWebhookUrl || '')}" placeholder="https://hooks.slack.com/services/..." /></div>
+            <div class="field full"><label>Attendance reminders URL <span style="color:#9ca3af;font-weight:400">— optional, falls back to General</span></label><input id="slackWebhookAtt" value="${UI.esc((s.slack || {}).webhookAttendance || '')}" placeholder="https://hooks.slack.com/services/..." /></div>
+            <div class="field full"><label>Shoutouts / Kudos URL <span style="color:#9ca3af;font-weight:400">— optional, falls back to General</span></label><input id="slackWebhookShout" value="${UI.esc((s.slack || {}).webhookShoutout || '')}" placeholder="https://hooks.slack.com/services/..." /></div>
+          </div>
         </div>
         <div class="form-grid">
           <div class="field"><label>Bot Token (xoxb-…)</label><input id="slackToken" value="${UI.esc((s.slack || {}).botToken || '')}" placeholder="xoxb-..." /></div>
@@ -2139,6 +2143,8 @@ const AdminViews = {
           channelId: val('slackChannel').trim(),
           signingSecret: val('slackSigning').trim(),
           incomingWebhookUrl: val('slackWebhookUrl').trim(),
+          webhookAttendance: val('slackWebhookAtt').trim(),
+          webhookShoutout: val('slackWebhookShout').trim(),
           presentKeywords: val('slackPresent').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
           wfhKeywords: val('slackWfh').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
           halfKeywords: val('slackHalf').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),

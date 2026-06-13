@@ -37,7 +37,7 @@ router.post('/', requirePerm('settings:manage'), async (req, res) => {
 
     // Post to Slack if enabled
     const slackMessage = `📢 *${title}*\n${body || ''}`;
-    await postToSlack(slackMessage);
+    await postToSlack(slackMessage, { purpose: 'notice' });
 
     // Send email notification to all active employees
     const settings = getSettings();

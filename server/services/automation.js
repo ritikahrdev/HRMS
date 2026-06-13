@@ -133,7 +133,7 @@ async function sendUnmarkedReminders(opts = {}) {
   const co = s.companyName ? ` at ${s.companyName}` : '';
   const msg = `⏰ *Attendance reminder*${co} — it's past ${cutoff} and these teammates haven't marked attendance yet:\n${list}\n\nPlease post your status for today (e.g. \`present\`, \`WFH\`, \`leave\`, \`half day\`). ✅`;
   let sent = false;
-  try { const { postToSlack } = require('./slackSync'); sent = await postToSlack(msg); } catch (e) { /* non-fatal */ }
+  try { const { postToSlack } = require('./slackSync'); sent = await postToSlack(msg, { purpose: 'attendance' }); } catch (e) { /* non-fatal */ }
   return { unmarked: unmarked.length, names, slackConfigured: true, sent };
 }
 

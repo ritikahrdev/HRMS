@@ -603,7 +603,8 @@ const defaultSettings = {
   // their own free API key to switch it on. Groq and paid Claude also supported.
   ai: { enabled: true, provider: 'google', apiKey: '', model: 'gemini-2.0-flash', endpoint: '' },
   slack: {
-    enabled: false, botToken: '', channelId: '', signingSecret: '', incomingWebhookUrl: '',
+    enabled: false, botToken: '', channelId: '', signingSecret: '',
+    incomingWebhookUrl: '', webhookAttendance: '', webhookShoutout: '',
     presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
     wfhKeywords: ['wfh', 'work from home', 'remote', 'working from home', 'home'],
     halfKeywords: ['half day', 'half-day', 'halfday'],

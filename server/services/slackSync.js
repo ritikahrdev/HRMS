@@ -258,20 +258,33 @@ async function processSlackEvent(event) {
   return { ok: true, empId, valid: cls.valid, status: cls.status, wfh: cls.wfh, date };
 }
 
-// Post a message to a Slack channel (e.g., announcements, reminders).
-// Two ways, simplest first:
-//   1) an Incoming Webhook URL (no bot token / OAuth needed), or
+// Pick the Incoming Webhook URL for a given purpose, so different actions can go
+// to different Slack channels (each falls back to the general webhook).
+function slackUrlFor(s, purpose) {
+  if (purpose === 'attendance' && s.webhookAttendance) return s.webhookAttendance;
+  if (purpose === 'shoutout' && s.webhookShoutout) return s.webhookShoutout;
+  return s.incomingWebhookUrl || ''; // general / notices / default
+}
+
+// Post a message to Slack. Two ways, simplest first:
+//   1) an Incoming Webhook URL (no bot token needed) — routed by `opts.purpose`
+//      ('attendance' | 'shoutout' | else general), or
 //   2) the bot token via chat.postMessage.
-async function postToSlack(message, channel) {
+// `opts` may be an options object { purpose, channel } or a plain channel string.
+async function postToSlack(message, opts) {
   const s = getSettings().slack || {};
-  if (s.incomingWebhookUrl) {
+  const purpose = (opts && typeof opts === 'object') ? opts.purpose : null;
+  const legacyChannel = (typeof opts === 'string') ? opts : (opts && opts.channel);
+
+  const url = slackUrlFor(s, purpose);
+  if (url) {
     try {
-      const r = await fetch(s.incomingWebhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: message }) });
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: message }) });
       return r.ok;
     } catch (e) { console.error('Error posting to Slack webhook:', e.message); return false; }
   }
   if (!s.enabled || !s.botToken) return false;
-  const channelId = channel || s.channelId;
+  const channelId = legacyChannel || s.channelId;
   if (!channelId) return false;
   try {
     const data = await slackApi(s.botToken, 'chat.postMessage', { channel: channelId, text: message, mrkdwn: true });
