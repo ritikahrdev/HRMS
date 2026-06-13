@@ -14,15 +14,19 @@ const STATUS_MAP = {
 };
 
 // Idempotent upsert: one row per (employee, date). Re-sending updates in place.
+// COALESCE preserves the "other half" — a check-out won't wipe the check-in, and
+// vice versa — so the morning check-in and evening check-out merge into one row.
 const upsert = db.prepare(`
-  INSERT INTO attendance (employee_id, date, check_in, status, wfh, reason, source)
-  VALUES (@employee_id, @date, @check_in, @status, @wfh, @reason, 'webhook')
+  INSERT INTO attendance (employee_id, date, check_in, check_out, work_hours, status, wfh, reason, source)
+  VALUES (@employee_id, @date, @check_in, @check_out, @work_hours, @status, @wfh, @reason, 'webhook')
   ON CONFLICT(employee_id, date) DO UPDATE SET
-    status   = @status,
-    wfh      = @wfh,
-    reason   = COALESCE(@reason, attendance.reason),
-    source   = 'webhook',
-    check_in = COALESCE(@check_in, attendance.check_in)`);
+    status     = @status,
+    wfh        = @wfh,
+    reason     = COALESCE(@reason, attendance.reason),
+    source     = 'webhook',
+    check_in   = COALESCE(@check_in, attendance.check_in),
+    check_out  = COALESCE(@check_out, attendance.check_out),
+    work_hours = COALESCE(@work_hours, attendance.work_hours)`);
 
 // The configured secret comes from an env var (preferred for production) or
 // from Settings -> Attendance Webhook.
@@ -101,21 +105,11 @@ router.post('/attendance', async (req, res) => {
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 300) || null : null;
   const hasIdentity = name || body.email || body.slack_id || body.slackId || body.user_id || body.emp_code;
   if (!hasIdentity) { console.warn('[webhook]   ✗ 400 missing identity'); return res.status(400).json({ success: false, error: 'Provide a name, email, or Slack ID to identify the employee.' }); }
-  if (!statusRaw) { console.warn('[webhook]   ✗ 400 missing field: status'); return res.status(400).json({ success: false, error: 'Missing required field: status.' }); }
+  // Optional check-out time + explicit hours (so total work hours can be recorded).
+  const checkOutRaw = typeof body.check_out === 'string' ? body.check_out.trim() : (typeof body.checkout === 'string' ? body.checkout.trim() : '');
+  const explicitHours = (body.hours != null && body.hours !== '' && Number.isFinite(Number(body.hours))) ? Number(body.hours) : null;
+  if (!statusRaw && !checkOutRaw && explicitHours == null) { console.warn('[webhook]   ✗ 400 missing status'); return res.status(400).json({ success: false, error: 'Provide a status (e.g. Present) or a check-out.' }); }
   if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
-
-  // Accept a clean label (present/absent/wfh/holiday) OR a natural Slack message
-  // ("Present ✅", "in", "wfh today", "on leave", "half day") read with the same
-  // classifier the Slack integration uses — so decorated messages don't 400.
-  let mapped = STATUS_MAP[statusRaw.toLowerCase()];
-  if (!mapped) {
-    const cls = classifyMessage(statusRaw, getSettings().slack || {});
-    if (cls.valid) mapped = { status: cls.status, wfh: cls.wfh ? 1 : 0 };
-  }
-  if (!mapped) {
-    console.warn(`[webhook]   ✗ 400 unreadable status: "${statusRaw}"`);
-    return res.status(400).json({ success: false, error: `Couldn't read a status from "${statusRaw}". Use Present, Absent, WFH, Half day, Leave, or Holiday.` });
-  }
 
   // 3) Resolve the attendance date from the provided time.
   const parsed = new Date(time);
@@ -133,30 +127,70 @@ router.post('/attendance', async (req, res) => {
     return res.status(404).json({ success: false, error: `Employee not found: "${who}". No attendance was recorded.` });
   }
   const emp = match.emp;
-  // Remember the Slack ID the first time we see it, so future lookups are instant
-  // and the directory shows the person as Slack-mapped.
+  // Remember the Slack ID the first time we see it, so future lookups are instant.
   const incomingSlackId = body.slack_id || body.slackId || body.user_id;
   if (incomingSlackId && !emp.slack_id) {
     try { await db.prepare('UPDATE employees SET slack_id = ? WHERE id = ?').run(String(incomingSlackId), emp.id); } catch (e) { /* non-fatal */ }
   }
 
-  // 5) Upsert attendance (idempotent — never creates duplicates for the same day).
-  const check_in = (mapped.status === 'present' || mapped.status === 'half') ? parsed.toISOString() : null;
+  // 5) Decide whether this is a CHECK-OUT (records check-out time + total hours)
+  // or a status / CHECK-IN, then compute the values.
+  const CHECKOUT_RE = /\b(check[\s-]?out|checking out|checked out|clock[\s-]?out|clocking out|logging off|logged off|log off|signing off|signed off|sign off|leaving|out for the day|done for the day|end of day|eod|heading home|going home|wrapping up|wrapped up)\b/i;
+  // A bare "out" (with optional emoji/punctuation) means clock-out — but NOT
+  // "out of office"/"out of town", which are leave.
+  const strippedStatus = statusRaw.toLowerCase().replace(/[^\p{L}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const bareOut = /^out\b/.test(strippedStatus) && !/\bof\s+(?:office|town|the office)\b/.test(strippedStatus);
+  const isCheckout = !!checkOutRaw || (!!statusRaw && (CHECKOUT_RE.test(statusRaw) || bareOut));
+  const round2 = (h) => Math.round(h * 100) / 100;
+  let check_in = null, check_out = null, work_hours = null, status = null, wfh = 0, action = 'check-in';
+
+  if (isCheckout) {
+    action = 'check-out';
+    let coTime = parsed;
+    if (checkOutRaw) { const c = new Date(checkOutRaw); if (!isNaN(c.getTime())) coTime = c; }
+    check_out = coTime.toISOString();
+    const ex = await db.prepare('SELECT check_in, status, wfh FROM attendance WHERE employee_id = ? AND date = ?').get(emp.id, date);
+    status = (ex && ex.status) ? ex.status : 'present';
+    wfh = (ex && ex.wfh) ? ex.wfh : 0;
+    if (explicitHours != null) work_hours = round2(explicitHours);
+    else if (ex && ex.check_in) { const h = (coTime - new Date(ex.check_in)) / 36e5; work_hours = h > 0 ? round2(h) : 0; }
+  } else {
+    let mapped = STATUS_MAP[statusRaw.toLowerCase()];
+    if (!mapped) {
+      const cls = classifyMessage(statusRaw, getSettings().slack || {});
+      if (cls.valid) mapped = { status: cls.status, wfh: cls.wfh ? 1 : 0 };
+    }
+    if (!mapped) {
+      console.warn(`[webhook]   ✗ 400 unreadable status: "${statusRaw}"`);
+      return res.status(400).json({ success: false, error: `Couldn't read a status from "${statusRaw}". Use Present, Absent, WFH, Half day, Leave, Holiday — or "out"/"checkout" to clock out.` });
+    }
+    status = mapped.status; wfh = mapped.wfh;
+    check_in = (status === 'present' || status === 'half') ? parsed.toISOString() : null;
+    if (checkOutRaw) { const c = new Date(checkOutRaw); if (!isNaN(c.getTime())) check_out = c.toISOString(); }
+    if (explicitHours != null) work_hours = round2(explicitHours);
+    else if (check_in && check_out) { const h = (new Date(check_out) - new Date(check_in)) / 36e5; work_hours = h > 0 ? round2(h) : 0; }
+  }
+
+  // 6) Upsert (idempotent — one row per employee+date; the COALESCEs above merge
+  // a separate check-in and check-out into the same row).
   try {
-    await upsert.run({ employee_id: emp.id, date, check_in, status: mapped.status, wfh: mapped.wfh, reason });
+    await upsert.run({ employee_id: emp.id, date, check_in, check_out, work_hours, status, wfh, reason });
   } catch (e) {
     console.error('[webhook]   ✗ 500 DB error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
   }
-  console.log(`[webhook]   ✓ 200 recorded: ${emp.name} (matched by ${match.by}) | ${date} | ${mapped.status}${mapped.wfh ? ' (WFH)' : ''}${reason ? ` | reason: "${reason}"` : ''}`);
+  console.log(`[webhook]   ✓ 200 ${action}: ${emp.name} (by ${match.by}) | ${date} | ${status}${wfh ? ' (WFH)' : ''}${check_out ? ' | out ' + check_out.slice(11, 16) : ''}${work_hours != null ? ' | ' + work_hours + 'h' : ''}`);
 
-  // 6) Success response.
+  // 7) Success response.
   return res.json({
     success: true,
-    message: 'Attendance updated successfully',
+    message: action === 'check-out' ? 'Check-out recorded' : 'Attendance updated successfully',
     employee: emp.name,
     matchedBy: match.by,
-    status: statusRaw,
+    action,
+    status,
+    check_out: check_out || null,
+    hours: work_hours,
     time,
     date,
     reason: reason || null,
