@@ -10,6 +10,7 @@ const { saveFile } = require('../services/filestore');
 const { documentUpload } = require('../services/upload');
 const { notifyUsers } = require('../services/notify');
 const ai = require('../services/ai');
+const screening = require('../services/screening');
 
 const router = express.Router();
 
@@ -80,25 +81,21 @@ router.post('/apply/:jobId', applyLimiter, documentUpload.single('resume'), asyn
 
     setImmediate(async () => {
       try {
-        // AI screening (when configured) — judged against the job.
-        let aiRes = null;
-        if (ai.isConfigured()) {
-          try {
-            const system = 'You are a fair, unbiased recruiter screening a candidate against a job. Score fit 0–100. Be objective; ignore name, gender, age, or anything unrelated to ability to do the job.';
-            const prompt = `JOB:\nTitle: ${job.title}\nRequired skills: ${job.skills || '—'}\nMin experience: ${job.min_experience || 0} yrs\nDescription: ${(job.description || '').slice(0, 800)}\n\nCANDIDATE:\nExperience: ${experience_years} yrs\nSkills: ${skills || '—'}\nNote: ${note || '—'}\n\nReturn JSON: {"score":0-100,"recommendation":"strong"|"maybe"|"weak","summary":"2-sentence summary"}`;
-            aiRes = await ai.completeJSON(system, prompt, 400);
-            await db.prepare('UPDATE applicants SET ai_score = ?, ai_recommendation = ?, ai_summary = ? WHERE id = ?')
-              .run(Math.max(0, Math.min(100, Number(aiRes.score) || 0)), String(aiRes.recommendation || '').slice(0, 12), String(aiRes.summary || '').slice(0, 400), applicantId);
-          } catch (e) { /* AI optional — keyword score still stands */ }
+        // AI screening (when configured) — judged against the job requirement.
+        const aiRes = await screening.aiScreen(job, { experience_years, skills, note });
+        if (aiRes) {
+          await db.prepare('UPDATE applicants SET ai_score = ?, ai_recommendation = ?, ai_summary = ? WHERE id = ?')
+            .run(aiRes.score, aiRes.recommendation, aiRes.summary, applicantId);
         }
-        // Auto-shortlist: keyword score >= 60, or the AI says strong.
-        const shortlist = score >= 60 || (aiRes && aiRes.recommendation === 'strong');
-        if (shortlist) await db.prepare("UPDATE applicants SET stage='shortlisted' WHERE id = ? AND stage='applied'").run(applicantId);
+        // Auto-route: strong -> shortlisted, weak -> rejected, borderline -> maybe.
+        // No applicant is left sitting in "applied" — that's the no-manual-effort goal.
+        const stage = screening.decideStage({ keywordScore: score, ai: aiRes, aiConfigured: ai.isConfigured() });
+        if (stage !== 'applied') await db.prepare("UPDATE applicants SET stage = ? WHERE id = ? AND stage = 'applied'").run(stage, applicantId);
 
         await notifyUsers(await hrUserIds(), {
           type: 'recruitment',
-          title: `${shortlist ? '⭐ Shortlisted' : 'New'} applicant: ${name}`,
-          body: `Applied for ${job.title} via the careers link. Match ${score}%${aiRes ? ` · AI: ${aiRes.recommendation} (${aiRes.score}/100)` : ''}.`,
+          title: `${screening.STAGE_LABEL[stage] || 'New'} applicant: ${name}`,
+          body: `Applied for ${job.title} via the careers link. Match ${score}%${aiRes ? ` · AI: ${aiRes.recommendation} (${aiRes.score}/100)` : ''} → ${stage}.`,
           link: '#/recruitment',
         });
       } catch (e) { console.error('careers post-processing failed:', e.message); }

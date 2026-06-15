@@ -14,6 +14,7 @@ const { sendMail } = require('../services/email');
 const { getSettings } = require('../services/settings');
 const { escapeHtml } = require('../services/escape');
 const ai = require('../services/ai');
+const screening = require('../services/screening');
 
 const router = express.Router();
 const P = requirePerm('recruitment:manage');
@@ -207,26 +208,39 @@ router.get('/applicants/:id/resume', P, async (req, res) => {
   }
 });
 
-// Auto-shortlist applicants meeting the criteria threshold (default 60%).
-router.post('/jobs/:id/auto-shortlist', P, async (req, res) => {
+// Auto-screen every un-decided applicant against the job requirement and route
+// each one automatically: strong fit -> shortlisted, weak -> rejected, borderline
+// -> maybe. Uses the AI verdict (falls back to the keyword score when AI is off).
+// Only touches 'applied' and 'maybe' — never overrides a human decision
+// (shortlisted/interview/offer/hired/rejected stay put).
+async function autoScreenJob(req, res) {
   try {
     const job = await db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
-    const threshold = Number(req.body && req.body.threshold) || 60;
-    const applicants = await db.prepare("SELECT * FROM applicants WHERE job_id = ? AND stage IN ('applied','shortlisted')").all(job.id);
-    let shortlisted = 0;
-    const upd = db.prepare('UPDATE applicants SET score = ?, stage = ? WHERE id = ?');
+    const applicants = await db.prepare("SELECT * FROM applicants WHERE job_id = ? AND stage IN ('applied','maybe')").all(job.id);
+    const aiConfigured = ai.isConfigured();
+    const counts = { shortlisted: 0, maybe: 0, rejected: 0 };
+    const upd = db.prepare('UPDATE applicants SET score = ?, ai_score = ?, ai_recommendation = ?, ai_summary = ?, stage = ? WHERE id = ?');
     for (const a of applicants) {
       const score = scoreApplicant(a, job);
-      const stage = score >= threshold ? 'shortlisted' : a.stage;
-      await upd.run(score, stage, a.id);
-      if (score >= threshold) shortlisted++;
+      const aiRes = await screening.aiScreen(job, { experience_years: a.experience_years, skills: a.skills, note: '' });
+      const stage = screening.decideStage({ keywordScore: score, ai: aiRes, aiConfigured });
+      await upd.run(
+        score,
+        aiRes ? aiRes.score : a.ai_score,
+        aiRes ? aiRes.recommendation : a.ai_recommendation,
+        aiRes ? aiRes.summary : a.ai_summary,
+        stage, a.id
+      );
+      if (counts[stage] != null) counts[stage]++;
     }
-    res.json({ ok: true, evaluated: applicants.length, shortlisted, threshold });
+    res.json({ ok: true, evaluated: applicants.length, ...counts, aiUsed: aiConfigured });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
+}
+router.post('/jobs/:id/auto-screen', P, autoScreenJob);
+router.post('/jobs/:id/auto-shortlist', P, autoScreenJob); // back-compat alias
 
 // ---- Interviews ----
 router.post('/applicants/:id/interviews', P, async (req, res) => {

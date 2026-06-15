@@ -4063,7 +4063,7 @@ const AdminViews = {
   },
 
   // ---------------- Recruitment pipeline board ----------------
-  STAGES: [['applied', 'Applied'], ['shortlisted', 'Shortlisted'], ['interview', 'Interview'], ['offer', 'Offer'], ['hired', 'Hired'], ['rejected', 'Rejected']],
+  STAGES: [['applied', 'Applied'], ['shortlisted', 'Shortlisted'], ['maybe', 'Maybe'], ['interview', 'Interview'], ['offer', 'Offer'], ['hired', 'Hired'], ['rejected', 'Rejected']],
   async jobBoard(c, jobId) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { job, applicants } = await api.get('/recruitment/jobs/' + jobId);
@@ -4092,7 +4092,7 @@ const AdminViews = {
         <div class="section-title" style="margin:0">${UI.esc(job.title)}</div>
         <span class="tag ${job.status === 'open' ? 'approved' : 'inactive'}">${job.status}</span>
         <div class="spacer"></div>
-        <button class="btn secondary" id="auto">⚡ Auto-shortlist</button>
+        <button class="btn secondary" id="auto" title="AI-screen everyone in Applied & Maybe against the job and sort them automatically">⚡ Auto-screen all</button>
         <button class="btn" id="addApp">+ Add Applicant</button>
       </div>
       <div class="kanban">${cols}</div>`;
@@ -4100,8 +4100,12 @@ const AdminViews = {
     document.getElementById('back').onclick = () => this.recruitment(c);
     document.getElementById('addApp').onclick = () => this.applicantForm(c, jobId);
     document.getElementById('auto').onclick = async () => {
-      try { const r = await api.post('/recruitment/jobs/' + jobId + '/auto-shortlist'); UI.toast(`Shortlisted ${r.shortlisted} of ${r.evaluated} (≥${r.threshold}% match).`, 'success'); this.jobBoard(c, jobId); }
-      catch (e) { UI.toast(e.message, 'error'); }
+      const btn = document.getElementById('auto'); const orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Screening…';
+      try {
+        const r = await api.post('/recruitment/jobs/' + jobId + '/auto-screen');
+        UI.toast(`Screened ${r.evaluated}: ⭐ ${r.shortlisted} shortlisted · 🤔 ${r.maybe} maybe · 🚫 ${r.rejected} rejected${r.aiUsed ? '' : ' (keyword-only — set up AI for smarter screening)'}.`, 'success');
+        this.jobBoard(c, jobId);
+      } catch (e) { UI.toast(e.message, 'error'); btn.disabled = false; btn.textContent = orig; }
     };
     c.querySelectorAll('.kmove').forEach((s) => s.onchange = async () => {
       try { await api.put('/recruitment/applicants/' + s.dataset.id, { stage: s.value }); this.jobBoard(c, jobId); }
