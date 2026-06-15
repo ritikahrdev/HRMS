@@ -3,14 +3,25 @@ const { getSettings } = require('./settings');
 
 // ---- Defaults (used when a saved settings blob predates these keys) ----
 const DEFAULTS = {
-  presentKeywords: ['in', 'present', 'wfo', 'office', 'working', 'available', 'checking in', 'logged in'],
-  wfhKeywords: ['wfh', 'work from home', 'remote', 'working from home', 'home'],
-  halfKeywords: ['half day', 'half-day', 'halfday'],
-  leaveKeywords: ['leave', 'off', 'ooo', 'sick', 'holiday', 'pto', 'vacation'],
-  absentKeywords: ['absent', 'not available', 'na'],
+  presentKeywords: ['in', 'present', 'here', 'wfo', 'office', 'reached', 'reporting', 'online'],
+  wfhKeywords: ['wfh', 'work from home', 'working from home', 'remote', 'from home'],
+  halfKeywords: ['half', 'half day', 'half-day', 'halfday', 'first half', '1st half', 'second half', '2nd half', 'leaving early'],
+  leaveKeywords: ['leave', 'on leave', 'ooo', 'out of office', 'pto', 'vacation'],
+  sickKeywords: ['sick', 'unwell', 'not well', 'not feeling well', 'on sick leave'],
+  absentKeywords: ['absent', 'not coming', "won't be in", 'wont be in', 'na', 'not available'],
   validReaction: 'thumbsup',
   invalidReaction: 'x',
 };
+
+// Emoji shorthands (unicode + Slack :shortcode:). 🏖️ carries a variation
+// selector, so we match the base 🏖 to catch both forms.
+const EMOJI = {
+  present: ['✅', ':white_check_mark:'],
+  wfh: ['🏠', ':house:'],
+  sick: ['🤒', ':face_with_thermometer:'],
+  vacation: ['🏖', ':beach_with_umbrella:'],
+};
+const hasEmoji = (text, list) => list.some((e) => text.includes(e));
 
 function kw(slack, key) {
   const v = slack[key];
@@ -25,19 +36,33 @@ function matchesKeyword(text, keyword) {
   return new RegExp('(^|[^a-z0-9])' + esc + '([^a-z0-9]|$)', 'i').test(text);
 }
 
-// Classify a Slack message into an attendance status.
-// Returns { valid, status, wfh }. valid=false means we couldn't read it.
+// Classify a Slack/attendance message into a status.
+// Returns { valid, status, wfh, reason, half }. valid=false means unreadable.
+// Most specific intent wins, so "half day" beats "present", "sick" -> leave, etc.
 function classifyMessage(rawText, slack) {
   const text = String(rawText || '').toLowerCase().trim();
-  if (!text) return { valid: false, status: null, wfh: 0 };
+  const NONE = { valid: false, status: null, wfh: 0, reason: null, half: null };
+  if (!text) return NONE;
   const has = (arr) => arr.some((k) => matchesKeyword(text, k));
+  const whichHalf = /(^|[^a-z0-9])(second half|2nd half|afternoon|leaving early)([^a-z0-9]|$)/i.test(text) ? 'second'
+    : /(^|[^a-z0-9])(first half|1st half|morning)([^a-z0-9]|$)/i.test(text) ? 'first' : null;
+
   // Most specific intent first.
-  if (has(kw(slack, 'halfKeywords')))   return { valid: true, status: 'half',    wfh: 0 };
-  if (has(kw(slack, 'leaveKeywords')))  return { valid: true, status: 'leave',   wfh: 0 };
-  if (has(kw(slack, 'absentKeywords'))) return { valid: true, status: 'absent',  wfh: 0 };
-  if (has(kw(slack, 'wfhKeywords')))    return { valid: true, status: 'present', wfh: 1 };
-  if (has(kw(slack, 'presentKeywords')))return { valid: true, status: 'present', wfh: 0 };
-  return { valid: false, status: null, wfh: 0 };
+  if (has(kw(slack, 'halfKeywords')))
+    return { valid: true, status: 'half', wfh: 0, reason: whichHalf ? whichHalf + ' half' : null, half: whichHalf };
+  if (has(kw(slack, 'sickKeywords')) || hasEmoji(text, EMOJI.sick))
+    return { valid: true, status: 'leave', wfh: 0, reason: 'sick', half: null };
+  if (has(kw(slack, 'leaveKeywords')) || hasEmoji(text, EMOJI.vacation)) {
+    const vac = matchesKeyword(text, 'vacation') || hasEmoji(text, EMOJI.vacation);
+    return { valid: true, status: 'leave', wfh: 0, reason: vac ? 'vacation' : null, half: null };
+  }
+  if (has(kw(slack, 'absentKeywords')))
+    return { valid: true, status: 'absent', wfh: 0, reason: null, half: null };
+  if (has(kw(slack, 'wfhKeywords')) || hasEmoji(text, EMOJI.wfh))
+    return { valid: true, status: 'present', wfh: 1, reason: null, half: null };
+  if (has(kw(slack, 'presentKeywords')) || hasEmoji(text, EMOJI.present))
+    return { valid: true, status: 'present', wfh: 0, reason: null, half: null };
+  return NONE;
 }
 
 // Build a resolver mapping a Slack user id -> employee id.

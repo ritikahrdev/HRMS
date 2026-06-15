@@ -163,14 +163,26 @@ router.post('/attendance', async (req, res) => {
 
   // 5) Decide whether this is a CHECK-OUT (records check-out time + total hours)
   // or a status / CHECK-IN, then compute the values.
+  // Classify the text first (rich result: status, wfh, reason, half). An exact
+  // canonical label (STATUS_MAP) wins over the keyword classifier.
+  const stMap = STATUS_MAP[statusRaw.toLowerCase()];
+  const cls = classifyMessage(statusRaw, getSettings().slack || {});
+  const explicit = stMap ? { status: stMap.status, wfh: stMap.wfh, reason: null, half: null }
+    : (cls.valid ? { status: cls.status, wfh: cls.wfh ? 1 : 0, reason: cls.reason, half: cls.half } : null);
+
   const CHECKOUT_RE = /\b(check[\s-]?out|checking out|checked out|clock[\s-]?out|clocking out|logging off|logged off|log off|signing off|signed off|sign off|leaving|out for the day|done for the day|end of day|eod|heading home|going home|wrapping up|wrapped up)\b/i;
   // A bare "out" (with optional emoji/punctuation) means clock-out — but NOT
   // "out of office"/"out of town", which are leave.
   const strippedStatus = statusRaw.toLowerCase().replace(/[^\p{L}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
   const bareOut = /^out\b/.test(strippedStatus) && !/\bof\s+(?:office|town|the office)\b/.test(strippedStatus);
-  const isCheckout = !!checkOutRaw || (!!statusRaw && (CHECKOUT_RE.test(statusRaw) || bareOut));
+  // An explicit half-day / leave / absent overrides check-out phrasing (e.g.
+  // "leaving early" is a half-day, not a clock-out). A present/WFH that also
+  // reads like "heading home"/"leaving" is treated as the clock-out it looks like.
+  const statusOverridesCheckout = !!explicit && ['half', 'leave', 'absent'].includes(explicit.status);
+  const isCheckout = !statusOverridesCheckout && (!!checkOutRaw || (!!statusRaw && (CHECKOUT_RE.test(statusRaw) || bareOut)));
   const round2 = (h) => Math.round(h * 100) / 100;
   let check_in = null, check_out = null, work_hours = null, status = null, wfh = 0, action = 'check-in';
+  let classifiedReason = explicit ? explicit.reason : null;
 
   if (isCheckout) {
     action = 'check-out';
@@ -183,16 +195,11 @@ router.post('/attendance', async (req, res) => {
     if (explicitHours != null) work_hours = round2(explicitHours);
     else if (ex && ex.check_in) { const h = (coTime - new Date(ex.check_in)) / 36e5; work_hours = h > 0 ? round2(h) : 0; }
   } else {
-    let mapped = STATUS_MAP[statusRaw.toLowerCase()];
-    if (!mapped) {
-      const cls = classifyMessage(statusRaw, getSettings().slack || {});
-      if (cls.valid) mapped = { status: cls.status, wfh: cls.wfh ? 1 : 0 };
-    }
-    if (!mapped) {
+    if (!explicit) {
       console.warn(`[webhook]   ✗ 400 unreadable status: "${statusRaw}"`);
-      return res.status(400).json({ success: false, error: `Couldn't read a status from "${statusRaw}". Use Present, Absent, WFH, Half day, Leave, Holiday — or "out"/"checkout" to clock out.` });
+      return res.status(400).json({ success: false, error: `Couldn't read a status from "${statusRaw}". Use Present, WFH, Half day, Leave, Sick, Absent, Holiday — or "out"/"checkout" to clock out.` });
     }
-    status = mapped.status; wfh = mapped.wfh;
+    status = explicit.status; wfh = explicit.wfh;
     check_in = (status === 'present' || status === 'half') ? parsed.toISOString() : null;
     if (checkOutRaw) { const c = parseTime(checkOutRaw); if (!isNaN(c.getTime())) check_out = c.toISOString(); }
     if (explicitHours != null) work_hours = round2(explicitHours);
@@ -201,8 +208,9 @@ router.post('/attendance', async (req, res) => {
 
   // 6) Upsert (idempotent — one row per employee+date; the COALESCEs above merge
   // a separate check-in and check-out into the same row).
+  const finalReason = reason || classifiedReason || null;
   try {
-    await upsert.run({ employee_id: emp.id, date, check_in, check_out, work_hours, status, wfh, reason });
+    await upsert.run({ employee_id: emp.id, date, check_in, check_out, work_hours, status, wfh, reason: finalReason });
   } catch (e) {
     console.error('[webhook]   ✗ 500 DB error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
@@ -221,7 +229,9 @@ router.post('/attendance', async (req, res) => {
     hours: work_hours,
     time,
     date,
-    reason: reason || null,
+    reason: finalReason,
+    wfh: wfh ? 1 : 0,
+    half: classifiedReason && status === 'half' ? (cls.half || null) : null,
     processedAt: new Date().toISOString(),
   });
 });
