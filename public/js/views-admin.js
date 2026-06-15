@@ -648,6 +648,7 @@ const AdminViews = {
       off: { code: '·', cls: 'roff', label: '' },
       '': { code: '', cls: 'roff', label: '' },
     };
+    const canEdit = App.has('attendance:correct');
     body.innerHTML = `
       <div class="attx-card" style="padding:14px 16px">
         <div class="attx-filters" style="margin-bottom:12px">
@@ -666,6 +667,7 @@ const AdminViews = {
     const monthInput = body.querySelector('#reg-month');
     const searchEl = body.querySelector('#reg-search');
     let data = null;
+    const dayByNum = {};
 
     const render = () => {
       if (!data) return;
@@ -684,7 +686,8 @@ const AdminViews = {
           if (cell.in) tip += ' · in ' + String(cell.in).slice(11, 16);
           if (cell.out) tip += ' · out ' + String(cell.out).slice(11, 16);
           if (cell.hrs != null) tip += ' · ' + cell.hrs + 'h';
-          return `<td class="rcell ${m.cls}" title="${tip}">${m.code}</td>`;
+          const ed = canEdit && d.type !== 'future';
+          return `<td class="rcell ${m.cls}${ed ? ' redit' : ''}"${ed ? ` data-emp="${r.id}" data-date="${d.date}" data-day="${d.day}"` : ''} title="${tip}">${m.code}</td>`;
         }).join('');
         const t = r.totals;
         return `<tr><td class="rname"><b>${UI.esc(r.name)}</b><span class="rcode">${UI.esc(r.emp_code || r.department || '')}</span></td>${cells}<td class="rsum rp">${t.present + t.wfh}</td><td class="rsum ra">${t.absent}</td><td class="rsum rl">${t.leave}</td><td class="rsum rh">${t.half}</td><td class="rsum rw">${t.wfh}</td></tr>`;
@@ -696,6 +699,7 @@ const AdminViews = {
       gridEl.innerHTML = '<div class="muted" style="padding:24px">Loading month…</div>';
       try { data = await api.get('/attendance/register?month=' + this._regMonth); }
       catch (e) { gridEl.innerHTML = `<div style="color:#dc2626;padding:24px">${UI.esc(e.message)}</div>`; return; }
+      for (const d of data.days) dayByNum[d.day] = d;
       render();
     };
 
@@ -707,6 +711,53 @@ const AdminViews = {
     body.querySelector('#reg-export').onclick = () => this._attExportCsv(data, STMAP);
     body.querySelector('#reg-legend').innerHTML = ['present', 'wfh', 'half', 'leave', 'absent', 'holiday', 'weekoff']
       .map((k) => `<span class="reg-leg"><i class="${STMAP[k].cls}">${STMAP[k].code}</i> ${STMAP[k].label}</span>`).join('');
+
+    // ---- Inline cell editing (HR / managers): click a cell to set a status ----
+    if (canEdit) {
+      body.querySelector('#reg-legend').insertAdjacentHTML('beforeend', '<span class="muted" style="font-size:12px;margin-left:auto">✎ Click any cell to set / change a status</span>');
+      const MENU = [['present', 'P', 'Present', 'rp'], ['wfh', 'W', 'WFH', 'rw'], ['half', '½', 'Half-day', 'rh'], ['leave', 'L', 'Leave', 'rl'], ['absent', 'A', 'Absent', 'ra'], ['holiday', 'H', 'Holiday', 'rho'], ['__clear', '✕', 'Clear', 'rclr']];
+      const emptyStatusFor = (dnum) => {
+        const d = dayByNum[dnum]; if (!d) return '';
+        return d.type === 'holiday' ? 'holiday' : d.type === 'weekend' ? 'weekoff' : d.type === 'off' ? 'off' : d.type === 'future' ? '' : 'absent';
+      };
+      const applyCell = (td, st) => {
+        const m = STMAP[st] || STMAP[''];
+        td.className = 'rcell ' + m.cls + ' redit';
+        td.textContent = m.code;
+        const row = data.rows.find((r) => r.id === +td.dataset.emp); if (!row) return;
+        row.cells[+td.dataset.day] = { st };
+        const t = { present: 0, wfh: 0, half: 0, leave: 0, absent: 0 };
+        for (const k in row.cells) { const s = row.cells[k].st; if (t[s] != null) t[s]++; }
+        const sums = td.closest('tr').querySelectorAll('.rsum');
+        if (sums.length >= 5) { sums[0].textContent = t.present + t.wfh; sums[1].textContent = t.absent; sums[2].textContent = t.leave; sums[3].textContent = t.half; sums[4].textContent = t.wfh; }
+      };
+      let menuEl = null;
+      const onOutside = (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); };
+      function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; document.removeEventListener('mousedown', onOutside, true); } }
+      const openMenu = (td) => {
+        closeMenu();
+        const root = document.getElementById('attx-root') || document.body;
+        menuEl = document.createElement('div');
+        menuEl.className = 'reg-menu';
+        menuEl.innerHTML = MENU.map(([v, code, label, cls]) => `<button type="button" data-st="${v}"><i class="${cls}">${code}</i>${label}</button>`).join('');
+        root.appendChild(menuEl);
+        const rect = td.getBoundingClientRect();
+        const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+        let left = Math.min(rect.left, window.innerWidth - mw - 10);
+        let top = rect.bottom + 4; if (top + mh > window.innerHeight - 10) top = rect.top - mh - 4;
+        menuEl.style.left = Math.max(8, left) + 'px'; menuEl.style.top = Math.max(8, top) + 'px';
+        menuEl.querySelectorAll('button').forEach((b) => b.onclick = async () => {
+          const v = b.dataset.st; closeMenu();
+          const emp = +td.dataset.emp, date = td.dataset.date, dnum = +td.dataset.day;
+          try {
+            if (v === '__clear') { await api.post('/attendance/delete', { employee_id: emp, date }); applyCell(td, emptyStatusFor(dnum)); }
+            else { await api.post('/attendance/mark', { employee_id: emp, date, status: v }); applyCell(td, v === 'wfh' ? 'wfh' : v); }
+          } catch (err) { UI.toast(err.message, 'error'); }
+        });
+        setTimeout(() => document.addEventListener('mousedown', onOutside, true), 0);
+      };
+      gridEl.addEventListener('click', (e) => { const td = e.target.closest('.redit'); if (td) openMenu(td); });
+    }
     await load();
   },
 
@@ -829,6 +880,13 @@ const AdminViews = {
 .reg-leg{display:inline-flex;align-items:center;gap:6px;font-size:12.5px}
 .reg-leg i{width:20px;height:18px;border-radius:5px;font-weight:800;font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-style:normal}
 .reg-leg i.rp{background:var(--greenb);color:var(--green)} .reg-leg i.rw{background:var(--purpleb);color:var(--purple)} .reg-leg i.rh{background:var(--yellowb);color:var(--yellow)} .reg-leg i.rl{background:var(--orangeb);color:var(--orange)} .reg-leg i.ra{background:var(--redb);color:var(--red)} .reg-leg i.rho{background:var(--purpleb);color:var(--purple)} .reg-leg i.ro{background:var(--line);color:var(--muted)}
+.reg .rcell.redit{cursor:pointer}
+.reg .rcell.redit:hover{outline:2px solid var(--pri);outline-offset:-2px}
+.reg-menu{position:fixed;z-index:60;background:var(--card);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);padding:6px;display:grid;grid-template-columns:1fr 1fr;gap:3px;min-width:228px}
+.reg-menu button{display:flex;align-items:center;gap:8px;border:0;background:transparent;color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 9px;border-radius:8px;cursor:pointer;text-align:left}
+.reg-menu button:hover{background:var(--line)}
+.reg-menu i{width:19px;height:17px;border-radius:5px;font-style:normal;font-weight:800;font-size:10.5px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.reg-menu i.rp{background:var(--greenb);color:var(--green)} .reg-menu i.rw{background:var(--purpleb);color:var(--purple)} .reg-menu i.rh{background:var(--yellowb);color:var(--yellow)} .reg-menu i.rl{background:var(--orangeb);color:var(--orange)} .reg-menu i.ra{background:var(--redb);color:var(--red)} .reg-menu i.rho{background:var(--purpleb);color:var(--purple)} .reg-menu i.rclr{background:var(--line);color:var(--muted)}
 .attx-bar{height:8px;background:var(--line);border-radius:5px;overflow:hidden}
 .attx-bar-fill{height:100%;border-radius:5px;transition:width .5s ease}
 .attx-empty{color:var(--muted);font-size:13px;text-align:center;padding:22px}

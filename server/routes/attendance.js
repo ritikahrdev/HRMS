@@ -480,6 +480,7 @@ async function buildRegister(month, employees) {
       else if (a && a.status === 'half') { st = 'half'; t.half++; }
       else if (a && a.status === 'leave') { st = 'leave'; t.leave++; }
       else if (a && (a.status === 'present' || a.check_in)) { st = a.wfh ? 'wfh' : 'present'; a.wfh ? t.wfh++ : t.present++; }
+      else if (a && a.status === 'holiday') { st = 'holiday'; t.holiday++; }
       else if (onLeave(e.id, day.date)) { st = 'leave'; t.leave++; }
       else if (day.type === 'holiday') { st = 'holiday'; t.holiday++; }
       else if (day.type === 'weekend') { st = 'weekoff'; t.weekoff++; }
@@ -534,6 +535,12 @@ router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
       return res.status(400).json({ error: 'Invalid status. Use one of: ' + VALID_STATUS.join(', ') });
     }
 
+    // WFH is stored canonically as status='present' with the wfh flag set (same
+    // as the webhook + board), so every view reads it consistently.
+    const isWfh = status === 'wfh';
+    const finalStatus = isWfh ? 'present' : status;
+    const wfh = isWfh ? 1 : 0;
+
     const ci = req.body.check_in ? `${date}T${req.body.check_in}:00` : null;
     const co = req.body.check_out ? `${date}T${req.body.check_out}:00` : null;
     let hours = 0;
@@ -546,11 +553,11 @@ router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
     await db.withTransaction(async (tx) => {
       const existing = await tx.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(employee_id, date);
       if (existing) {
-        await tx.prepare('UPDATE attendance SET status = ?, check_in = ?, check_out = ?, work_hours = ? WHERE id = ?')
-          .run(status, ci, co, hours, existing.id);
+        await tx.prepare('UPDATE attendance SET status = ?, wfh = ?, check_in = ?, check_out = ?, work_hours = ?, source = COALESCE(source, ?) WHERE id = ?')
+          .run(finalStatus, wfh, ci, co, hours, 'manual', existing.id);
       } else {
-        await tx.prepare('INSERT INTO attendance (employee_id, date, status, check_in, check_out, work_hours) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(employee_id, date, status, ci, co, hours);
+        await tx.prepare("INSERT INTO attendance (employee_id, date, status, wfh, check_in, check_out, work_hours, source) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual')")
+          .run(employee_id, date, finalStatus, wfh, ci, co, hours);
       }
     });
     res.json({ ok: true });
