@@ -90,13 +90,24 @@
 
     (async () => {
       if (!token) return center('🔗', 'Invalid link', 'This link looks incomplete. Please ask HR for a new one.');
-      try {
-        const r = await fetch('/api/requisition/' + encodeURIComponent(token));
-        const d = await r.json();
-        if (!r.ok) return center('🔗', 'Link not found', d.error || 'Please contact HR for a new link.');
-        if (d.submitted) return center('✅', 'Already submitted', 'Thanks — this requirement has already been sent to HR. Contact them if you need to change anything.');
-        form(d);
-      } catch (e) { center('⚠️', 'Something went wrong', 'Please try again, or contact HR.'); }
+      // The free-tier server can take up to a minute to wake on first open — show
+      // a friendly message instead of an endless "Loading…", and auto-retry.
+      const slow = setTimeout(() => { const s = document.querySelector('#card .sub'); if (s) s.textContent = 'Waking up the server — this can take up to a minute on first load. Please wait…'; }, 6000);
+      const load = async (tries) => {
+        try {
+          const r = await fetch('/api/requisition/' + encodeURIComponent(token), { cache: 'no-store' });
+          const d = await r.json();
+          clearTimeout(slow);
+          if (!r.ok) return center('🔗', 'Link not found', d.error || 'Please contact HR for a new link.');
+          if (d.submitted) return center('✅', 'Already submitted', 'Thanks — this requirement has already been sent to HR. Contact them if you need to change anything.');
+          form(d);
+        } catch (e) {
+          if (tries > 0) { await new Promise((res) => setTimeout(res, 2500)); return load(tries - 1); }
+          clearTimeout(slow);
+          center('⚠️', 'Couldn’t load the form', 'Please refresh this page (the server may still be starting up). If it persists, contact HR.');
+        }
+      };
+      load(4);
     })();
   </script>
 </body>
