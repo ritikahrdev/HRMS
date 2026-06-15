@@ -9,9 +9,71 @@ const { saveFile, getFile, deleteFile, sendFile } = require('../services/filesto
 const { createEmployee } = require('../services/employees');
 const { provisionAccountsForOnboarding } = require('../services/accountSetup');
 const { buildJourney, syncAutomatedTasks } = require('../services/onboardingJourney');
+const crypto = require('crypto');
+const { sendMail } = require('../services/email');
+const { getSettings } = require('../services/settings');
+const { escapeHtml } = require('../services/escape');
+const ai = require('../services/ai');
 
 const router = express.Router();
 const P = requirePerm('recruitment:manage');
+
+// ---- Hiring requisition: email a form to the manager; their answers land here ----
+router.post('/requisitions', P, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const managerEmail = String(b.manager_email || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(managerEmail)) return res.status(400).json({ error: 'A valid hiring-manager email is required.' });
+    const token = crypto.randomBytes(24).toString('hex');
+    const title = String(b.title || '').trim() || '(Pending — hiring manager to fill)';
+    const r = await db.prepare(
+      "INSERT INTO jobs (title, department, status, req_token, req_status, manager_email, manager_name, created_by) VALUES (?, ?, 'draft', ?, 'requested', ?, ?, ?)"
+    ).run(title, String(b.department || '').trim(), token, managerEmail, String(b.manager_name || '').trim(), req.session.user.id);
+    const s = getSettings();
+    const link = `${config.publicUrl}/requisition/${token}`;
+    await sendMail({
+      to: managerEmail,
+      subject: `Action needed: hiring requirement${b.title ? ' — ' + b.title : ''} (${s.companyName || 'HR'})`,
+      html: `<p>Hi ${escapeHtml(b.manager_name || 'there')},</p>
+        <p><b>${escapeHtml(req.session.user.name || 'HR')}</b> has asked you to share the requirements for a new hire${b.title ? ` (<b>${escapeHtml(b.title)}</b>)` : ''}. It's a short form, and your answers go straight to the HR recruitment pipeline.</p>
+        <p><a href="${link}" style="background:#4f46e5;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:600">Fill the hiring requirement →</a></p>
+        <p style="color:#888;font-size:12px">Or paste this link into your browser: ${link}</p>`,
+    }).catch(() => {});
+    res.json({ id: r.lastInsertRowid, token, link });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- AI: draft a polished job post from the requisition data ----
+router.post('/jobs/:id/generate-post', P, async (req, res) => {
+  try {
+    if (!ai.isConfigured()) return res.status(400).json({ error: 'AI is not set up yet. Add an API key in Settings → AI Assistant.' });
+    const j = await db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
+    if (!j) return res.status(404).json({ error: 'Not found' });
+    const s = getSettings();
+    const system = `You are an expert recruiter writing a compelling, inclusive job post for ${s.companyName || 'a company'}. Use clean text with short markdown headings and bullet lists. Include: a 2–3 line role summary, "Key Responsibilities" (bullets), "Requirements" (must-haves, bullets), "Nice to have" (only if provided), and a short "Why join us" line. Be concise and appealing. Do NOT invent salary, benefits specifics, or legal claims. Output ONLY the job description text.`;
+    const brief = `Title: ${j.title}\nDepartment: ${j.department || '—'}\nLocation: ${j.location || '—'}\nType: ${j.type || 'Full-time'}\nOpenings: ${j.headcount || 1}\nMin experience: ${j.min_experience || 0} yrs\nRequired skills: ${j.skills || '—'}\nKey responsibilities: ${j.responsibilities || '—'}\nMust-haves: ${j.must_haves || '—'}\nNice-to-haves: ${j.nice_to_haves || '—'}`;
+    const text = await ai.complete(system, brief, 1200);
+    await db.prepare('UPDATE jobs SET description = ? WHERE id = ?').run(text, j.id);
+    res.json({ ok: true, description: text });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---- Publish a draft/requisition job → live on the public careers page ----
+router.post('/jobs/:id/publish', P, async (req, res) => {
+  try {
+    const j = await db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
+    if (!j) return res.status(404).json({ error: 'Not found' });
+    if (!j.title || j.title.startsWith('(Pending')) return res.status(400).json({ error: 'Add a job title before publishing.' });
+    await db.prepare("UPDATE jobs SET status='open', req_status = CASE WHEN req_token IS NOT NULL THEN 'published' ELSE req_status END WHERE id = ?").run(j.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ---- Criteria match score (0-100): 70% skills overlap + 30% experience ----
 function scoreApplicant(app, job) {

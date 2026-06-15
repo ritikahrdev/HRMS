@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hiring Requirement</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#eef2ff,#faf5ff);color:#1f2937;min-height:100vh}
+    .wrap{max-width:640px;margin:0 auto;padding:32px 18px 60px}
+    .card{background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(79,70,229,.12);padding:26px 28px}
+    .brand{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+    .brand .logo{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#4f46e5,#7c3aed);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px}
+    h1{font-size:21px;margin:14px 0 2px}
+    .sub{color:#6b7280;font-size:13.5px;margin:0 0 18px}
+    label{display:block;font-size:12.5px;font-weight:600;color:#4b5563;margin:14px 0 5px}
+    input,select,textarea{width:100%;border:1px solid #e5e1f3;border-radius:10px;padding:10px 12px;font-size:14px;font-family:inherit;outline:none;background:#fff}
+    input:focus,select:focus,textarea:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,.12)}
+    textarea{resize:vertical;min-height:74px}
+    .row{display:flex;gap:12px}.row>div{flex:1}
+    .hint{font-size:11.5px;color:#9ca3af;margin-top:3px}
+    button{margin-top:22px;width:100%;border:none;border-radius:11px;padding:13px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+    button:disabled{opacity:.6;cursor:default}
+    .msg{padding:14px 16px;border-radius:12px;font-size:14px;margin-top:8px}
+    .ok{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0}
+    .err{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+    .center{text-align:center;padding:40px 10px}
+    .center .big{font-size:46px}
+  </style>
+</head>
+<body>
+  <div class="wrap"><div class="card" id="card"><div class="center"><div class="big">⏳</div><p class="sub">Loading…</p></div></div></div>
+  <script>
+    const token = location.pathname.split('/').filter(Boolean)[1] || '';
+    const card = document.getElementById('card');
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const initials = (s) => (String(s||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('')||'?').toUpperCase();
+
+    function center(emoji, title, text, cls){
+      card.innerHTML = `<div class="center"><div class="big">${emoji}</div><h1>${esc(title)}</h1><p class="sub">${esc(text)}</p></div>`;
+    }
+
+    function form(d){
+      const j = d.job || {};
+      const co = d.companyName || 'the company';
+      card.innerHTML = `
+        <div class="brand"><div class="logo">${esc(initials(co))}</div><div><div style="font-weight:800">${esc(co)}</div><div class="sub" style="margin:0">Hiring requirement</div></div></div>
+        <h1>New hire — your requirements</h1>
+        <p class="sub">Fill this in and HR will turn it into a job post automatically. Takes ~2 minutes.</p>
+        <div id="msg"></div>
+        <label>Role title *</label>
+        <input id="title" value="${esc(j.title)}" placeholder="e.g. Senior Backend Engineer" />
+        <div class="row">
+          <div><label>Department</label><input id="department" value="${esc(j.department)}" placeholder="Engineering" /></div>
+          <div><label>Location</label><input id="location" value="${esc(j.location)}" placeholder="Remote / Dehradun" /></div>
+        </div>
+        <div class="row">
+          <div><label>Employment type</label><select id="type">${['Full-time','Part-time','Contract','Intern'].map(t=>`<option ${j.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
+          <div><label>Min experience (years)</label><input id="min_experience" type="number" min="0" step="0.5" value="${j.min_experience||0}" /></div>
+          <div><label>Openings</label><input id="headcount" type="number" min="1" step="1" value="${j.headcount||1}" /></div>
+        </div>
+        <label>Required skills <span class="hint">(comma separated)</span></label>
+        <input id="skills" value="${esc(j.skills)}" placeholder="Node.js, PostgreSQL, REST APIs" />
+        <label>Key responsibilities</label>
+        <textarea id="responsibilities" placeholder="What this person will own day to day…">${esc(j.responsibilities)}</textarea>
+        <label>Must-have requirements</label>
+        <textarea id="must_haves" placeholder="Non-negotiables — experience, qualifications, etc.">${esc(j.must_haves)}</textarea>
+        <label>Nice to have <span class="hint">(optional)</span></label>
+        <textarea id="nice_to_haves" placeholder="Bonus skills / experience">${esc(j.nice_to_haves)}</textarea>
+        <button id="submit">Submit requirement →</button>`;
+
+      document.getElementById('submit').onclick = async () => {
+        const get = (id) => document.getElementById(id).value;
+        const body = { title:get('title'), department:get('department'), location:get('location'), type:get('type'),
+          min_experience:get('min_experience'), headcount:get('headcount'), skills:get('skills'),
+          responsibilities:get('responsibilities'), must_haves:get('must_haves'), nice_to_haves:get('nice_to_haves') };
+        if (!body.title.trim()) { msg('Please give the role a title.', 'err'); return; }
+        const btn = document.getElementById('submit'); btn.disabled = true; btn.textContent = 'Submitting…';
+        try {
+          const r = await fetch('/api/requisition/' + encodeURIComponent(token), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          const jd = await r.json();
+          if (!r.ok) throw new Error(jd.error || 'Could not submit.');
+          center('✅', 'Thank you!', 'Your hiring requirement has been sent to HR. They will create and publish the job post. You can close this page.');
+        } catch (e) { msg(e.message, 'err'); btn.disabled = false; btn.textContent = 'Submit requirement →'; }
+      };
+    }
+    function msg(t, cls){ const m=document.getElementById('msg'); if(m) m.innerHTML = `<div class="msg ${cls}">${esc(t)}</div>`; }
+
+    (async () => {
+      if (!token) return center('🔗', 'Invalid link', 'This link looks incomplete. Please ask HR for a new one.');
+      try {
+        const r = await fetch('/api/requisition/' + encodeURIComponent(token));
+        const d = await r.json();
+        if (!r.ok) return center('🔗', 'Link not found', d.error || 'Please contact HR for a new link.');
+        if (d.submitted) return center('✅', 'Already submitted', 'Thanks — this requirement has already been sent to HR. Contact them if you need to change anything.');
+        form(d);
+      } catch (e) { center('⚠️', 'Something went wrong', 'Please try again, or contact HR.'); }
+    })();
+  </script>
+</body>
+</html>

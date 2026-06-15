@@ -188,6 +188,7 @@ app.use('/api/birthdays', require('./routes/birthdays'));
 app.use('/api/automation', require('./routes/automation'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/careers', require('./routes/careers'));
+app.use('/api/requisition', require('./routes/requisition'));
 
 // --- Numeric id guard -----------------------------------------------------
 // All :id / :employeeId / :docId / :taskId / :jobId / :applicantId params map
@@ -221,6 +222,12 @@ app.get('/preboard/:token', (req, res) => {
 // posts on LinkedIn or anywhere else.
 app.get('/careers', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'careers.html'));
+});
+
+// Public hiring-requisition form (no login) — the hiring manager fills role
+// requirements via a private token link emailed by HR.
+app.get('/requisition/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'requisition.html'));
 });
 
 // Serve uploaded logo (read-only) for branding.

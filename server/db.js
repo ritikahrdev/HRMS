@@ -504,6 +504,16 @@ const COLUMN_MIGRATIONS = [
   "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_score INTEGER",
   "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_recommendation TEXT",
   "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_summary TEXT",
+  // Hiring-requisition workflow: HR emails a token form to the hiring manager,
+  // their answers land on the job row, AI drafts the post, HR publishes it.
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS req_token TEXT",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS req_status TEXT",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS manager_email TEXT",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS manager_name TEXT",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS headcount INTEGER",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS responsibilities TEXT",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS must_haves TEXT",
+  "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS nice_to_haves TEXT",
 ];
 
 const INVENTORY_SEED = [

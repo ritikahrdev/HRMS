@@ -3922,34 +3922,61 @@ const AdminViews = {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { jobs } = await api.get('/recruitment/jobs');
     const applyLink = (id) => location.origin + '/careers#job-' + id;
+    const reqLink = (tok) => location.origin + '/requisition/' + tok;
+    const jobCard = (j) => {
+      const draft = j.status === 'draft';
+      const r = j.req_status;
+      let badge, buttons;
+      if (draft && r === 'requested') {
+        badge = '<span class="tag" style="background:#fef3c7;color:#92400e">⏳ Awaiting manager</span>';
+        buttons = `<button class="btn sm secondary" data-reqlink="${j.id}">🔗 Copy form link</button>
+          <button class="btn sm secondary" data-edit="${j.id}">Edit</button>
+          <button class="btn sm red" data-del="${j.id}">Delete</button>`;
+      } else if (draft && r === 'submitted') {
+        badge = '<span class="tag" style="background:#ede9fe;color:#5b21b6">📋 Requirement received</span>';
+        buttons = `<button class="btn sm" data-gen="${j.id}">✨ Generate job post (AI)</button>
+          <button class="btn sm secondary" data-edit="${j.id}">Review / Edit</button>
+          <button class="btn sm" data-pub="${j.id}" style="background:#16a34a">Publish</button>
+          <button class="btn sm red" data-del="${j.id}">Delete</button>`;
+      } else if (draft) {
+        badge = '<span class="tag inactive">draft</span>';
+        buttons = `<button class="btn sm secondary" data-edit="${j.id}">Edit</button>
+          <button class="btn sm" data-pub="${j.id}" style="background:#16a34a">Publish</button>
+          <button class="btn sm red" data-del="${j.id}">Delete</button>`;
+      } else {
+        badge = `<span class="tag ${j.status === 'open' ? 'approved' : 'inactive'}">${j.status}</span>`;
+        buttons = `<button class="btn sm" data-open="${j.id}">Open Pipeline</button>
+          <button class="btn sm secondary" data-copylink="${j.id}">🔗 Copy apply link</button>
+          <button class="btn sm secondary" data-linkedin="${j.id}">Post on LinkedIn</button>
+          <button class="btn sm secondary" data-edit="${j.id}">Edit</button>
+          <button class="btn sm red" data-del="${j.id}">Delete</button>`;
+      }
+      const meta = [j.department, j.location, j.type].filter(Boolean).join(' · ');
+      const sub = (draft && r === 'requested') ? ('Form sent to ' + (j.manager_email || 'manager')) : (meta || (draft ? 'Requirement submitted' : ''));
+      return `<div class="card">
+        <div style="display:flex;align-items:start;gap:8px">
+          <div style="flex:1"><div style="font-weight:650;font-size:16px">${UI.esc(j.title)}</div>
+            <div class="muted" style="font-size:12px">${UI.esc(sub)}</div></div>${badge}
+        </div>
+        ${!draft ? `<div class="mt" style="font-size:13px"><b>${j.applicants}</b> applicants · <b>${j.hired}</b> hired</div>` : ''}
+        <div class="btn-row mt">${buttons}</div>
+      </div>`;
+    };
     c.innerHTML = `
-      ${this.explainBanner('🧲', 'Hire on autopilot', 'Post a job here, share its <b>apply link</b> on LinkedIn (or anywhere) — and every application flows straight into your pipeline, gets scored against the job, AI-screened, and strong matches are <b>auto-shortlisted</b> for you.', [
-        ['1️⃣', 'Create the job & copy its <b>apply link</b>'],
-        ['2️⃣', 'Paste the link in your LinkedIn post ("apply via link")'],
-        ['3️⃣', 'Candidates apply → auto-scored + AI-screened'],
-        ['4️⃣', 'You review the <b>shortlist</b>, interview, hire 🎉'],
+      ${this.explainBanner('🧲', 'Hire on autopilot', 'Ask a hiring manager for the requirement, let <b>AI draft the job post</b>, publish its <b>apply link</b> to LinkedIn (or anywhere) — and every application flows into your pipeline, gets scored, AI-screened, and strong matches are <b>auto-shortlisted</b>.', [
+        ['1️⃣', '<b>Request</b> the requirement from the hiring manager (emailed form)'],
+        ['2️⃣', 'AI <b>drafts the job post</b> → you review & <b>Publish</b>'],
+        ['3️⃣', 'Share the <b>apply link</b> on LinkedIn ("apply via link")'],
+        ['4️⃣', 'Applicants auto-scored + AI-screened → you review the <b>shortlist</b> 🎉'],
       ])}
-      <div class="toolbar"><div class="section-title" style="margin:0">Recruitment</div><div class="spacer"></div><button class="btn sm secondary" id="openCareers">👀 View public careers page</button><button class="btn" id="newJob">+ New Job</button></div>
-      <div class="cards">${jobs.length ? jobs.map((j) => `
-        <div class="card">
-          <div style="display:flex;align-items:start;gap:8px">
-            <div style="flex:1">
-              <div style="font-weight:650;font-size:16px">${UI.esc(j.title)}</div>
-              <div class="muted" style="font-size:12px">${UI.esc([j.department, j.location, j.type].filter(Boolean).join(' · '))}</div>
-            </div>
-            <span class="tag ${j.status === 'open' ? 'approved' : 'inactive'}">${j.status}</span>
-          </div>
-          <div class="mt" style="font-size:13px"><b>${j.applicants}</b> applicants · <b>${j.hired}</b> hired</div>
-          <div class="btn-row mt">
-            <button class="btn sm" data-open="${j.id}">Open Pipeline</button>
-            <button class="btn sm secondary" data-copylink="${j.id}">🔗 Copy apply link</button>
-            <button class="btn sm secondary" data-linkedin="${j.id}">Post on LinkedIn</button>
-            <button class="btn sm secondary" data-edit="${j.id}">Edit</button>
-            <button class="btn sm red" data-del="${j.id}">Delete</button>
-          </div>
-        </div>`).join('') : '<div class="empty">No job openings yet. Click “New Job”.</div>'}</div>`;
+      <div class="toolbar"><div class="section-title" style="margin:0">Recruitment</div><div class="spacer"></div>
+        <button class="btn sm secondary" id="openCareers">👀 View public careers page</button>
+        <button class="btn secondary" id="reqMgr">✉️ Request from Hiring Manager</button>
+        <button class="btn" id="newJob">+ New Job</button></div>
+      <div class="cards">${jobs.length ? jobs.map(jobCard).join('') : '<div class="empty">No job openings yet. Click “Request from Hiring Manager” or “New Job”.</div>'}</div>`;
 
     document.getElementById('newJob').onclick = () => this.jobForm(c, null);
+    document.getElementById('reqMgr').onclick = () => this.requisitionForm(c);
     document.getElementById('openCareers').onclick = () => window.open('/careers', '_blank');
     document.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => this.jobBoard(c, b.dataset.open));
     document.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => this.jobForm(c, jobs.find((j) => j.id == b.dataset.edit)));
@@ -3962,6 +3989,20 @@ const AdminViews = {
       try { await navigator.clipboard.writeText(applyLink(b.dataset.copylink)); UI.toast('🔗 Apply link copied — paste it into your LinkedIn job post. Applications will flow in automatically.', 'success'); }
       catch { UI.toast(applyLink(b.dataset.copylink), 'success'); }
     });
+    document.querySelectorAll('[data-reqlink]').forEach((b) => b.onclick = async () => {
+      const j = jobs.find((x) => x.id == b.dataset.reqlink); const link = reqLink(j.req_token);
+      try { await navigator.clipboard.writeText(link); UI.toast('🔗 Form link copied — send it to the hiring manager.', 'success'); }
+      catch { UI.toast(link, 'success'); }
+    });
+    document.querySelectorAll('[data-gen]').forEach((b) => b.onclick = async () => {
+      b.disabled = true; b.textContent = '✨ Generating…';
+      try { await api.post('/recruitment/jobs/' + b.dataset.gen + '/generate-post'); UI.toast('✨ Job post drafted by AI — open “Review / Edit” to check it, then Publish.', 'success'); this.recruitment(c); }
+      catch (e) { UI.toast(e.message, 'error'); b.disabled = false; b.textContent = '✨ Generate job post (AI)'; }
+    });
+    document.querySelectorAll('[data-pub]').forEach((b) => b.onclick = async () => {
+      try { await api.post('/recruitment/jobs/' + b.dataset.pub + '/publish'); UI.toast('🎉 Published — it is now live on your careers page. Copy its apply link to share.', 'success'); this.recruitment(c); }
+      catch (e) { UI.toast(e.message, 'error'); }
+    });
     document.querySelectorAll('[data-linkedin]').forEach((b) => b.onclick = () => {
       const j = jobs.find((x) => x.id == b.dataset.linkedin);
       const text = `${j.title}${j.location ? ' — ' + j.location : ''}\n${j.type || ''}\n\n${j.description || ''}\n\nRequired skills: ${j.skills || '-'}\nMin experience: ${j.min_experience || 0} yrs\n\n👉 Apply here: ${applyLink(j.id)}`;
@@ -3969,6 +4010,30 @@ const AdminViews = {
       UI.toast('Job post (incl. apply link) copied — paste it into LinkedIn.', 'success');
       window.open('https://www.linkedin.com/job-posting/', '_blank');
     });
+  },
+
+  requisitionForm(c) {
+    const m = UI.modal({
+      title: '✉️ Request hiring requirement',
+      bodyHtml: `
+        <p class="muted" style="font-size:13px;margin-top:0">We'll email the hiring manager a short form. Their answers land here as a draft — then AI drafts the job post for you to review and publish.</p>
+        <div class="form-grid">
+          <div class="field"><label>Hiring manager email *</label><input id="mgr_email" type="email" placeholder="manager@company.com" /></div>
+          <div class="field"><label>Manager name</label><input id="mgr_name" placeholder="Optional" /></div>
+          <div class="field"><label>Role title</label><input id="req_title" placeholder="Optional — they can set it" /></div>
+          <div class="field"><label>Department</label><input id="req_dept" placeholder="Optional" /></div>
+        </div>`,
+      footHtml: `<button class="btn secondary" data-close-btn>Cancel</button><button class="btn" id="send">Send form ✉️</button>`,
+    });
+    m.root.querySelector('[data-close-btn]').onclick = m.close;
+    m.root.querySelector('#send').onclick = async () => {
+      const email = m.root.querySelector('#mgr_email').value.trim();
+      if (!email) { UI.toast('Enter the hiring manager email.', 'error'); return; }
+      try {
+        await api.post('/recruitment/requisitions', { manager_email: email, manager_name: m.root.querySelector('#mgr_name').value, title: m.root.querySelector('#req_title').value, department: m.root.querySelector('#req_dept').value });
+        m.close(); UI.toast('✉️ Form emailed to ' + email + '. It will appear here as a draft once they submit.', 'success'); this.recruitment(c);
+      } catch (e) { UI.toast(e.message, 'error'); }
+    };
   },
 
   jobForm(c, job) {
