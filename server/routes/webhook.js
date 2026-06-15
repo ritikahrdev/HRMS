@@ -93,10 +93,15 @@ async function resolveEmployee(body) {
   // Fuzzy — unique active match only.
   const act = all.filter((e) => e.status === 'active');
   const toks = n.split(' ').filter(Boolean);
-  let c = act.filter((e) => { const w = norm(e.name).split(' '); return toks.every((t) => w.includes(t)); }); // all tokens present, any order
+  let c = act.filter((e) => { const w = norm(e.name).split(' '); return toks.every((t) => w.includes(t)); }); // all incoming tokens present in the stored name
   if (c.length === 1) return { emp: c[0], by: 'name~tokens' };
   c = act.filter((e) => norm(e.name) === n || norm(e.name).startsWith(n + ' ')); // input is a name prefix
   if (c.length === 1) return { emp: c[0], by: 'name~prefix' };
+  // Reverse containment: the STORED name's tokens all appear in the INCOMING name
+  // (HRMS has a short "Abhinav", the bot sent the fuller "Abhinav Sharma"). Unique
+  // active match only, so it never grabs the wrong person.
+  c = act.filter((e) => { const w = norm(e.name).split(' ').filter(Boolean); return w.length && w.every((t) => toks.includes(t)); });
+  if (c.length === 1) return { emp: c[0], by: 'name~contained' };
   if (toks.length === 1) { c = act.filter((e) => norm(e.name).split(' ')[0] === toks[0]); if (c.length === 1) return { emp: c[0], by: 'firstname' }; } // unique first name
   return null;
 }
