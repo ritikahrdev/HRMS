@@ -24,8 +24,13 @@ const EMOJI = {
 const hasEmoji = (text, list) => list.some((e) => text.includes(e));
 
 function kw(slack, key) {
-  const v = slack[key];
-  return (Array.isArray(v) && v.length ? v : DEFAULTS[key]).filter(Boolean);
+  // Always include the built-in defaults, then add any custom keywords saved in
+  // settings on top. (Older saved blobs froze a smaller list and used to REPLACE
+  // the defaults — which silently hid newly-added keywords like "second half".)
+  const saved = Array.isArray(slack[key]) ? slack[key] : [];
+  return [...new Set([...(DEFAULTS[key] || []), ...saved])]
+    .map((s) => String(s).toLowerCase().trim())
+    .filter(Boolean);
 }
 
 // Whole-word / whole-phrase match so the keyword "in" doesn't match "morning".
