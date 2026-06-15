@@ -600,6 +600,7 @@ const AdminViews = {
           <div class="attx-head-actions">
             <div class="attx-tabs">
               <button class="attx-tab on" data-tab="board">Live Board</button>
+              <button class="attx-tab" data-tab="monthly">Monthly</button>
               <button class="attx-tab" data-tab="analytics">Analytics</button>
             </div>
             ${App.has('attendance:viewAll') ? '<button class="attx-btn ghost" id="attx-import">⇪ Import</button>' : ''}
@@ -621,15 +622,109 @@ const AdminViews = {
     const tabs = c.querySelectorAll('.attx-tab');
     const setTab = (name) => {
       tabs.forEach((t) => t.classList.toggle('on', t.dataset.tab === name));
+      c.querySelector('#attx-live').style.display = name === 'board' ? '' : 'none';
       if (name === 'board') this._attBoard(body);
-      else { this._attStopPoll(); c.querySelector('#attx-live').style.display = 'none'; this.attendanceInsights(body); }
-      if (name === 'board') c.querySelector('#attx-live').style.display = '';
+      else if (name === 'monthly') { this._attStopPoll(); this._attMonthly(body); }
+      else { this._attStopPoll(); this.attendanceInsights(body); }
     };
     tabs.forEach((t) => t.onclick = () => setTab(t.dataset.tab));
     setTab('board');
   },
 
   _attStopPoll() { if (this._attPoll) { clearInterval(this._attPoll); this._attPoll = null; } },
+
+  // ---- Monthly register: one row per employee, one column per day (muster roll) ----
+  async _attMonthly(body) {
+    const now = new Date();
+    if (!this._regMonth) this._regMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    const STMAP = {
+      present: { code: 'P', cls: 'rp', label: 'Present' },
+      wfh: { code: 'W', cls: 'rw', label: 'WFH' },
+      half: { code: '½', cls: 'rh', label: 'Half-day' },
+      leave: { code: 'L', cls: 'rl', label: 'Leave' },
+      absent: { code: 'A', cls: 'ra', label: 'Absent' },
+      holiday: { code: 'H', cls: 'rho', label: 'Holiday' },
+      weekoff: { code: 'O', cls: 'ro', label: 'Weekly off' },
+      off: { code: '·', cls: 'roff', label: '' },
+      '': { code: '', cls: 'roff', label: '' },
+    };
+    body.innerHTML = `
+      <div class="attx-card" style="padding:14px 16px">
+        <div class="attx-filters" style="margin-bottom:12px">
+          <span class="attx-datenav"><button class="attx-ico" id="reg-prev">‹</button>
+            <input type="month" id="reg-month" value="${this._regMonth}">
+            <button class="attx-ico" id="reg-next">›</button></span>
+          <div class="attx-rights">
+            <input class="attx-search" id="reg-search" placeholder="Search name / code / dept…">
+            <button class="attx-btn" id="reg-export">⬇ Export to Excel (CSV)</button>
+          </div>
+        </div>
+        <div id="reg-grid"><div class="muted" style="padding:24px">Loading month…</div></div>
+        <div class="attx-legend" id="reg-legend" style="margin-top:12px"></div>
+      </div>`;
+    const gridEl = body.querySelector('#reg-grid');
+    const monthInput = body.querySelector('#reg-month');
+    const searchEl = body.querySelector('#reg-search');
+    let data = null;
+
+    const render = () => {
+      if (!data) return;
+      const term = (searchEl.value || '').toLowerCase().trim();
+      const rows = data.rows.filter((r) => !term || (r.name + ' ' + r.emp_code + ' ' + r.department).toLowerCase().includes(term));
+      const dayHead = data.days.map((d) => {
+        const cls = d.type === 'weekend' ? 'rcol-we' : (d.type === 'holiday' ? 'rcol-ho' : '');
+        return `<th class="rday ${cls}" title="${d.date}${d.holiday ? ' · ' + UI.esc(d.holiday) : ''}"><span class="rdow">${d.dowName[0]}</span>${d.day}</th>`;
+      }).join('');
+      const sumHead = `<th class="rsum rp">P</th><th class="rsum ra">A</th><th class="rsum rl">L</th><th class="rsum rh">½</th><th class="rsum rw">W</th>`;
+      const tbody = rows.map((r) => {
+        const cells = data.days.map((d) => {
+          const cell = r.cells[d.day] || { st: '' };
+          const m = STMAP[cell.st] || STMAP[''];
+          let tip = d.date;
+          if (cell.in) tip += ' · in ' + String(cell.in).slice(11, 16);
+          if (cell.out) tip += ' · out ' + String(cell.out).slice(11, 16);
+          if (cell.hrs != null) tip += ' · ' + cell.hrs + 'h';
+          return `<td class="rcell ${m.cls}" title="${tip}">${m.code}</td>`;
+        }).join('');
+        const t = r.totals;
+        return `<tr><td class="rname"><b>${UI.esc(r.name)}</b><span class="rcode">${UI.esc(r.emp_code || r.department || '')}</span></td>${cells}<td class="rsum rp">${t.present + t.wfh}</td><td class="rsum ra">${t.absent}</td><td class="rsum rl">${t.leave}</td><td class="rsum rh">${t.half}</td><td class="rsum rw">${t.wfh}</td></tr>`;
+      }).join('');
+      gridEl.innerHTML = `<div class="reg-wrap"><table class="reg"><thead><tr><th class="rname rcorner">Employee (${rows.length})</th>${dayHead}${sumHead}</tr></thead><tbody>${tbody || '<tr><td class="rname">No employees</td></tr>'}</tbody></table></div>`;
+    };
+
+    const load = async () => {
+      gridEl.innerHTML = '<div class="muted" style="padding:24px">Loading month…</div>';
+      try { data = await api.get('/attendance/register?month=' + this._regMonth); }
+      catch (e) { gridEl.innerHTML = `<div style="color:#dc2626;padding:24px">${UI.esc(e.message)}</div>`; return; }
+      render();
+    };
+
+    const shiftMonth = (m, delta) => { const [yy, mm] = m.split('-').map(Number); const dd = new Date(yy, mm - 1 + delta, 1); return dd.getFullYear() + '-' + String(dd.getMonth() + 1).padStart(2, '0'); };
+    monthInput.onchange = () => { if (monthInput.value) { this._regMonth = monthInput.value; load(); } };
+    body.querySelector('#reg-prev').onclick = () => { this._regMonth = shiftMonth(this._regMonth, -1); monthInput.value = this._regMonth; load(); };
+    body.querySelector('#reg-next').onclick = () => { this._regMonth = shiftMonth(this._regMonth, 1); monthInput.value = this._regMonth; load(); };
+    searchEl.oninput = () => render();
+    body.querySelector('#reg-export').onclick = () => this._attExportCsv(data, STMAP);
+    body.querySelector('#reg-legend').innerHTML = ['present', 'wfh', 'half', 'leave', 'absent', 'holiday', 'weekoff']
+      .map((k) => `<span class="reg-leg"><i class="${STMAP[k].cls}">${STMAP[k].code}</i> ${STMAP[k].label}</span>`).join('');
+    await load();
+  },
+
+  _attExportCsv(data, STMAP) {
+    if (!data) return UI.toast('Nothing to export yet.', 'error');
+    const q = (v) => { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    const head = ['Employee', 'Code', 'Department', ...data.days.map((d) => d.day), 'Present', 'Absent', 'Leave', 'Half', 'WFH'];
+    const lines = [head.join(',')];
+    for (const r of data.rows) {
+      const cells = data.days.map((d) => (STMAP[(r.cells[d.day] || {}).st] || STMAP['']).code || '');
+      const t = r.totals;
+      lines.push([q(r.name), q(r.emp_code), q(r.department), ...cells, t.present + t.wfh, t.absent, t.leave, t.half, t.wfh].join(','));
+    }
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'attendance-' + data.month + '.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  },
 
   _attInjectCss() {
     if (document.getElementById('attx-css')) return;
@@ -707,6 +802,33 @@ const AdminViews = {
 .attx-leg i{width:11px;height:11px;border-radius:3px;display:inline-block}
 .attx-dept-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px}
 .attx-dept-top i{color:var(--muted);font-style:normal}
+/* ---- Monthly register (muster roll) ---- */
+.reg-wrap{overflow:auto;max-height:68vh;border:1px solid var(--border);border-radius:12px}
+.reg{border-collapse:separate;border-spacing:0;font-size:12px;width:max-content;background:var(--card)}
+.reg th,.reg td{border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+.reg thead th{position:sticky;top:0;z-index:3;background:var(--card);color:var(--muted);font-weight:700;padding:6px 3px;text-align:center}
+.reg .rname{position:sticky;left:0;background:var(--card);text-align:left;padding:7px 12px;min-width:172px;max-width:210px}
+.reg thead .rcorner{z-index:4;color:var(--text)}
+.reg tbody .rname{z-index:2}
+.reg tbody tr:hover .rname,.reg tbody tr:hover .rsum{background:var(--line)}
+.reg .rcode{display:block;color:var(--muted);font-size:10px;font-weight:500;margin-top:1px}
+.reg .rday{min-width:30px}
+.reg .rdow{display:block;font-size:9px;opacity:.55}
+.reg .rday.rcol-we,.reg .rday.rcol-ho{color:var(--purple)}
+.reg .rcell{width:30px;min-width:30px;height:30px;text-align:center;font-weight:700;color:var(--text)}
+.reg .rcell.rp{background:var(--greenb);color:var(--green)}
+.reg .rcell.rw{background:var(--purpleb);color:var(--purple)}
+.reg .rcell.rh{background:var(--yellowb);color:var(--yellow)}
+.reg .rcell.rl{background:var(--orangeb);color:var(--orange)}
+.reg .rcell.ra{background:var(--redb);color:var(--red)}
+.reg .rcell.rho{background:var(--purpleb);color:var(--purple)}
+.reg .rcell.ro{background:var(--line);color:var(--muted)}
+.reg .rcell.roff{color:var(--muted);opacity:.35}
+.reg .rsum{min-width:28px;text-align:center;font-weight:800;background:var(--card)}
+.reg .rsum.rp{color:var(--green)} .reg .rsum.ra{color:var(--red)} .reg .rsum.rl{color:var(--orange)} .reg .rsum.rh{color:var(--yellow)} .reg .rsum.rw{color:var(--purple)}
+.reg-leg{display:inline-flex;align-items:center;gap:6px;font-size:12.5px}
+.reg-leg i{width:20px;height:18px;border-radius:5px;font-weight:800;font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-style:normal}
+.reg-leg i.rp{background:var(--greenb);color:var(--green)} .reg-leg i.rw{background:var(--purpleb);color:var(--purple)} .reg-leg i.rh{background:var(--yellowb);color:var(--yellow)} .reg-leg i.rl{background:var(--orangeb);color:var(--orange)} .reg-leg i.ra{background:var(--redb);color:var(--red)} .reg-leg i.rho{background:var(--purpleb);color:var(--purple)} .reg-leg i.ro{background:var(--line);color:var(--muted)}
 .attx-bar{height:8px;background:var(--line);border-radius:5px;overflow:hidden}
 .attx-bar-fill{height:100%;border-radius:5px;transition:width .5s ease}
 .attx-empty{color:var(--muted);font-size:13px;text-align:center;padding:22px}

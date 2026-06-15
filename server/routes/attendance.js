@@ -427,6 +427,95 @@ router.get('/insights', requireLogin, async (req, res) => {
   }
 });
 
+// Build a monthly register matrix (one row per employee, one cell per day) —
+// the "muster roll" / Excel-style view of a whole month.
+async function buildRegister(month, employees) {
+  const [y, mo] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, mo, 0).getDate();
+  const todayISO = todayStr();
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-${pad(daysInMonth)}`;
+  const activeIds = new Set(employees.map((e) => e.id));
+
+  const att = await db.prepare('SELECT employee_id, date, status, check_in, check_out, work_hours, wfh, late_minutes FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const leaves = await db.prepare("SELECT employee_id, from_date, to_date FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(monthEnd, monthStart);
+  const holidays = await db.prepare('SELECT date, name FROM holidays WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const holidayByDate = {}; for (const h of holidays) holidayByDate[h.date] = h.name;
+
+  const attByKey = {}; const dayHasRecord = {};
+  for (const a of att) {
+    if (!activeIds.has(a.employee_id)) continue;
+    attByKey[a.employee_id + '|' + a.date] = a;
+    dayHasRecord[a.date] = true;
+  }
+  const onLeave = (empId, date) => leaves.some((l) => l.employee_id === empId && date >= l.from_date && date <= l.to_date);
+
+  // Working days come from settings (default Mon–Fri); the rest are weekly-offs.
+  const s = getSettings();
+  const workingDow = new Set(Array.isArray(s.workingDays) && s.workingDays.length ? s.workingDays.map(Number) : [1, 2, 3, 4, 5]);
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const days = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = `${month}-${pad(d)}`;
+    const dow = new Date(y, mo - 1, d).getDay();
+    const holidayName = holidayByDate[date] || null;
+    const isWeekend = !workingDow.has(dow);
+    let type;
+    if (date > todayISO) type = 'future';
+    else if (holidayName) type = 'holiday';
+    else if (isWeekend) type = 'weekend';
+    else if (!dayHasRecord[date] && !leaves.some((l) => date >= l.from_date && date <= l.to_date)) type = 'off'; // working day but no data captured at all
+    else type = 'working';
+    days.push({ day: d, date, dow, dowName: dows[dow], type, holiday: holidayName, weekend: isWeekend });
+  }
+
+  const rows = employees.map((e) => {
+    const cells = {};
+    const t = { present: 0, wfh: 0, half: 0, leave: 0, absent: 0, holiday: 0, weekoff: 0 };
+    for (const day of days) {
+      const a = attByKey[e.id + '|' + day.date];
+      let st = '';
+      if (day.type === 'future') st = '';
+      else if (a && a.status === 'half') { st = 'half'; t.half++; }
+      else if (a && a.status === 'leave') { st = 'leave'; t.leave++; }
+      else if (a && (a.status === 'present' || a.check_in)) { st = a.wfh ? 'wfh' : 'present'; a.wfh ? t.wfh++ : t.present++; }
+      else if (onLeave(e.id, day.date)) { st = 'leave'; t.leave++; }
+      else if (day.type === 'holiday') { st = 'holiday'; t.holiday++; }
+      else if (day.type === 'weekend') { st = 'weekoff'; t.weekoff++; }
+      else if (day.type === 'off') { st = 'off'; }
+      else if (a && a.status === 'absent') { st = 'absent'; t.absent++; }
+      else { st = 'absent'; t.absent++; }
+      cells[day.day] = a
+        ? { st, in: a.check_in || null, out: a.check_out || null, hrs: a.work_hours != null ? a.work_hours : null, late: a.late_minutes || 0 }
+        : { st };
+    }
+    return { id: e.id, name: e.name, emp_code: e.emp_code || '', department: e.department || '', cells, totals: t };
+  });
+
+  return { month, daysInMonth, days, rows };
+}
+
+// GET /attendance/register?month=YYYY-MM — monthly grid (HR/Super = all; Manager = team).
+router.get('/register', requireLogin, async (req, res) => {
+  try {
+    const role = req.session.user.role;
+    const viewAll = can(role, 'attendance:viewAll');
+    const viewTeam = can(role, 'attendance:viewTeam');
+    if (!viewAll && !viewTeam) return res.status(403).json({ error: 'No access.' });
+    const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : todayStr().slice(0, 7);
+    let employees;
+    if (viewAll) employees = await db.prepare("SELECT id, name, emp_code, department FROM employees WHERE status='active' ORDER BY name").all();
+    else {
+      const ids = await teamEmployeeIds(req);
+      employees = ids.length ? await db.prepare(`SELECT id, name, emp_code, department FROM employees WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY name`).all(...ids) : [];
+    }
+    res.json(await buildRegister(month, employees));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Create or edit an attendance record (HR/Super; Manager for own team).
 // Accepts optional check_in / check_out as "HH:MM".
 router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
