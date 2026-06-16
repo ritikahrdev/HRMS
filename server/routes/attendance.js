@@ -553,12 +553,20 @@ router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
     // Atomic read-modify-write (node:sqlite has no db.transaction(); use BEGIN/COMMIT).
     await db.withTransaction(async (tx) => {
       const existing = await tx.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(employee_id, date);
-      const ci = provCi != null ? provCi : (existing ? existing.check_in : null);
-      const co = provCo != null ? provCo : (existing ? existing.check_out : null);
-      let hours;
-      if (existing && provCi == null && provCo == null) hours = existing.work_hours; // status-only edit: keep hours untouched
-      else if (ci && co) { const h = (new Date(co) - new Date(ci)) / 36e5; hours = h > 0 ? +h.toFixed(2) : 0; }
-      else hours = existing ? existing.work_hours : 0;
+      // Present/WFH/half carry a check-in time; leave/absent/holiday don't, so
+      // switching TO one of those clears the time, while switching between
+      // attended statuses (e.g. Present <-> WFH) preserves it.
+      const attended = finalStatus === 'present' || finalStatus === 'half';
+      let ci, co, hours;
+      if (!attended) {
+        ci = null; co = null; hours = 0;
+      } else {
+        ci = provCi != null ? provCi : (existing ? existing.check_in : null);
+        co = provCo != null ? provCo : (existing ? existing.check_out : null);
+        if (existing && provCi == null && provCo == null) hours = existing.work_hours; // status-only edit: keep hours untouched
+        else if (ci && co) { const h = (new Date(co) - new Date(ci)) / 36e5; hours = h > 0 ? +h.toFixed(2) : 0; }
+        else hours = existing ? existing.work_hours : 0;
+      }
       if (existing) {
         await tx.prepare('UPDATE attendance SET status = ?, wfh = ?, check_in = ?, check_out = ?, work_hours = ?, source = COALESCE(source, ?) WHERE id = ?')
           .run(finalStatus, wfh, ci, co, hours, 'manual', existing.id);
