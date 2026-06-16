@@ -5,6 +5,8 @@ const { notifyEveryone, notifyUsers } = require('../services/notify');
 const { sendMail } = require('../services/email');
 const { postToSlack } = require('../services/slackSync');
 const { escapeHtml } = require('../services/escape');
+const { getSettings } = require('../services/settings');
+const config = require('../config');
 
 const router = express.Router();
 
@@ -96,10 +98,31 @@ router.post('/', requireLogin, async (req, res) => {
     // Optional email broadcast (only sends if email is enabled in config).
     const emails = (await db.prepare("SELECT email FROM employees WHERE status='active' AND email IS NOT NULL AND email != ''").all()).map((e) => e.email);
     if (emails.length) {
+      const co = getSettings().companyName || 'our team';
+      const link = `${(config.publicUrl || '').replace(/\/$/, '')}/#/recognition`;
+      const badgeEmoji = badge || '👏';
       sendMail({
         to: emails.join(','),
-        subject: `${badge || '👏'} Shoutout for ${recName}`,
-        html: `<p><b>${safeGiver}</b> gave a shoutout to <b>${safeRec}</b>:</p><blockquote>${safeMsg}</blockquote><p>Open the HR portal → Recognition to cheer it!</p>`,
+        subject: `${badgeEmoji} ${recName} just got a shoutout!`,
+        text: `${giver} gave a shoutout to ${recName}: "${message}". Cheer it on the Recognition wall — ${link}`,
+        html: `
+<div style="background:#f4f5fb;padding:28px 14px;font-family:'Inter',Segoe UI,Arial,sans-serif">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 34px rgba(16,24,40,.10)">
+    <div style="background:linear-gradient(135deg,#6366f1,#7c3aed);padding:30px 28px;text-align:center;color:#ffffff">
+      <div style="font-size:46px;line-height:1">${badgeEmoji}</div>
+      <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;opacity:.92;margin-top:10px;font-weight:700">Shoutout</div>
+      <div style="font-size:23px;font-weight:800;margin-top:4px">${safeRec} 🎉</div>
+    </div>
+    <div style="padding:26px 28px">
+      <p style="margin:0 0 16px;color:#475467;font-size:14.5px"><b style="color:#1e293b">${safeGiver}</b> just recognised <b style="color:#1e293b">${safeRec}</b> for their great work:</p>
+      <div style="background:#f7f7fb;border-left:4px solid #7c3aed;border-radius:10px;padding:16px 18px;margin:0 0 22px;color:#1e293b;font-size:15.5px;font-weight:500;font-style:italic">&ldquo;${safeMsg}&rdquo;</div>
+      <div style="text-align:center;margin:6px 0 2px">
+        <a href="${link}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#ffffff;text-decoration:none;font-weight:700;font-size:14.5px;padding:12px 26px;border-radius:10px;display:inline-block">👏 Cheer it on the wall →</a>
+      </div>
+    </div>
+    <div style="padding:14px 28px;border-top:1px solid #eef0f5;text-align:center;color:#98a2b3;font-size:11.5px">Recognition wall · ${escapeHtml(co)}</div>
+  </div>
+</div>`,
       }).catch(() => {});
     }
 
