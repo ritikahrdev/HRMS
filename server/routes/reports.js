@@ -16,13 +16,28 @@ router.get('/overview', requirePerm('reports:view'), async (req, res) => {
       "SELECT COUNT(*) c FROM attendance WHERE date = ? AND (check_in IS NOT NULL OR status IN ('present','half'))"
     ).get(today)).c;
 
-    // Detail: who is on approved leave today — with dates + reason.
-    const onLeaveToday = await db.prepare(
-      `SELECT e.name, e.department, lr.type, lr.from_date, lr.to_date, lr.days, lr.half_day, lr.reason
+    // Who is on leave today — from BOTH sources so the dashboard matches the
+    // attendance board: (1) approved leave requests, and (2) attendance marked
+    // 'leave' (e.g. via the Slack bot or a manual edit). Deduped by employee.
+    const formalLeave = await db.prepare(
+      `SELECT e.id AS emp_id, e.name, e.department, lr.type, lr.from_date, lr.to_date, lr.days, lr.half_day, lr.reason
        FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id
        WHERE lr.status='approved' AND lr.from_date <= ? AND lr.to_date >= ?
        ORDER BY e.name`
     ).all(today, today);
+    const attLeave = await db.prepare(
+      `SELECT e.id AS emp_id, e.name, e.department, a.reason
+       FROM attendance a JOIN employees e ON e.id = a.employee_id
+       WHERE a.date = ? AND a.status = 'leave' AND e.status = 'active' ORDER BY e.name`
+    ).all(today);
+    const seenLeave = new Set(formalLeave.map((r) => r.emp_id));
+    const onLeaveToday = [
+      ...formalLeave,
+      ...attLeave.filter((r) => !seenLeave.has(r.emp_id)).map((r) => ({
+        emp_id: r.emp_id, name: r.name, department: r.department, type: 'Leave',
+        from_date: today, to_date: today, days: 1, half_day: 0, reason: r.reason || '',
+      })),
+    ];
 
     // Detail: pending leave requests — with dates + reason (for quick triage).
     const pendingLeaveDetails = await db.prepare(
@@ -41,7 +56,7 @@ router.get('/overview', requirePerm('reports:view'), async (req, res) => {
     res.json({
       totalEmployees,
       presentToday,
-      absentToday: Math.max(0, totalEmployees - presentToday),
+      absentToday: Math.max(0, totalEmployees - presentToday - onLeaveToday.length),
       pendingLeaves,
       pendingReimb,
       onLeaveToday,
