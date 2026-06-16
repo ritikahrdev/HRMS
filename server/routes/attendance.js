@@ -459,11 +459,13 @@ async function buildRegister(month, employees) {
   for (let d = 1; d <= daysInMonth; d++) {
     const date = `${month}-${pad(d)}`;
     const dow = new Date(y, mo - 1, d).getDay();
-    const holidayName = holidayByDate[date] || null;
+    const isSunday = dow === 0;
     const isWeekend = !workingDow.has(dow);
     let type;
+    let holidayName = holidayByDate[date] || null;
     if (date > todayISO) type = 'future';
     else if (holidayName) type = 'holiday';
+    else if (isSunday) { type = 'holiday'; holidayName = 'Sunday'; } // every Sunday is a weekly holiday
     else if (isWeekend) type = 'weekend';
     else if (!dayHasRecord[date] && !leaves.some((l) => date >= l.from_date && date <= l.to_date)) type = 'off'; // working day but no data captured at all
     else type = 'working';
