@@ -3227,9 +3227,13 @@ const AdminViews = {
         <div id="teamPerf" class="muted">Pick a team member.</div>` : ''}`;
 
     const bindGoals = (rootSel, list, reloadFn) => {
-      document.querySelectorAll(rootSel + ' [data-prog]').forEach((b) => b.onclick = async () => {
-        const val = prompt('Progress % (0-100):'); if (val == null) return;
-        try { await api.put('/goals/' + b.dataset.prog, { progress: Number(val) }); reloadFn(); } catch (e) { UI.toast(e.message, 'error'); }
+      document.querySelectorAll(rootSel + ' input[type="range"][data-prog]').forEach((s) => {
+        const lbl = document.querySelector(rootSel + ' [data-progval="' + s.dataset.prog + '"]');
+        s.oninput = () => { if (lbl) lbl.textContent = s.value + '%'; };
+        s.onchange = async () => {
+          try { await api.put('/goals/' + s.dataset.prog, { progress: Number(s.value) }); UI.toast('Progress saved — ' + s.value + '%', 'success'); reloadFn(); }
+          catch (e) { UI.toast(e.message, 'error'); }
+        };
       });
       document.querySelectorAll(rootSel + ' [data-gdone]').forEach((b) => b.onclick = async () => {
         try { await api.put('/goals/' + b.dataset.gdone, { status: 'done', progress: 100 }); reloadFn(); } catch (e) { UI.toast(e.message, 'error'); }
@@ -3272,9 +3276,13 @@ const AdminViews = {
     return UI.table([
       { key: 'title', label: 'Goal' },
       { key: 'target_date', label: 'Target', render: (r) => r.target_date ? UI.date(r.target_date) : '-' },
-      { key: 'progress', label: 'Progress', render: (r) => `${r.progress}%` },
+      { key: 'progress', label: 'Progress', render: (r) => `
+        <div style="display:flex;align-items:center;gap:9px;min-width:180px">
+          <input type="range" min="0" max="100" step="5" value="${r.progress || 0}" data-prog="${r.id}" ${r.status === 'done' ? 'disabled' : ''} title="Drag to update progress (0–100%)" style="flex:1;accent-color:#4f46e5;cursor:pointer" />
+          <span data-progval="${r.id}" style="font-weight:800;min-width:42px;text-align:right;color:#4f46e5">${r.progress || 0}%</span>
+        </div>` },
       { key: 'status', label: 'Status', render: (r) => UI.tag(r.status === 'done' ? 'approved' : 'pending') + ' ' + r.status },
-      { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-prog="${r.id}">Progress</button> <button class="btn sm green" data-gdone="${r.id}">Done</button> <button class="btn sm red" data-gdel="${r.id}">✕</button>` },
+      { key: 'act', label: '', render: (r) => `<button class="btn sm green" data-gdone="${r.id}">Done</button> <button class="btn sm red" data-gdel="${r.id}">✕</button>` },
     ], goals, 'No goals yet.');
   },
   goalForm(employeeId, reload) {
@@ -3539,6 +3547,7 @@ const AdminViews = {
     { key: 'training', icon: '🎓', name: 'Training & Development', desc: 'Courses, certifications, skill development, training' },
     { key: 'grievance', icon: '⚠️', name: 'Grievances & Complaints', desc: 'Complaints, disputes, conflicts, resolutions' },
     { key: 'general', icon: '❓', name: 'General HR', desc: 'Other HR-related queries and requests' },
+    { key: 'others', icon: '🗂️', name: 'Others', desc: 'Anything else not covered by the categories above' },
   ],
 
   async helpdesk(c) {
@@ -3921,10 +3930,10 @@ const AdminViews = {
         <p class="muted" style="font-size:13px;margin-top:0">Create a candidate record and get a private link to send them — with your intent-of-hiring or offer email. They fill their details and upload documents <b>before Day 1, with no company login</b>. Everything lands straight in the HRMS.</p>
         <div class="form-grid">
           <div class="field"><label>Full Name *</label><input id="pbName" /></div>
-          <div class="field"><label>Personal Email</label><input id="pbEmail" type="email" /></div>
+          <div class="field"><label>Personal Email *</label><input id="pbEmail" type="email" /></div>
           <div class="field"><label>Department</label><input id="pbDept" /></div>
-          <div class="field"><label>Designation</label><input id="pbDesig" /></div>
-          <div class="field"><label>Date of Joining</label><input id="pbDoj" type="date" /></div>
+          <div class="field"><label>Designation *</label><input id="pbDesig" /></div>
+          <div class="field"><label>Date of Joining *</label><input id="pbDoj" type="date" /></div>
         </div>
         <div id="pbResult" style="margin-top:12px"></div>`,
       footHtml: `<button class="btn secondary" data-close-btn>Close</button><button class="btn" id="pbCreate">Create & get link</button>`,
@@ -3934,14 +3943,17 @@ const AdminViews = {
     m.root.querySelector('[data-close]').onclick = close;
     m.root.querySelector('#pbCreate').onclick = async () => {
       const name = m.root.querySelector('#pbName').value.trim();
+      const email = m.root.querySelector('#pbEmail').value.trim();
+      const designation = m.root.querySelector('#pbDesig').value.trim();
+      const date_of_joining = m.root.querySelector('#pbDoj').value;
       if (!name) return UI.toast('Candidate name is required.', 'error');
+      if (!email) return UI.toast('Personal email is required — the onboarding link is sent there.', 'error');
+      if (!designation) return UI.toast('Designation is required.', 'error');
+      if (!date_of_joining) return UI.toast('Date of joining is required.', 'error');
       try {
         const r = await api.post('/onboarding/preboard', {
-          name,
-          personal_email: m.root.querySelector('#pbEmail').value.trim(),
+          name, personal_email: email, designation, date_of_joining,
           department: m.root.querySelector('#pbDept').value.trim(),
-          designation: m.root.querySelector('#pbDesig').value.trim(),
-          date_of_joining: m.root.querySelector('#pbDoj').value,
         });
         const when = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '';
         const mailLine = r.emailed
@@ -4636,26 +4648,40 @@ const AdminViews = {
   async offboarding(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { exits, summary } = await api.get('/offboarding');
-    const stat = (label, val, cls) => `<div class="card stat"><div class="label">${label}</div><div class="value ${cls || ''}">${val}</div></div>`;
+    const stat = (label, val, cls, ico) => `<div class="card stat"><div class="stat-ico">${ico || ''}</div><div class="label">${label}</div><div class="value ${cls || ''}">${val}</div></div>`;
     c.innerHTML = `
       <div class="cards">
-        ${stat('Resignations Submitted', summary.initiated, 'amber')}
-        ${stat('In Process', summary.in_progress, 'amber')}
-        ${stat('Completed', summary.completed, 'green')}
-        ${stat('Cancelled', summary.cancelled || 0)}
+        ${stat('Resignations Submitted', summary.initiated, 'amber', '📝')}
+        ${stat('In Process', summary.in_progress, 'amber', '⏳')}
+        ${stat('Completed', summary.completed, 'green', '✅')}
+        ${stat('Cancelled', summary.cancelled || 0, '', '🚫')}
       </div>
-      <div class="toolbar mt"><div class="section-title" style="margin:0">Employee Exits</div><div class="spacer"></div><button class="btn" id="startExit">+ Start Offboarding</button></div>
+      <div class="toolbar mt"><div class="section-title" style="margin:0">🚪 Employee Exits</div><div class="spacer"></div><button class="btn" id="startExit">+ Start Offboarding</button></div>
       <div id="exitList"></div>`;
 
-    const statusTag = (s) => UI.tag(s === 'initiated' ? 'submitted' : s === 'in_progress' ? 'in process' : s);
-    document.getElementById('exitList').innerHTML = UI.table([
-      { key: 'employee_name', label: 'Employee', render: (r) => `<b>${UI.esc(r.employee_name)}</b><br/><span class="muted" style="font-size:12px">${UI.esc(r.emp_code || '')} · ${UI.esc(r.department || '-')}</span>` },
-      { key: 'reason', label: 'Reason', render: (r) => UI.esc((r.reason || '').replace(/_/g, ' ')) },
-      { key: 'last_working_day', label: 'Last Working Day', render: (r) => UI.date(r.last_working_day) },
-      { key: 'progress', label: 'Clearance', render: (r) => `${r.tasks_done}/${r.tasks_total}` },
-      { key: 'status', label: 'Status', render: (r) => statusTag(r.status) },
-      { key: 'act', label: '', render: (r) => `<button class="btn sm secondary" data-exit="${r.id}">Open</button>` },
-    ], exits, 'No exits yet. Click "Start Offboarding" to begin one.');
+    const statusBadge = (s) => {
+      const map = { initiated: ['#b45309', '#fef3c7', 'Submitted'], in_progress: ['#1d4ed8', '#dbeafe', 'In process'], completed: ['#15803d', '#dcfce7', 'Completed'], cancelled: ['#475569', '#f1f5f9', 'Cancelled'] };
+      const [col, bg, lbl] = map[s] || ['#475569', '#f1f5f9', s];
+      return `<span style="background:${bg};color:${col};font-weight:700;font-size:11px;padding:3px 11px;border-radius:20px;white-space:nowrap">${lbl}</span>`;
+    };
+    const inits = (n) => (String(n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?').toUpperCase();
+    document.getElementById('exitList').innerHTML = exits.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px">${exits.map((r) => {
+      const pct = r.tasks_total ? Math.round((r.tasks_done / r.tasks_total) * 100) : 0;
+      return `<div class="card" style="padding:16px 18px;border-radius:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#64748b,#94a3b8);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none">${inits(r.employee_name)}</div>
+          <div style="flex:1;min-width:0"><div style="font-weight:700">${UI.esc(r.employee_name)}</div><div class="muted" style="font-size:12px">${UI.esc(r.emp_code || '')}${r.department ? ' · ' + UI.esc(r.department) : ''}</div></div>
+          ${statusBadge(r.status)}
+        </div>
+        <div style="display:flex;gap:22px;margin:13px 0 11px">
+          <div><div class="muted" style="font-size:11px">Reason</div><b style="font-size:13px;text-transform:capitalize">${UI.esc((r.reason || '-').replace(/_/g, ' '))}</b></div>
+          <div><div class="muted" style="font-size:11px">Last working day</div><b style="font-size:13px">${r.last_working_day ? UI.date(r.last_working_day) : '-'}</b></div>
+        </div>
+        <div class="muted" style="font-size:11px;display:flex;justify-content:space-between"><span>Clearance progress</span><span>${r.tasks_done}/${r.tasks_total} tasks</span></div>
+        <div style="height:8px;background:#eef1f6;border-radius:5px;overflow:hidden;margin:4px 0 13px"><div style="height:100%;width:${pct}%;background:${pct === 100 ? '#16a34a' : '#4f46e5'};border-radius:5px;transition:width .4s"></div></div>
+        <button class="btn sm" style="width:100%" data-exit="${r.id}">Open exit →</button>
+      </div>`;
+    }).join('')}</div>` : '<div class="card muted" style="text-align:center;padding:34px">No exits yet. Click <b>"Start Offboarding"</b> to begin one. 🚪</div>';
 
     document.querySelectorAll('[data-exit]').forEach((b) => b.onclick = () => this.exitDetail(b.dataset.exit, c));
     document.getElementById('startExit').onclick = async () => {

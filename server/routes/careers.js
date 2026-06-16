@@ -67,7 +67,8 @@ router.post('/apply/:jobId', applyLimiter, documentUpload.single('resume'), asyn
     const dup = await db.prepare('SELECT id FROM applicants WHERE job_id = ? AND lower(email) = lower(?)').get(job.id, email);
     if (dup) return res.status(400).json({ error: "You've already applied for this role — we have your application! 🤝" });
 
-    const resumeKey = req.file ? await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname) : null;
+    if (!req.file) return res.status(400).json({ error: 'Please attach your resume to apply.' });
+    const resumeKey = await saveFile(req.file.buffer, req.file.mimetype, req.file.originalname);
     const app = { name, email, phone, skills, experience_years };
     const score = scoreApplicant(app, job);
     const r = await db.prepare(

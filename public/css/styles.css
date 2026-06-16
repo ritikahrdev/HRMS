@@ -323,3 +323,13 @@ tbody tr:hover td.sticky-col { background: var(--primary-soft); }
   .nav-item { padding: 8px 9px; font-size: 12px; gap: 8px; }
   .topbar .userbox .meta { display: none; }
 }
+
+/* ---- UI polish (additive, demo-ready) ---- */
+.card { transition: box-shadow .18s ease, transform .18s ease; }
+.card.stat:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(16,24,40,.10); }
+.btn { transition: filter .15s ease, transform .06s ease, box-shadow .15s ease; }
+.btn:hover { filter: brightness(1.04); }
+.btn:active { transform: translateY(1px); }
+input[type="range"] { accent-color: #4f46e5; height: 6px; }
+.section-title { letter-spacing: -.01em; }
+table tbody tr { transition: background .12s ease; }

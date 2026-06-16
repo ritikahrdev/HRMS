@@ -53,7 +53,7 @@
           '<div><label>Phone</label><input name="phone" maxlength="20" /></div>' +
           '<div><label>Years of Experience</label><input name="experience_years" type="number" min="0" max="50" step="0.5" /></div>' +
           '<div class="full"><label>Your Key Skills (comma separated)</label><input name="skills" maxlength="500" placeholder="e.g. React, Node.js, SQL" /></div>' +
-          '<div class="full"><label>Resume (PDF/DOC)</label><input name="resume" type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" /></div>' +
+          '<div class="full"><label>Resume (PDF/DOC) *</label><input name="resume" type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" required /></div>' +
           '<div class="full"><label>Why you? (optional)</label><textarea name="note" rows="3" maxlength="1000" placeholder="A line or two about why you\'d be great for this role"></textarea></div>' +
         '</div>' +
         '<button class="btn" type="submit">Submit Application 🚀</button>' +
