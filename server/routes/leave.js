@@ -19,8 +19,10 @@ function isRealDate(s) {
 }
 
 function daysBetween(from, to) {
-  const a = new Date(from + 'T00:00:00');
-  const b = new Date(to + 'T00:00:00');
+  // Parse as UTC so the day count is pure calendar arithmetic — never off-by-one
+  // across a daylight-saving boundary (where a local day is 23h/25h).
+  const a = new Date(from + 'T00:00:00Z');
+  const b = new Date(to + 'T00:00:00Z');
   return Math.floor((b - a) / 864e5) + 1;
 }
 

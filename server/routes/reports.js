@@ -13,7 +13,7 @@ router.get('/overview', requirePerm('reports:view'), async (req, res) => {
 
     const today = new Date().toISOString().slice(0, 10);
     const presentToday = (await db.prepare(
-      "SELECT COUNT(*) c FROM attendance WHERE date = ? AND (check_in IS NOT NULL OR status IN ('present','half'))"
+      "SELECT COUNT(*) c FROM attendance a JOIN employees e ON e.id = a.employee_id AND e.status='active' WHERE a.date = ? AND (a.check_in IS NOT NULL OR a.status IN ('present','half'))"
     ).get(today)).c;
 
     // Who is on leave today — from BOTH sources so the dashboard matches the

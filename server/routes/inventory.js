@@ -46,17 +46,21 @@ router.get('/stats', requirePerm('settings:manage'), async (req, res) => {
 });
 
 // POST create new item (admin only)
-router.post('/', requirePerm('settings:manage'), (req, res) => {
-  const { name, category, quantity, condition, serial_number, purchase_date, purchase_price, notes } = req.body || {};
-  if (!name) return res.status(400).json({ error: 'Name is required.' });
-  if (!category || !VALID_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Invalid category.' });
-  const qty = parseInt(quantity) || 1;
-  const cond = VALID_CONDITIONS.includes(condition) ? condition : 'good';
-  const r = db.prepare(`
-    INSERT INTO inventory (name, category, quantity, available, condition, serial_number, purchase_date, purchase_price, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, category, qty, qty, cond, serial_number || null, purchase_date || null, parseFloat(purchase_price) || 0, notes || null);
-  res.json({ id: r.lastInsertRowid });
+router.post('/', requirePerm('settings:manage'), async (req, res) => {
+  try {
+    const { name, category, quantity, condition, serial_number, purchase_date, purchase_price, notes } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'Name is required.' });
+    if (!category || !VALID_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Invalid category.' });
+    const qty = parseInt(quantity) || 1;
+    const cond = VALID_CONDITIONS.includes(condition) ? condition : 'good';
+    const r = await db.prepare(`
+      INSERT INTO inventory (name, category, quantity, available, condition, serial_number, purchase_date, purchase_price, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, category, qty, qty, cond, serial_number || null, purchase_date || null, parseFloat(purchase_price) || 0, notes || null);
+    res.json({ id: r.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // PUT update item (admin only)

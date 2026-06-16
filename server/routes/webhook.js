@@ -138,14 +138,15 @@ router.post('/attendance', async (req, res) => {
   if (!statusRaw && !checkOutRaw && explicitHours == null) { console.warn('[webhook]   ✗ 400 missing status'); return res.status(400).json({ success: false, error: 'Provide a status (e.g. Present) or a check-out.' }); }
   if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
 
-  // 3) Resolve the attendance date from the provided time. A naive wall-clock is
-  // read in the company timezone (see parseTime) so stored instants are correct.
+  // 3) Resolve the attendance date from the provided time, in the COMPANY
+  // timezone — so a check-in just after IST-midnight (which is still the prior
+  // UTC date) lands on the correct local day, not the UTC day.
   const parsed = parseTime(time);
   if (isNaN(parsed.getTime())) {
     return res.status(400).json({ success: false, error: 'Invalid time format. Use ISO 8601, e.g. "2026-06-09T09:15:00Z".' });
   }
-  const dateMatch = time.match(/^(\d{4}-\d{2}-\d{2})/);
-  const date = dateMatch ? dateMatch[1] : parsed.toISOString().slice(0, 10);
+  const tz = (getSettings().timezone) || 'Asia/Kolkata';
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(parsed); // YYYY-MM-DD in company tz
 
   // 4) Find the employee (forgiving match: slack_id / email / code / name).
   const match = await resolveEmployee(body);

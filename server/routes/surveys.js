@@ -106,6 +106,13 @@ router.post('/:id/respond', requireLogin, async (req, res) => {
     if (!empId) return res.status(400).json({ error: 'Only employees can respond.' });
     const s = await db.prepare('SELECT * FROM surveys WHERE id = ? AND active = 1').get(req.params.id);
     if (!s) return res.status(404).json({ error: 'Survey not available.' });
+    // Enforce targeting server-side (don't trust the client's eligibility view):
+    // a department-/manager-targeted survey may only be answered by its audience.
+    if (s.target_department || s.target_manager_id) {
+      const emp = await db.prepare('SELECT department, manager_id FROM employees WHERE id = ?').get(empId);
+      if (s.target_department && (!emp || emp.department !== s.target_department)) return res.status(403).json({ error: 'This survey is not addressed to you.' });
+      if (s.target_manager_id && (!emp || emp.manager_id !== s.target_manager_id)) return res.status(403).json({ error: 'This survey is not addressed to you.' });
+    }
     const answers = (req.body && req.body.answers) || [];
     try {
       await db.prepare('INSERT INTO survey_responses (survey_id, employee_id, answers) VALUES (?, ?, ?)')

@@ -4,6 +4,7 @@ const { requireLogin, requirePerm, teamEmployeeIds, canActOnEmployee } = require
 const { can } = require('../services/permissions');
 const { getSettings, saveSettings } = require('../services/settings');
 const { sendMail } = require('../services/email');
+const { escapeHtml } = require('../services/escape');
 const { syncFromUrl, syncFromBuffer } = require('../services/attendanceSync');
 const { syncFromSlack, classifyMessage } = require('../services/slackSync');
 const { memoryUpload } = require('../services/upload');
@@ -698,14 +699,14 @@ router.post('/correction', requireLogin, async (req, res) => {
       to: approverEmails.join(','),
       subject: `${typeInfo.icon} Attendance Request: ${emp ? emp.name : ''} — ${date}`,
       html: `
-        <p><strong>${emp ? emp.name : 'An employee'}</strong> has raised an attendance request.</p>
+        <p><strong>${emp ? escapeHtml(emp.name) : 'An employee'}</strong> has raised an attendance request.</p>
         <div style="background:#f0f9ff;padding:14px;border-radius:8px;border-left:4px solid #0ea5e9;margin:12px 0">
           <p style="margin:0 0 6px"><strong>Type:</strong> ${typeInfo.icon} ${typeInfo.label}</p>
           <p style="margin:0 0 6px"><strong>Date:</strong> ${date}</p>
-          <p style="margin:0 0 6px"><strong>Requested Status:</strong> ${requested_status}</p>
-          ${requested_in ? `<p style="margin:0 0 6px"><strong>Clock In:</strong> ${requested_in}</p>` : ''}
-          ${requested_out ? `<p style="margin:0 0 6px"><strong>Clock Out:</strong> ${requested_out}</p>` : ''}
-          <p style="margin:0"><strong>Reason:</strong> ${reason}</p>
+          <p style="margin:0 0 6px"><strong>Requested Status:</strong> ${escapeHtml(requested_status)}</p>
+          ${requested_in ? `<p style="margin:0 0 6px"><strong>Clock In:</strong> ${escapeHtml(requested_in)}</p>` : ''}
+          ${requested_out ? `<p style="margin:0 0 6px"><strong>Clock Out:</strong> ${escapeHtml(requested_out)}</p>` : ''}
+          <p style="margin:0"><strong>Reason:</strong> ${escapeHtml(reason)}</p>
         </div>
         <p>Please review and approve or reject this request in the HR portal.</p>
       `
@@ -795,13 +796,13 @@ router.post('/corrections/:id/decision', requirePerm('attendance:correct'), asyn
       to: emp.email,
       subject: `${isApproved ? '✅' : '❌'} Attendance Request ${isApproved ? 'Approved' : 'Rejected'} — ${c.date}`,
       html: `
-        <p>Hi <strong>${emp.name}</strong>,</p>
+        <p>Hi <strong>${escapeHtml(emp.name)}</strong>,</p>
         <p>Your attendance request has been <strong>${decision}</strong>.</p>
         <div style="background:${isApproved ? '#f0fdf4' : '#fef2f2'};padding:14px;border-radius:8px;border-left:4px solid ${isApproved ? '#22c55e' : '#ef4444'};margin:12px 0">
           <p style="margin:0 0 6px"><strong>Type:</strong> ${typeInfo.icon} ${typeInfo.label}</p>
           <p style="margin:0 0 6px"><strong>Date:</strong> ${c.date}</p>
           <p style="margin:0 0 6px"><strong>Status:</strong> ${isApproved ? '✅ Approved — attendance updated' : '❌ Rejected'}</p>
-          ${comment ? `<p style="margin:0"><strong>Comment:</strong> ${comment}</p>` : ''}
+          ${comment ? `<p style="margin:0"><strong>Comment:</strong> ${escapeHtml(comment)}</p>` : ''}
         </div>
         ${isApproved ? '<p>Your attendance record for this date has been updated accordingly.</p>' : '<p>If you have questions, please speak to your manager or HR.</p>'}
       `,

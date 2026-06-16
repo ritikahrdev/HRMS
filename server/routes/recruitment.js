@@ -208,16 +208,16 @@ router.get('/applicants/:id/resume', P, async (req, res) => {
   }
 });
 
-// Auto-screen every un-decided applicant against the job requirement and route
+// Auto-screen every UN-screened applicant against the job requirement and route
 // each one automatically: strong fit -> shortlisted, weak -> rejected, borderline
 // -> maybe. Uses the AI verdict (falls back to the keyword score when AI is off).
-// Only touches 'applied' and 'maybe' — never overrides a human decision
-// (shortlisted/interview/offer/hired/rejected stay put).
+// Only touches 'applied' — anything already triaged (shortlisted/maybe/interview/
+// offer/hired/rejected) is left exactly as a human/prior screen left it.
 async function autoScreenJob(req, res) {
   try {
     const job = await db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
-    const applicants = await db.prepare("SELECT * FROM applicants WHERE job_id = ? AND stage IN ('applied','maybe')").all(job.id);
+    const applicants = await db.prepare("SELECT * FROM applicants WHERE job_id = ? AND stage = 'applied'").all(job.id);
     const aiConfigured = ai.isConfigured();
     const counts = { shortlisted: 0, maybe: 0, rejected: 0 };
     const upd = db.prepare('UPDATE applicants SET score = ?, ai_score = ?, ai_recommendation = ?, ai_summary = ?, stage = ? WHERE id = ?');
@@ -252,8 +252,8 @@ router.post('/applicants/:id/interviews', P, async (req, res) => {
     const r = await db.prepare(
       'INSERT INTO interviews (applicant_id, round, scheduled_at, interviewer, interviewer_email, mode) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(a.id, b.round || 'Interview', b.scheduled_at, b.interviewer || '', b.interviewer_email || '', b.mode || 'Online');
-    // Move applicant into the interview stage.
-    if (['applied', 'shortlisted'].includes(a.stage)) await db.prepare("UPDATE applicants SET stage='interview' WHERE id=?").run(a.id);
+    // Move applicant into the interview stage (from any pre-interview stage).
+    if (['applied', 'shortlisted', 'maybe'].includes(a.stage)) await db.prepare("UPDATE applicants SET stage='interview' WHERE id=?").run(a.id);
     res.json({ id: r.lastInsertRowid });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -266,6 +266,13 @@ router.post('/applicants/:id/hire', P, async (req, res) => {
   if (!a) return res.status(404).json({ error: 'Not found' });
   const job = await db.prepare('SELECT * FROM jobs WHERE id = ?').get(a.job_id);
   try {
+    // Guard: don't hire onto an email that already has a login — createEmployee
+    // would reuse that user row and reset its role to EMPLOYEE (downgrading an
+    // existing employee/admin). Make the caller resolve the clash first.
+    if (a.email) {
+      const clash = await db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(a.email);
+      if (clash) return res.status(400).json({ error: 'A user account already exists with this email — hiring would overwrite that login. Use a different email for the candidate, or remove the existing account first.' });
+    }
     const { employee, tempPassword } = await createEmployee({
       name: a.name, email: a.email, phone: a.phone,
       designation: job ? job.title : '', department: job ? job.department : '',
