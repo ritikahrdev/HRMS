@@ -543,17 +543,22 @@ router.post('/mark', requirePerm('attendance:correct'), async (req, res) => {
     const finalStatus = isWfh ? 'present' : status;
     const wfh = isWfh ? 1 : 0;
 
-    const ci = req.body.check_in ? `${date}T${req.body.check_in}:00` : null;
-    const co = req.body.check_out ? `${date}T${req.body.check_out}:00` : null;
-    let hours = 0;
-    if (ci && co) {
-      hours = +(((new Date(co) - new Date(ci)) / 36e5) || 0).toFixed(2);
-      if (hours < 0) return res.status(400).json({ error: 'Check-out cannot be before check-in.' });
-    }
+    // Times the caller EXPLICITLY provided. null = "not supplied" → we preserve
+    // whatever is already on the record. A status-only edit (e.g. Present → WFH)
+    // must never wipe the existing check-in time / hours.
+    const provCi = req.body.check_in ? `${date}T${req.body.check_in}:00` : null;
+    const provCo = req.body.check_out ? `${date}T${req.body.check_out}:00` : null;
+    if (provCi && provCo && new Date(provCo) < new Date(provCi)) return res.status(400).json({ error: 'Check-out cannot be before check-in.' });
 
     // Atomic read-modify-write (node:sqlite has no db.transaction(); use BEGIN/COMMIT).
     await db.withTransaction(async (tx) => {
       const existing = await tx.prepare('SELECT * FROM attendance WHERE employee_id = ? AND date = ?').get(employee_id, date);
+      const ci = provCi != null ? provCi : (existing ? existing.check_in : null);
+      const co = provCo != null ? provCo : (existing ? existing.check_out : null);
+      let hours;
+      if (existing && provCi == null && provCo == null) hours = existing.work_hours; // status-only edit: keep hours untouched
+      else if (ci && co) { const h = (new Date(co) - new Date(ci)) / 36e5; hours = h > 0 ? +h.toFixed(2) : 0; }
+      else hours = existing ? existing.work_hours : 0;
       if (existing) {
         await tx.prepare('UPDATE attendance SET status = ?, wfh = ?, check_in = ?, check_out = ?, work_hours = ?, source = COALESCE(source, ?) WHERE id = ?')
           .run(finalStatus, wfh, ci, co, hours, 'manual', existing.id);
