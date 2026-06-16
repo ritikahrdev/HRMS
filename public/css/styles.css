@@ -392,3 +392,13 @@ tbody tr:hover { background: #f5f7ff; }
 
 /* Avatars get a soft glow */
 .avatar { box-shadow: 0 2px 8px rgba(99,102,241,.3); }
+
+/* Bold, unmistakable KPI cards — colored top accent per metric + tint */
+.card.stat { border-top: 3px solid #6366f1; padding-top: 17px; background: linear-gradient(180deg, #ffffff, #fbfcff); }
+.card.stat:has(.value.green) { border-top-color: #16a34a; }
+.card.stat:has(.value.red) { border-top-color: #dc2626; }
+.card.stat:has(.value.amber) { border-top-color: #d97706; }
+.stat .stat-ico { width: 40px; height: 40px; font-size: 20px; }
+/* Stronger, springier card hover everywhere */
+.card { will-change: transform; }
+.cards .card:hover { transform: translateY(-3px); box-shadow: 0 16px 38px rgba(16,24,40,.13); }
