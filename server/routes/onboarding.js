@@ -41,7 +41,7 @@ async function issuePreboardToken(employeeId) {
 // the onboarding coordinator (Settings → onboardingCcEmail, defaults to Abhinav).
 // Sends to the candidate's personal email (they have no company login yet).
 async function sendOnboardingEmail(req, employeeId, token) {
-  const emp = await db.prepare('SELECT name, email, personal_email FROM employees WHERE id = ?').get(employeeId);
+  const emp = await db.prepare('SELECT name, email, personal_email, designation, date_of_joining FROM employees WHERE id = ?').get(employeeId);
   if (!emp) return { emailed: false, emailedTo: null, cc: null };
   const to = (emp.personal_email || emp.email || '').trim();
   const s = getSettings();
@@ -49,16 +49,34 @@ async function sendOnboardingEmail(req, employeeId, token) {
   if (!to) return { emailed: false, emailedTo: null, cc };
   const link = preboardUrl(req, token);
   const co = s.companyName || 'the company';
+  const designation = emp.designation || 'a valued member of our team';
+  // Pretty joining date (e.g. "1 July 2026"), only if one is set.
+  let joiningDate = '';
+  if (emp.date_of_joining) {
+    const d = new Date(emp.date_of_joining + 'T00:00:00Z');
+    if (!isNaN(d.getTime())) joiningDate = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d);
+  }
+  // Signature = the HR person sending it (name + their designation).
+  const u = req.session.user || {};
+  const senderName = u.name || 'HR Team';
+  let senderTitle = 'HR';
+  if (u.employeeId) {
+    const se = await db.prepare('SELECT designation FROM employees WHERE id = ?').get(u.employeeId);
+    if (se && se.designation) senderTitle = se.designation;
+  }
   const r = await sendMail({
     to,
     cc: cc || undefined,
-    subject: `Welcome to ${co} — complete your onboarding`,
+    subject: `Congratulations & welcome to ${co} — complete your onboarding`,
     html: `<p>Hi ${escapeHtml(emp.name)},</p>
-      <p>Welcome aboard! We're excited to have you join <b>${escapeHtml(co)}</b>. To get started, please complete your pre-boarding form using the secure link below — it only takes a few minutes.</p>
+      <p>Congratulations once again on your selection as <b>${escapeHtml(designation)}</b> at <b>${escapeHtml(co)}</b>! We're excited to have you join our team and look forward to the creativity and passion you'll bring.${joiningDate ? ` Your joining date will be <b>${escapeHtml(joiningDate)}</b>.` : ''}</p>
+      <p>To help us complete the onboarding process smoothly, please fill this form:</p>
       <p><a href="${link}" style="background:#4f46e5;color:#fff;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">Complete your onboarding →</a></p>
       <p style="color:#888;font-size:12px">Or paste this link into your browser:<br>${link}</p>
       <p style="color:#888;font-size:12px">This link is valid for ${linkHours()} hours. If it expires, contact HR for a new one.</p>
-      <p style="margin-top:18px">See you soon! 🎉</p>`,
+      <p>If you have any queries, please feel free to reach out. I'll be happy to assist you.</p>
+      <p>Looking forward to working with you.</p>
+      <p style="margin:18px 0 0">Best regards,<br><b>${escapeHtml(senderName)}</b><br>${escapeHtml(senderTitle)}</p>`,
   }).catch(() => ({ ok: false }));
   return { emailed: !!(r && r.ok), emailedTo: to, cc };
 }
