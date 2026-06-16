@@ -2174,6 +2174,11 @@ const AdminViews = {
           <input id="preboardLinkHours" type="number" min="1" max="720" value="${UI.esc(s.preboardLinkHours != null ? s.preboardLinkHours : 4)}" />
           <p class="muted" style="font-size:11px;margin:4px 0 0">How long a candidate's pre-boarding link stays usable after it's generated. After this it stops working and HR regenerates it.</p>
         </div>
+        <div class="field" style="max-width:360px;margin-top:10px">
+          <label>Onboarding email CC</label>
+          <input id="onboardingCcEmail" type="email" placeholder="abhinav@digistay.ai" value="${UI.esc(s.onboardingCcEmail != null ? s.onboardingCcEmail : 'abhinav@digistay.ai')}" />
+          <p class="muted" style="font-size:11px;margin:4px 0 0">When a new (upcoming) employee is added, their onboarding link is emailed to them and CC'd to this address.</p>
+        </div>
       </div>
 
       <div class="card mt" style="max-width:760px">
@@ -2302,6 +2307,7 @@ const AdminViews = {
           return out;
         })(),
         preboardLinkHours: Number(val('preboardLinkHours')) || 4,
+        onboardingCcEmail: val('onboardingCcEmail').trim(),
         payroll: {
           perDayBasis: val('perDayBasis'),
           deductAbsent: document.getElementById('deductAbsent').checked,
@@ -3938,11 +3944,14 @@ const AdminViews = {
           date_of_joining: m.root.querySelector('#pbDoj').value,
         });
         const when = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '';
+        const mailLine = r.emailed
+          ? `<p style="font-size:12px;margin:8px 0 0;color:#16a34a">✉️ Onboarding link emailed to <b>${UI.esc(r.emailedTo)}</b>${r.cc ? ` (cc <b>${UI.esc(r.cc)}</b>)` : ''}.</p>`
+          : `<p style="font-size:12px;margin:8px 0 0;color:#b45309">✉️ Couldn't auto-email${m.root.querySelector('#pbEmail').value.trim() ? ' (check email settings)' : ' — add a Personal Email next time to auto-send'}. Share the link manually below.</p>`;
         m.root.querySelector('#pbResult').innerHTML = `
           <div class="card" style="border-left:4px solid #16a34a">
-            <b>✓ Candidate created.</b> Share this private link with them:
+            <b>✓ Candidate created.</b> ${mailLine}
             <div class="btn-row mt" style="align-items:center"><input id="pbNewUrl" readonly value="${UI.esc(r.url)}" style="flex:1" /><button class="btn sm" id="pbNewCopy">Copy</button></div>
-            <p class="muted" style="font-size:11px;margin:6px 0 0">⏳ Active for ${r.hours || 4} hours${when ? ` — until <b>${UI.esc(when)}</b>` : ''}. Paste it into your intent/offer email (or Leegality flow). It works with no login.</p>
+            <p class="muted" style="font-size:11px;margin:6px 0 0">⏳ Active for ${r.hours || 4} hours${when ? ` — until <b>${UI.esc(when)}</b>` : ''}. Also works with no login.</p>
           </div>`;
         m.root.querySelector('#pbNewCopy').onclick = async () => {
           try { await navigator.clipboard.writeText(r.url); UI.toast('Link copied.', 'success'); } catch { UI.toast('Copy failed — select the text manually.', 'error'); }

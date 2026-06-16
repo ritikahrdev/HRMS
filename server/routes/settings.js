@@ -48,7 +48,7 @@ router.put('/', requirePerm('settings:manage'), async (req, res) => {
     'weekendPolicy', 'fullDayHours', 'halfDayHours', 'graceMinutes', 'attendanceCloseTime', 'leavePolicy',
     'payrollClosingDay', 'payroll', 'statutory', 'attendanceSheetUrl',
     'leaveTypes', 'modules', 'slack', 'requiredDocs', 'uidaiCert', 'webhookSecret',
-    'departmentAccounts', 'preboardLinkHours', 'leaveAccrual', 'geofence', 'noticePeriodDays',
+    'departmentAccounts', 'preboardLinkHours', 'onboardingCcEmail', 'leaveAccrual', 'geofence', 'noticePeriodDays',
     'birthdayEmails', 'timezone', 'automation', 'ai',
   ];
   const partial = {};

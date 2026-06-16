@@ -29,12 +29,15 @@ function parseFrom(from) {
   return { email: String(from || '').trim() };
 }
 
-async function sendViaBrevoApi({ from, to, subject, html, text, attachments }) {
+async function sendViaBrevoApi({ from, to, subject, html, text, attachments, cc }) {
+  const toList = (addr) => String(addr || '').split(',').map((s) => ({ email: s.trim() })).filter((x) => x.email);
   const payload = {
     sender: parseFrom(from),
-    to: String(to).split(',').map((s) => ({ email: s.trim() })).filter((x) => x.email),
+    to: toList(to),
     subject: subject || '(no subject)',
   };
+  const ccList = toList(cc);
+  if (ccList.length) payload.cc = ccList;
   if (html) payload.htmlContent = html;
   if (text || !html) payload.textContent = text || ' ';
   if (attachments && attachments.length) {
@@ -62,7 +65,7 @@ async function sendViaBrevoApi({ from, to, subject, html, text, attachments }) {
  * so the rest of the app keeps working without any SMTP setup.
  * Attachments: [{ filename, path }] (optional)
  */
-async function sendMail({ to, subject, html, text, attachments }) {
+async function sendMail({ to, subject, html, text, attachments, cc }) {
   const e = config.email || {};
   const logStmt = db.prepare(
     'INSERT INTO email_log (to_addr, subject, status, error, body) VALUES (?, ?, ?, ?, ?)'
@@ -84,7 +87,7 @@ async function sendMail({ to, subject, html, text, attachments }) {
   // Preferred: Brevo HTTPS API (works on hosts that block SMTP ports).
   if (BREVO_API_KEY) {
     try {
-      await sendViaBrevoApi({ from: e.from || e.user, to, subject, html, text, attachments });
+      await sendViaBrevoApi({ from: e.from || e.user, to, subject, html, text, attachments, cc });
       await logStmt.run(to, subject || '', 'sent', null, text || html || '');
       return { ok: true };
     } catch (err) {
@@ -105,6 +108,7 @@ async function sendMail({ to, subject, html, text, attachments }) {
     await t.sendMail({
       from: e.from || e.user,
       to,
+      cc: cc || undefined,
       subject,
       text: text || undefined,
       html: html || undefined,

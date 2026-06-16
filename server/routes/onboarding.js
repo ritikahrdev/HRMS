@@ -6,6 +6,8 @@ const { requireLogin, requirePerm, canActOnEmployee } = require('../middleware/a
 const { provisionAccountsForOnboarding, accountsForDepartment } = require('../services/accountSetup');
 const { createEmployee } = require('../services/employees');
 const { getSettings } = require('../services/settings');
+const { sendMail } = require('../services/email');
+const { escapeHtml } = require('../services/escape');
 const {
   OWNERS, STAGES, buildJourney, rebuildJourney, syncAutomatedTasks, sendReminders,
 } = require('../services/onboardingJourney');
@@ -33,6 +35,32 @@ async function issuePreboardToken(employeeId) {
   await db.prepare("UPDATE employees SET preboard_token = ?, preboard_expires = datetime('now', ?) WHERE id = ?")
     .run(token, '+' + linkHours() + ' hours', employeeId);
   return token;
+}
+
+// Email the onboarding/pre-boarding link to the new (upcoming) employee, CC'd to
+// the onboarding coordinator (Settings → onboardingCcEmail, defaults to Abhinav).
+// Sends to the candidate's personal email (they have no company login yet).
+async function sendOnboardingEmail(req, employeeId, token) {
+  const emp = await db.prepare('SELECT name, email, personal_email FROM employees WHERE id = ?').get(employeeId);
+  if (!emp) return { emailed: false, emailedTo: null, cc: null };
+  const to = (emp.personal_email || emp.email || '').trim();
+  const s = getSettings();
+  const cc = (s.onboardingCcEmail || 'abhinav@digistay.ai').trim();
+  if (!to) return { emailed: false, emailedTo: null, cc };
+  const link = preboardUrl(req, token);
+  const co = s.companyName || 'the company';
+  const r = await sendMail({
+    to,
+    cc: cc || undefined,
+    subject: `Welcome to ${co} — complete your onboarding`,
+    html: `<p>Hi ${escapeHtml(emp.name)},</p>
+      <p>Welcome aboard! We're excited to have you join <b>${escapeHtml(co)}</b>. To get started, please complete your pre-boarding form using the secure link below — it only takes a few minutes.</p>
+      <p><a href="${link}" style="background:#4f46e5;color:#fff;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">Complete your onboarding →</a></p>
+      <p style="color:#888;font-size:12px">Or paste this link into your browser:<br>${link}</p>
+      <p style="color:#888;font-size:12px">This link is valid for ${linkHours()} hours. If it expires, contact HR for a new one.</p>
+      <p style="margin-top:18px">See you soon! 🎉</p>`,
+  }).catch(() => ({ ok: false }));
+  return { emailed: !!(r && r.ok), emailedTo: to, cc };
 }
 
 // Onboarding overview: every active employee with their checklist progress,
@@ -107,7 +135,9 @@ router.post('/preboard', requirePerm('employees:write'), async (req, res) => {
     await buildJourney(employee.id);
     const token = await issuePreboardToken(employee.id);
     const exp = (await db.prepare('SELECT preboard_expires FROM employees WHERE id = ?').get(employee.id)).preboard_expires;
-    res.json({ ok: true, employeeId: employee.id, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours() });
+    // Auto-email the onboarding link to the upcoming employee (CC the coordinator).
+    const mail = await sendOnboardingEmail(req, employee.id, token);
+    res.json({ ok: true, employeeId: employee.id, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours(), ...mail });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -125,7 +155,9 @@ router.post('/:employeeId/preboard-link', requirePerm('employees:write'), async 
       token = await issuePreboardToken(emp.id);
     }
     const exp = (await db.prepare('SELECT preboard_expires FROM employees WHERE id = ?').get(emp.id)).preboard_expires;
-    res.json({ ok: true, token, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours() });
+    // Optionally (re)send the onboarding email to the employee when asked.
+    const mail = (req.body && req.body.email) ? await sendOnboardingEmail(req, emp.id, token) : {};
+    res.json({ ok: true, token, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours(), ...mail });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
