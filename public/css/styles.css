@@ -402,3 +402,32 @@ tbody tr:hover { background: #f5f7ff; }
 /* Stronger, springier card hover everywhere */
 .card { will-change: transform; }
 .cards .card:hover { transform: translateY(-3px); box-shadow: 0 16px 38px rgba(16,24,40,.13); }
+
+/* ===== Entrance & pop animations ===== */
+@keyframes fade   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes popIn  { 0% { opacity: 0; transform: scale(.92); } 60% { opacity: 1; transform: scale(1.015); } 100% { transform: scale(1); } }
+
+/* Content blocks slide/fade up as each screen renders */
+.content .section-title, .content .toolbar, .content .table-wrap, .content .doc-list,
+.content .kanban, .content .announcement {
+  animation: fadeUp .42s cubic-bezier(.2,.7,.2,1) backwards;
+}
+/* KPI / dashboard cards pop in, staggered */
+.cards .card { animation: popIn .5s cubic-bezier(.2,.8,.25,1) backwards; }
+.cards .card:nth-child(2) { animation-delay: .06s }
+.cards .card:nth-child(3) { animation-delay: .12s }
+.cards .card:nth-child(4) { animation-delay: .18s }
+.cards .card:nth-child(5) { animation-delay: .24s }
+.cards .card:nth-child(6) { animation-delay: .30s }
+
+/* Pop-ups bounce in */
+.modal { animation: popIn .26s cubic-bezier(.2,.9,.3,1.2) backwards; }
+.modal-overlay { animation: fade .2s ease backwards; }
+.nav-item.active { animation: popIn .3s ease backwards; }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(99,102,241,.35); }
+
+/* Accessibility: honour reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+}
