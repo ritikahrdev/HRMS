@@ -206,4 +206,36 @@ router.get('/leaderboard', requireLogin, async (req, res) => {
   }
 });
 
+// Slack shoutout POINTS leaderboard — top givers (most generous) & top receivers
+// (most recognised), summed from the bot-fed slack_shoutouts table. ?from=&to= (YYYY-MM-DD).
+router.get('/points-leaderboard', requireLogin, async (req, res) => {
+  try {
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : null;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : null;
+    const cond = [], args = [];
+    if (from) { cond.push('created_at >= ?'); args.push(from); }
+    if (to) { cond.push('created_at <= ?'); args.push(to + 'T23:59:59'); }
+    const w = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+    const givW = 'WHERE ' + [...cond, "COALESCE(giver_email, giver_name, '') <> ''"].join(' AND ');
+
+    const topReceivers = await db.prepare(
+      `SELECT MAX(receiver_name) AS name, receiver_email AS email, SUM(points) AS points, COUNT(*) AS count
+       FROM slack_shoutouts ${w} GROUP BY COALESCE(receiver_email, receiver_name)
+       ORDER BY points DESC, count DESC LIMIT 20`
+    ).all(...args);
+    const topGivers = await db.prepare(
+      `SELECT MAX(giver_name) AS name, giver_email AS email, SUM(points) AS points, COUNT(*) AS count
+       FROM slack_shoutouts ${givW} GROUP BY COALESCE(giver_email, giver_name)
+       ORDER BY points DESC, count DESC LIMIT 20`
+    ).all(...args);
+    const totals = await db.prepare(`SELECT COUNT(*) AS shoutouts, COALESCE(SUM(points),0) AS points FROM slack_shoutouts ${w}`).get(...args);
+    const recent = await db.prepare(
+      `SELECT giver_name, receiver_name, points, reason, created_at FROM slack_shoutouts ${w} ORDER BY id DESC LIMIT 15`
+    ).all(...args);
+    res.json({ topReceivers, topGivers, totals, recent, from, to });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

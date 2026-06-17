@@ -3073,12 +3073,24 @@ const AdminViews = {
   ],
   async recognition(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
-    const [{ kudos }, dir, lb] = await Promise.all([api.get('/kudos'), api.get('/employees/directory'), api.get('/kudos/leaderboard')]);
+    const [{ kudos }, dir, lb, pts] = await Promise.all([
+      api.get('/kudos'), api.get('/employees/directory'), api.get('/kudos/leaderboard'),
+      api.get('/kudos/points-leaderboard').catch(() => ({ topReceivers: [], topGivers: [], totals: { points: 0, shoutouts: 0 } })),
+    ]);
     const opts = dir.employees.map((e) => `<option value="${e.id}">${UI.esc(e.name)}</option>`).join('');
     const medals = ['🥇', '🥈', '🥉'];
     const leaderCards = (lb.leaders || []).length
       ? lb.leaders.map((l, i) => `<div class="card stat" style="border-top:3px solid var(--primary)"><div class="label">${medals[i] || '⭐'} ${UI.esc(l.name)}</div><div class="value">${l.kudos_count}<span class="muted" style="font-size:13px"> kudos · ${l.cheers} 👏</span></div></div>`).join('')
       : '<div class="muted">No recognition this month yet.</div>';
+
+    const ptsList = (rows) => (rows && rows.length)
+      ? rows.map((r, i) => `<div style="display:flex;align-items:center;gap:11px;padding:9px 2px;border-bottom:1px solid #f1eefb">
+          <span style="width:26px;text-align:center;font-weight:800;color:#7c3aed">${medals[i] || ('#' + (i + 1))}</span>
+          ${this.kAvatar(r.name, 32)}
+          <div style="flex:1;min-width:0"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.esc(r.name || '—')}</div><div class="muted" style="font-size:11.5px">${r.count} shoutout${r.count > 1 ? 's' : ''}</div></div>
+          <div style="font-weight:800;color:#4f46e5;white-space:nowrap">${r.points}<span class="muted" style="font-size:11px"> pts</span></div>
+        </div>`).join('')
+      : '<div class="muted" style="padding:16px 2px">No Slack shoutouts yet — they appear here once the bot starts sending them. 🤖</div>';
 
     c.innerHTML = `
       <div class="card" style="max-width:680px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border:none">
@@ -3093,6 +3105,12 @@ const AdminViews = {
 
       <div class="section-title mt">🏅 Wall of Fame — this month</div>
       <div class="cards">${leaderCards}</div>
+
+      <div class="section-title mt">🏆 Shoutout Points <span class="muted" style="font-size:12px;font-weight:500">· from Slack · ${(pts.totals && pts.totals.points) || 0} pts across ${(pts.totals && pts.totals.shoutouts) || 0} shoutouts</span></div>
+      <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))">
+        <div class="card"><div class="section-title" style="margin-bottom:6px">🎖️ Most Recognised</div>${ptsList(pts.topReceivers)}</div>
+        <div class="card"><div class="section-title" style="margin-bottom:6px">💛 Most Generous</div>${ptsList(pts.topGivers)}</div>
+      </div>
 
       <div class="section-title mt">📣 Recent Shoutouts</div>
       <div id="wall">${this.kudosWall(kudos)}</div>`;

@@ -135,7 +135,9 @@ router.post('/attendance', async (req, res) => {
   // Optional check-out time + explicit hours (so total work hours can be recorded).
   const checkOutRaw = typeof body.check_out === 'string' ? body.check_out.trim() : (typeof body.checkout === 'string' ? body.checkout.trim() : '');
   const explicitHours = (body.hours != null && body.hours !== '' && Number.isFinite(Number(body.hours))) ? Number(body.hours) : null;
-  if (!statusRaw && !checkOutRaw && explicitHours == null) { console.warn('[webhook]   ✗ 400 missing status'); return res.status(400).json({ success: false, error: 'Provide a status (e.g. Present) or a check-out.' }); }
+  // Explicit packet type from the bot: 'checkin' (default) or 'checkout'.
+  const typeField = String(body.type || '').trim().toLowerCase();
+  if (!statusRaw && !checkOutRaw && explicitHours == null && typeField !== 'checkout') { console.warn('[webhook]   ✗ 400 missing status'); return res.status(400).json({ success: false, error: 'Provide a status (e.g. Present) or a check-out.' }); }
   if (!time) { console.warn('[webhook]   ✗ 400 missing field: time'); return res.status(400).json({ success: false, error: 'Missing required field: time.' }); }
 
   // 3) Resolve the attendance date from the provided time, in the COMPANY
@@ -180,7 +182,10 @@ router.post('/attendance', async (req, res) => {
   // "leaving early" is a half-day, not a clock-out). A present/WFH that also
   // reads like "heading home"/"leaving" is treated as the clock-out it looks like.
   const statusOverridesCheckout = !!explicit && ['half', 'leave', 'absent'].includes(explicit.status);
-  const isCheckout = !statusOverridesCheckout && (!!checkOutRaw || (!!statusRaw && (CHECKOUT_RE.test(statusRaw) || bareOut)));
+  // An explicit type from the bot wins; otherwise fall back to text detection.
+  const isCheckout = typeField === 'checkout' ? true
+    : typeField === 'checkin' ? false
+    : (!statusOverridesCheckout && (!!checkOutRaw || (!!statusRaw && (CHECKOUT_RE.test(statusRaw) || bareOut))));
   const round2 = (h) => Math.round(h * 100) / 100;
   let check_in = null, check_out = null, work_hours = null, status = null, wfh = 0, action = 'check-in';
   let classifiedReason = explicit ? explicit.reason : null;
@@ -235,6 +240,53 @@ router.post('/attendance', async (req, res) => {
     half: classifiedReason && status === 'half' ? (cls.half || null) : null,
     processedAt: new Date().toISOString(),
   });
+});
+
+// POST /api/webhook/shoutout
+// The Slack bot reports a peer shoutout. Contract (per the hand-over doc):
+//   { giverEmail, giver, receiverEmail, receiver, points, reason, time, channel? }
+// Secured by the same X-Webhook-Secret as attendance. Stores one row per receiver.
+router.post('/shoutout', async (req, res) => {
+  const secret = configuredSecret();
+  const provided = req.get('X-Webhook-Secret');
+  if (!secret || !provided || !safeEqual(provided, secret)) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: invalid or missing webhook secret.' });
+  }
+  const b = req.body || {};
+  const receiverEmail = String(b.receiverEmail || b.receiver_email || '').trim().toLowerCase();
+  const giverEmail = String(b.giverEmail || b.giver_email || '').trim().toLowerCase();
+  let receiver = String(b.receiver || b.receiverName || '').trim();
+  let giver = String(b.giver || b.giverName || '').trim();
+  if (!receiverEmail && !receiver) return res.status(400).json({ success: false, error: 'A receiver (email or name) is required.' });
+  if (giverEmail && receiverEmail && giverEmail === receiverEmail) {
+    return res.status(400).json({ success: false, error: "You can't shout out yourself." });
+  }
+  let points = Number(b.points);
+  if (!Number.isFinite(points)) points = 1;            // POINTS_DEFAULT
+  points = Math.max(1, Math.min(100, Math.round(points)));
+  const reason = String(b.reason || '').trim().slice(0, 500) || null;
+  const channel = String(b.channel || '').trim().slice(0, 40) || null;
+  const time = (typeof b.time === 'string' && b.time) ? b.time : new Date().toISOString();
+
+  // Fill in names from our directory when the bot didn't supply them.
+  const nameFor = async (email, given) => {
+    if (given) return given;
+    if (!email) return '';
+    const e = await db.prepare('SELECT name FROM employees WHERE lower(email) = lower(?)').get(email);
+    return e ? e.name : (email.split('@')[0] || '');
+  };
+  try {
+    giver = await nameFor(giverEmail, giver);
+    receiver = await nameFor(receiverEmail, receiver);
+    const r = await db.prepare(
+      'INSERT INTO slack_shoutouts (giver_email, giver_name, receiver_email, receiver_name, points, reason, channel, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(giverEmail || null, giver || null, receiverEmail || null, receiver || null, points, reason, channel, time);
+    console.log(`[webhook]   ✓ shoutout: ${giver || '?'} -> ${receiver || '?'} (+${points})${reason ? ' | ' + reason : ''}`);
+    return res.json({ success: true, id: r.lastInsertRowid, giver: giver, receiver: receiver, points: points });
+  } catch (e) {
+    console.error('[webhook]   ✗ shoutout 500:', e.message);
+    return res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 module.exports = router;

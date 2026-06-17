@@ -227,6 +227,20 @@ CREATE TABLE IF NOT EXISTS kudos (
   cheers INTEGER NOT NULL DEFAULT 0
 );
 
+-- Slack-driven shoutout points (fed by the bot via the /webhook/shoutout packet).
+-- Keyed by email because the bot identifies people by Slack/email, not our id.
+CREATE TABLE IF NOT EXISTS slack_shoutouts (
+  id SERIAL PRIMARY KEY,
+  giver_email TEXT,
+  giver_name TEXT,
+  receiver_email TEXT,
+  receiver_name TEXT,
+  points INTEGER NOT NULL DEFAULT 1,
+  reason TEXT,
+  channel TEXT,
+  created_at TEXT NOT NULL DEFAULT ${TS}
+);
+
 CREATE TABLE IF NOT EXISTS goals (
   id SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
