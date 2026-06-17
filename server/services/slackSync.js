@@ -314,7 +314,12 @@ async function postToSlack(message, opts) {
     } catch (e) { console.error('Error posting to Slack webhook:', e.message); return false; }
   }
   if (!s.enabled || !s.botToken) return false;
-  const channelId = legacyChannel || s.channelId;
+  // Route by purpose: a shoutout posts to its own channel when `shoutoutChannelId`
+  // is set, otherwise the default channel. (An incoming-webhook URL configured for
+  // the purpose above already took precedence.) This keeps HRMS-originated
+  // shoutouts (Recognition wall) out of the attendance channel.
+  const purposeChannel = purpose === 'shoutout' ? (s.shoutoutChannelId || s.channelId) : s.channelId;
+  const channelId = legacyChannel || purposeChannel;
   if (!channelId) return false;
   try {
     const data = await slackApi(s.botToken, 'chat.postMessage', { channel: channelId, text: message, mrkdwn: true });
