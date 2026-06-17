@@ -18,16 +18,17 @@ const STATUS_MAP = {
 // COALESCE preserves the "other half" — a check-out won't wipe the check-in, and
 // vice versa — so the morning check-in and evening check-out merge into one row.
 const upsert = db.prepare(`
-  INSERT INTO attendance (employee_id, date, check_in, check_out, work_hours, status, wfh, reason, source)
-  VALUES (@employee_id, @date, @check_in, @check_out, @work_hours, @status, @wfh, @reason, 'webhook')
+  INSERT INTO attendance (employee_id, date, check_in, check_out, work_hours, status, wfh, reason, after_cutoff, source)
+  VALUES (@employee_id, @date, @check_in, @check_out, @work_hours, @status, @wfh, @reason, @after_cutoff, 'webhook')
   ON CONFLICT(employee_id, date) DO UPDATE SET
-    status     = @status,
-    wfh        = @wfh,
-    reason     = COALESCE(@reason, attendance.reason),
-    source     = 'webhook',
-    check_in   = COALESCE(@check_in, attendance.check_in),
-    check_out  = COALESCE(@check_out, attendance.check_out),
-    work_hours = COALESCE(@work_hours, attendance.work_hours)`);
+    status       = @status,
+    wfh          = @wfh,
+    reason       = COALESCE(@reason, attendance.reason),
+    source       = 'webhook',
+    check_in     = COALESCE(@check_in, attendance.check_in),
+    check_out    = COALESCE(@check_out, attendance.check_out),
+    work_hours   = COALESCE(@work_hours, attendance.work_hours),
+    after_cutoff = COALESCE(@after_cutoff, attendance.after_cutoff)`);
 
 // The configured secret comes from an env var (preferred for production) or
 // from Settings -> Attendance Webhook.
@@ -215,8 +216,12 @@ router.post('/attendance', async (req, res) => {
   // 6) Upsert (idempotent — one row per employee+date; the COALESCEs above merge
   // a separate check-in and check-out into the same row).
   const finalReason = reason || classifiedReason || null;
+  // Optional: the bot may flag a mark that arrived past the daily cut-off (Task 3).
+  // When true we store a "late" flag; when absent/false we leave any existing flag
+  // untouched (COALESCE in the upsert), so a later check-out won't clear it.
+  const afterCutoff = (body.afterCutoff === true || String(body.afterCutoff).toLowerCase() === 'true') ? 1 : null;
   try {
-    await upsert.run({ employee_id: emp.id, date, check_in, check_out, work_hours, status, wfh, reason: finalReason });
+    await upsert.run({ employee_id: emp.id, date, check_in, check_out, work_hours, status, wfh, reason: finalReason, after_cutoff: afterCutoff });
   } catch (e) {
     console.error('[webhook]   ✗ 500 DB error:', e.message);
     return res.status(500).json({ success: false, error: 'Failed to update attendance: ' + e.message });
@@ -237,6 +242,7 @@ router.post('/attendance', async (req, res) => {
     date,
     reason: finalReason,
     wfh: wfh ? 1 : 0,
+    afterCutoff: afterCutoff ? 1 : 0,
     half: classifiedReason && status === 'half' ? (cls.half || null) : null,
     processedAt: new Date().toISOString(),
   });

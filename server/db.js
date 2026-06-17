@@ -514,6 +514,9 @@ const COLUMN_MIGRATIONS = [
   // Optional note that explains an attendance entry (e.g. why someone was absent
   // or on WFH) — accepted by the attendance webhook.
   "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS reason TEXT",
+  // Marked after the daily cut-off (e.g. the bot sent afterCutoff:true for a mark
+  // that arrived past 2pm) — surfaced as a "late / after cut-off" badge.
+  "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS after_cutoff INTEGER DEFAULT 0",
   // AI screening results for candidates who apply via the public careers page.
   "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_score INTEGER",
   "ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ai_recommendation TEXT",

@@ -223,7 +223,7 @@ router.get('/day', requireLogin, async (req, res) => {
     else if (onLeave.has(e.id)) status = 'leave';
     else if (holiday) status = 'holiday';
     const mood = moodMap[e.id] || null;
-    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, marked: !!(a && a.check_in), mood_score: mood ? mood.score : null, mood_note: mood ? mood.note : null, in_lat: a ? a.in_lat : null, in_lng: a ? a.in_lng : null, in_geofenced: a ? a.in_geofenced : null };
+    return { id: e.id, name: e.name, emp_code: e.emp_code, department: e.department, status, wfh: a ? (a.wfh || 0) : 0, source: a ? a.source : null, check_in: a ? a.check_in : null, check_out: a ? a.check_out : null, work_hours: a ? a.work_hours : null, late_minutes: a ? (a.late_minutes || 0) : 0, after_cutoff: a ? (a.after_cutoff || 0) : 0, marked: !!(a && a.check_in), mood_score: mood ? mood.score : null, mood_note: mood ? mood.note : null, in_lat: a ? a.in_lat : null, in_lng: a ? a.in_lng : null, in_geofenced: a ? a.in_geofenced : null };
   });
   const summary = { present: 0, half: 0, leave: 0, absent: 0, holiday: 0 };
   for (const l of list) summary[l.status] = (summary[l.status] || 0) + 1;
@@ -438,7 +438,7 @@ async function buildRegister(month, employees) {
   const monthEnd = `${month}-${pad(daysInMonth)}`;
   const activeIds = new Set(employees.map((e) => e.id));
 
-  const att = await db.prepare('SELECT employee_id, date, status, check_in, check_out, work_hours, wfh, late_minutes FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
+  const att = await db.prepare('SELECT employee_id, date, status, check_in, check_out, work_hours, wfh, late_minutes, after_cutoff FROM attendance WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
   const leaves = await db.prepare("SELECT employee_id, from_date, to_date FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(monthEnd, monthStart);
   const holidays = await db.prepare('SELECT date, name FROM holidays WHERE date >= ? AND date <= ?').all(monthStart, monthEnd);
   const holidayByDate = {}; for (const h of holidays) holidayByDate[h.date] = h.name;
@@ -489,7 +489,7 @@ async function buildRegister(month, employees) {
       else if (a && a.status === 'absent') { st = 'absent'; t.absent++; }
       else { st = 'absent'; t.absent++; }
       cells[day.day] = a
-        ? { st, in: a.check_in || null, out: a.check_out || null, hrs: a.work_hours != null ? a.work_hours : null, late: a.late_minutes || 0 }
+        ? { st, in: a.check_in || null, out: a.check_out || null, hrs: a.work_hours != null ? a.work_hours : null, late: a.late_minutes || 0, afterCutoff: a.after_cutoff || 0 }
         : { st };
     }
     return { id: e.id, name: e.name, emp_code: e.emp_code || '', department: e.department || '', cells, totals: t };

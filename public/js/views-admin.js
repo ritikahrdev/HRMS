@@ -978,14 +978,16 @@ const AdminViews = {
     // Format a duration in hours (float) as "1h 30m" / "24m" / "2h".
     const fmtHM = (h) => { if (h == null) return null; const t = Math.max(0, Math.round(h * 60)); const hh = Math.floor(t / 60), mm = t % 60; return (hh && mm) ? `${hh}h ${mm}m` : hh ? `${hh}h` : `${mm}m`; };
     const badge = (r) => {
-      if (r.status === 'present' && r.wfh) return '<span class="attx-badge b-wfh">WFH</span>';
-      if (r.status === 'present' && r.late_minutes > 0) return '<span class="attx-badge b-late">Late</span>';
-      if (r.status === 'present') return '<span class="attx-badge b-present">Present</span>';
-      if (r.status === 'absent') return '<span class="attx-badge b-absent">Absent</span>';
-      if (r.status === 'leave') return '<span class="attx-badge b-leave">Leave</span>';
-      if (r.status === 'half') return '<span class="attx-badge b-half">Half day</span>';
-      if (r.status === 'holiday') return '<span class="attx-badge b-holiday">Holiday</span>';
-      return `<span class="attx-badge">${esc(r.status || '-')}</span>`;
+      // Marked after the daily cut-off (bot sent afterCutoff) — shown alongside the status.
+      const late = r.after_cutoff ? ' <span class="attx-badge b-late" title="Marked after the daily cut-off">⏰ After cut-off</span>' : '';
+      if (r.status === 'present' && r.wfh) return '<span class="attx-badge b-wfh">WFH</span>' + late;
+      if (r.status === 'present' && r.late_minutes > 0) return '<span class="attx-badge b-late">Late</span>' + late;
+      if (r.status === 'present') return '<span class="attx-badge b-present">Present</span>' + late;
+      if (r.status === 'absent') return '<span class="attx-badge b-absent">Absent</span>' + late;
+      if (r.status === 'leave') return '<span class="attx-badge b-leave">Leave</span>' + late;
+      if (r.status === 'half') return '<span class="attx-badge b-half">Half day</span>' + late;
+      if (r.status === 'holiday') return '<span class="attx-badge b-holiday">Holiday</span>' + late;
+      return `<span class="attx-badge">${esc(r.status || '-')}</span>` + late;
     };
     const liveTag = (r) => r.source === 'slack' ? '<span class="attx-srcdot" title="Live from Slack"></span>' : (r.source === 'webhook' ? '<span class="attx-srcdot wh" title="Live via webhook"></span>' : '');
     const counts = () => { const L = (st.day && st.day.list) || []; return {
