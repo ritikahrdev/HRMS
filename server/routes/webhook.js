@@ -173,6 +173,12 @@ router.post('/attendance', async (req, res) => {
   const cls = classifyMessage(statusRaw, getSettings().slack || {});
   const explicit = stMap ? { status: stMap.status, wfh: stMap.wfh, reason: null, half: null }
     : (cls.valid ? { status: cls.status, wfh: cls.wfh ? 1 : 0, reason: cls.reason, half: cls.half } : null);
+  // WFH may arrive NOT in the status word but as status:"Present" + reason:"WFH"
+  // (the documented attendance contract) or as an explicit wfh flag. Detect either
+  // so a "Present + WFH" mark is recorded as WFH, not plain Present.
+  const wfhFlag = body.wfh === true || ['true', '1', 'yes', 'wfh', 'remote'].includes(String(body.wfh).toLowerCase());
+  const reasonWfh = !!reason && /\b(wfh|w\.?f\.?h|work(?:ing)?\s*from\s*home|from\s*home|home\s*office|remote(?:ly)?)\b/i.test(reason);
+  const wfhHint = wfhFlag || reasonWfh;
 
   const CHECKOUT_RE = /\b(check[\s-]?out|checking out|checked out|clock[\s-]?out|clocking out|logging off|logged off|log off|signing off|signed off|sign off|leaving|out for the day|done for the day|end of day|eod|heading home|going home|wrapping up|wrapped up)\b/i;
   // A bare "out" (with optional emoji/punctuation) means clock-out — but NOT
@@ -207,6 +213,7 @@ router.post('/attendance', async (req, res) => {
       return res.status(400).json({ success: false, error: `Couldn't read a status from "${statusRaw}". Use Present, WFH, Half day, Leave, Sick, Absent, Holiday — or "out"/"checkout" to clock out.` });
     }
     status = explicit.status; wfh = explicit.wfh;
+    if ((status === 'present' || status === 'half') && wfhHint) wfh = 1;
     check_in = (status === 'present' || status === 'half') ? parsed.toISOString() : null;
     if (checkOutRaw) { const c = parseTime(checkOutRaw); if (!isNaN(c.getTime())) check_out = c.toISOString(); }
     if (explicitHours != null) work_hours = round2(explicitHours);
