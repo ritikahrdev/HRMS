@@ -95,9 +95,11 @@ router.post('/', requireLogin, async (req, res) => {
     // Post the shoutout to Slack (its own channel, if configured).
     await postToSlack(`${badge || '👏'} *Shoutout for ${recName}*\n${giver}: ${message}`, { purpose: 'shoutout' }).catch(() => {});
 
-    // Optional email broadcast (only sends if email is enabled in config).
+    // Optional email broadcast — OFF by default. Only emails everyone when the
+    // "Email all employees on a shoutout" setting is explicitly turned on
+    // (Settings → Recognition). Keeps the inbox quiet during testing.
     const emails = (await db.prepare("SELECT email FROM employees WHERE status='active' AND email IS NOT NULL AND email != ''").all()).map((e) => e.email);
-    if (emails.length) {
+    if (emails.length && getSettings().shoutoutEmailBroadcast === true) {
       const co = getSettings().companyName || 'our team';
       const link = `${(config.publicUrl || '').replace(/\/$/, '')}/#/recognition`;
       const badgeEmoji = badge || '👏';
