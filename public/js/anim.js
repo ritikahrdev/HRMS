@@ -28,8 +28,29 @@
       try { (root.querySelectorAll('.stat .value') || []).forEach(countUp); } catch (e) {}
     }
 
+    // Material-style click ripple on buttons. The IIFE already bailed out for
+    // reduced-motion users, so this only runs when motion is welcome.
+    function bindRipple() {
+      document.addEventListener('click', function (e) {
+        try {
+          var btn = e.target && e.target.closest && e.target.closest('.btn');
+          if (!btn || btn.disabled) return;
+          var rect = btn.getBoundingClientRect();
+          var size = Math.max(rect.width, rect.height);
+          var r = document.createElement('span');
+          r.className = 'ripple';
+          r.style.width = r.style.height = size + 'px';
+          r.style.left = (e.clientX - rect.left - size / 2) + 'px';
+          r.style.top = (e.clientY - rect.top - size / 2) + 'px';
+          btn.appendChild(r);
+          setTimeout(function () { try { r.remove(); } catch (_) {} }, 600);
+        } catch (_) { /* never break a click for an animation */ }
+      }, true);
+    }
+
     function start() {
       scan(document);
+      bindRipple();
       try {
         new MutationObserver(function (muts) {
           for (var i = 0; i < muts.length; i++) {

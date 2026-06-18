@@ -478,6 +478,49 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3.5px rgba(99,102,
 .avatar { transition: transform .18s cubic-bezier(.2,.8,.2,1.2), box-shadow .18s; }
 .avatar:hover { transform: scale(1.08); box-shadow: 0 4px 14px rgba(99,102,241,.42); }
 
+/* ===== UI v3 — more motion ===== */
+
+/* KPI icons gently float for a touch of life (hover spring takes over) */
+@keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.stat .stat-ico { animation: floaty 3.8s ease-in-out infinite; }
+.card.stat:hover .stat-ico { animation: none; }
+
+/* Whole content eases up as each screen mounts (page-transition feel) */
+@keyframes viewIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.content > .cards, .content > .card, .content > .btn-row, .content > .toolbar { animation: viewIn .42s cubic-bezier(.2,.7,.2,1) backwards; }
+
+/* Sidebar nav items cascade in on load */
+.nav-item { animation: fadeUp .4s cubic-bezier(.2,.7,.2,1) backwards; }
+.nav-item:nth-child(2){animation-delay:.04s}
+.nav-item:nth-child(3){animation-delay:.08s}
+.nav-item:nth-child(4){animation-delay:.12s}
+.nav-item:nth-child(5){animation-delay:.16s}
+.nav-item:nth-child(6){animation-delay:.20s}
+.nav-item:nth-child(7){animation-delay:.24s}
+.nav-item:nth-child(8){animation-delay:.28s}
+.nav-item:nth-child(9){animation-delay:.32s}
+
+/* Plain table rows reveal with a soft stagger (interactive boards excluded) */
+@keyframes rowIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+tbody tr:not(.attx-row) { animation: rowIn .3s ease backwards; }
+tbody tr:not(.attx-row):nth-child(2){animation-delay:.03s}
+tbody tr:not(.attx-row):nth-child(3){animation-delay:.06s}
+tbody tr:not(.attx-row):nth-child(4){animation-delay:.09s}
+tbody tr:not(.attx-row):nth-child(5){animation-delay:.12s}
+tbody tr:not(.attx-row):nth-child(n+6){animation-delay:.15s}
+
+/* Modal contents stagger up after the modal pops */
+.modal > * { animation: fadeUp .38s cubic-bezier(.2,.7,.2,1) backwards; }
+.modal > *:nth-child(2){animation-delay:.05s}
+.modal > *:nth-child(3){animation-delay:.10s}
+.modal > *:nth-child(4){animation-delay:.15s}
+.modal > *:nth-child(5){animation-delay:.20s}
+
+/* Click ripple (the span is spawned by anim.js) */
+.btn .ripple { position: absolute; border-radius: 50%; transform: scale(0); background: rgba(255,255,255,.5); animation: ripple .6s ease-out; pointer-events: none; }
+.btn.secondary .ripple { background: rgba(99,102,241,.28); }
+@keyframes ripple { to { transform: scale(2.4); opacity: 0; } }
+
 /* Accessibility: honour reduced-motion preference (kills animations AND sweeps) */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
