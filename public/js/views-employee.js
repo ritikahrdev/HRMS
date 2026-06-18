@@ -712,41 +712,72 @@ const EmployeeViews = {
     let h = 7; for (const ch of nm) h = (h * 31 + ch.charCodeAt(0)) >>> 0; h = h % 360;
     const grad = `linear-gradient(135deg,hsl(${h},64%,58%),hsl(${(h + 42) % 360},64%,46%))`;
 
+    // Tenure since joining, e.g. "2y 3m".
+    const tenureOf = (doj) => {
+      if (!doj) return '';
+      const s = new Date(doj), n = new Date();
+      if (isNaN(s.getTime())) return '';
+      let mo = (n.getFullYear() - s.getFullYear()) * 12 + (n.getMonth() - s.getMonth());
+      if (n.getDate() < s.getDate()) mo--;
+      if (mo < 0) return '';
+      const y = Math.floor(mo / 12), m = mo % 12;
+      return ((y ? y + 'y ' : '') + (m ? m + 'm' : '')).trim() || '0m';
+    };
+    const ten = tenureOf(e.date_of_joining);
+
     // Pills under the name (only the ones we actually have).
     const chips = [
       e.emp_code && `<span class="prof-chip">🆔 ${UI.esc(e.emp_code)}</span>`,
       `<span class="prof-chip">🛡️ ${UI.esc(roleLabel)}</span>`,
       e.date_of_joining && `<span class="prof-chip">📅 Joined ${UI.esc(UI.date(e.date_of_joining))}</span>`,
+      ten && `<span class="prof-chip">⏳ ${UI.esc(ten)} here</span>`,
       `<span class="prof-chip">✉️ ${UI.esc(App.user.email)}</span>`,
     ].filter(Boolean).join('');
 
-    // A grouped detail card — empty fields are dropped so it never looks sparse.
+    // Field sets: [label, value, copyable?]
+    const personal = [
+      ['Full Name', e.name], ['Date of Birth', e.dob ? UI.date(e.dob) : ''], ['Gender', e.gender],
+      ['Blood Group', e.blood_group], ['Phone', e.phone, true], ['Address', e.address],
+      ['Emergency Contact', [e.emergency_name, e.emergency_phone].filter(Boolean).join(' · ')],
+      ['Education', e.education], ['Experience', e.experience],
+    ];
+    const employment = [
+      ['Employee Code', e.emp_code, true], ['Designation', e.designation], ['Department', e.department],
+      ['Manager', e.manager_name || e.manager], ['Date of Joining', e.date_of_joining ? UI.date(e.date_of_joining) : ''],
+      ['Work Email', e.email, true],
+    ];
+    const payroll = [
+      ['Monthly Salary', e.monthly_salary != null ? UI.money(e.monthly_salary) : ''],
+      ['Bank Account', e.bank_account, true], ['IFSC', e.ifsc, true], ['PAN', e.pan, true], ['Aadhaar / ID', e.aadhaar, true],
+    ];
+
+    // Profile completeness across editable fields (salary is HR-set, excluded).
+    const completePairs = [...personal, ...employment, ...payroll].filter((p) => p[0] !== 'Monthly Salary');
+    const filled = completePairs.filter((p) => p[1] != null && String(p[1]).trim() !== '').length;
+    const pct = completePairs.length ? Math.round((filled / completePairs.length) * 100) : 0;
+
+    // A grouped detail card — empty fields dropped; copyable values get a copy affordance.
     const group = (title, icon, pairs) => {
-      const rows = pairs.filter((p) => p[1] != null && String(p[1]).trim() !== '')
-        .map((p) => `<div class="prof-field"><div class="prof-k">${UI.esc(p[0])}</div><div class="prof-v">${UI.esc(p[1])}</div></div>`).join('');
+      const rows = pairs.filter((p) => p[1] != null && String(p[1]).trim() !== '').map((p) => {
+        const v = p[2]
+          ? `<div class="prof-v prof-copy" title="Click to copy"><span class="cval">${UI.esc(p[1])}</span><span class="prof-copyico">⧉</span></div>`
+          : `<div class="prof-v">${UI.esc(p[1])}</div>`;
+        return `<div class="prof-field"><div class="prof-k">${UI.esc(p[0])}</div>${v}</div>`;
+      }).join('');
       return rows ? `<div class="card prof-sec"><div class="section-title">${icon} ${title}</div><div class="prof-grid">${rows}</div></div>` : '';
     };
 
-    let detail = '';
-    if (employee) {
-      detail = `
-        ${group('Personal', '👤', [
-          ['Full Name', e.name], ['Date of Birth', e.dob ? UI.date(e.dob) : ''], ['Gender', e.gender],
-          ['Blood Group', e.blood_group], ['Phone', e.phone], ['Address', e.address],
-          ['Emergency Contact', [e.emergency_name, e.emergency_phone].filter(Boolean).join(' · ')],
-          ['Education', e.education], ['Experience', e.experience],
-        ])}
-        ${group('Employment', '💼', [
-          ['Employee Code', e.emp_code], ['Designation', e.designation], ['Department', e.department],
-          ['Manager', e.manager_name || e.manager], ['Date of Joining', e.date_of_joining ? UI.date(e.date_of_joining) : ''],
-          ['Work Email', e.email],
-        ])}
-        ${group('Payroll & Bank', '🏦', [
-          ['Monthly Salary', e.monthly_salary != null ? UI.money(e.monthly_salary) : ''],
-          ['Bank Account', e.bank_account], ['IFSC', e.ifsc], ['PAN', e.pan], ['Aadhaar / ID', e.aadhaar],
-        ])}
-        <div class="card prof-sec"><div class="section-title">💻 My Assets</div><div id="myassets" class="muted">Loading…</div></div>`;
-    }
+    const detail = employee ? `
+        ${group('Personal', '👤', personal)}
+        ${group('Employment', '💼', employment)}
+        ${group('Payroll & Bank', '🏦', payroll)}
+        <div class="card prof-sec"><div class="section-title">💻 My Assets</div><div id="myassets" class="muted">Loading…</div></div>` : '';
+
+    const meter = employee ? `
+      <div class="prof-meter">
+        <div class="prof-meter-top"><span>Profile ${pct}% complete</span>${pct >= 100 ? '<span style="color:#16a34a;font-weight:700">All set ✓</span>' : `<span class="muted">${completePairs.length - filled} to go</span>`}</div>
+        <div class="prof-bar"><i style="width:${pct}%"></i></div>
+      </div>` : '';
 
     c.innerHTML = `
       <div class="prof-wrap">
@@ -758,6 +789,7 @@ const EmployeeViews = {
               <div class="prof-name">${UI.esc(e.name || App.user.email)}</div>
               <div class="prof-sub">${UI.esc(e.designation || roleLabel)}${e.department ? ' · ' + UI.esc(e.department) : ''}</div>
               <div class="prof-chips">${chips}</div>
+              ${meter}
             </div>
             <div class="prof-actions">
               <button class="btn secondary" id="pw">🔑 Change Password</button>
@@ -770,6 +802,13 @@ const EmployeeViews = {
       </div>`;
 
     document.getElementById('pw').onclick = () => App.changePasswordModal();
+    c.querySelectorAll('.prof-copy').forEach((el) => {
+      el.onclick = () => {
+        const val = (el.querySelector('.cval') || {}).textContent || '';
+        if (!val) return;
+        try { navigator.clipboard.writeText(val); UI.toast('Copied ✓', 'success'); } catch (_) { UI.toast('Could not copy', 'error'); }
+      };
+    });
     if (employee) {
       const docsBtn = document.getElementById('docs');
       if (docsBtn) docsBtn.onclick = () => AdminViews.documentsModal(employee.id, employee.name);

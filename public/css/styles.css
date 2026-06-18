@@ -547,6 +547,21 @@ tbody tr:not(.attx-row):nth-child(n+6){animation-delay:.15s}
 .prof-v { font-size: 14.5px; color: var(--text); font-weight: 500; margin-top: 2px; word-break: break-word; }
 @media (max-width: 560px) { .prof-hero-body { margin-top: -32px } .prof-avatar { width: 78px; height: 78px; font-size: 30px; border-radius: 20px } .prof-actions { margin-left: 0 } }
 
+/* Profile completeness meter */
+.prof-meter { margin-top: 13px; max-width: 340px; }
+.prof-meter-top { display: flex; justify-content: space-between; font-size: 11.5px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+.prof-bar { height: 8px; background: #eceefb; border-radius: 999px; overflow: hidden; }
+@keyframes barGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.prof-bar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#6366f1,#7c3aed); transform-origin: left; animation: barGrow .9s cubic-bezier(.2,.8,.2,1) .15s backwards; }
+
+/* Field hover + click-to-copy affordance */
+.prof-field { transition: background .12s ease; border-radius: 8px; }
+.prof-field:hover { background: #f7f8ff; }
+.prof-copy { cursor: pointer; display: flex; align-items: center; gap: 7px; }
+.prof-copyico { opacity: 0; font-size: 13px; color: #6366f1; transition: opacity .12s; }
+.prof-copy:hover .prof-copyico { opacity: .85; }
+.prof-copy:active .cval { color: #4f46e5; }
+
 /* Accessibility: honour reduced-motion preference (kills animations AND sweeps) */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
