@@ -705,46 +705,78 @@ const EmployeeViews = {
   async profile(c) {
     c.innerHTML = '<div class="muted">Loading...</div>';
     const { employee } = await api.get('/employees/me');
-    const account = [
-      ['Login Email', App.user.email],
-      ['Role', App.user.roleLabel || App.user.role],
-    ];
-    let empCard = '';
+    const e = employee || {};
+    const roleLabel = App.user.roleLabel || App.user.role;
+    const nm = e.name || App.user.email || '?';
+    const initials = (nm.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?').toUpperCase();
+    let h = 7; for (const ch of nm) h = (h * 31 + ch.charCodeAt(0)) >>> 0; h = h % 360;
+    const grad = `linear-gradient(135deg,hsl(${h},64%,58%),hsl(${(h + 42) % 360},64%,46%))`;
+
+    // Pills under the name (only the ones we actually have).
+    const chips = [
+      e.emp_code && `<span class="prof-chip">🆔 ${UI.esc(e.emp_code)}</span>`,
+      `<span class="prof-chip">🛡️ ${UI.esc(roleLabel)}</span>`,
+      e.date_of_joining && `<span class="prof-chip">📅 Joined ${UI.esc(UI.date(e.date_of_joining))}</span>`,
+      `<span class="prof-chip">✉️ ${UI.esc(App.user.email)}</span>`,
+    ].filter(Boolean).join('');
+
+    // A grouped detail card — empty fields are dropped so it never looks sparse.
+    const group = (title, icon, pairs) => {
+      const rows = pairs.filter((p) => p[1] != null && String(p[1]).trim() !== '')
+        .map((p) => `<div class="prof-field"><div class="prof-k">${UI.esc(p[0])}</div><div class="prof-v">${UI.esc(p[1])}</div></div>`).join('');
+      return rows ? `<div class="card prof-sec"><div class="section-title">${icon} ${title}</div><div class="prof-grid">${rows}</div></div>` : '';
+    };
+
+    let detail = '';
     if (employee) {
-      const rows = [
-        ['Name', employee.name], ['Employee Code', employee.emp_code], ['Email', employee.email],
-        ['Phone', employee.phone], ['Department', employee.department], ['Designation', employee.designation],
-        ['Date of Joining', UI.date(employee.date_of_joining)], ['Manager', employee.manager_name || employee.manager],
-        ['Date of Birth', employee.dob ? UI.date(employee.dob) : '-'], ['Gender', employee.gender],
-        ['Blood Group', employee.blood_group], ['Emergency Contact', [employee.emergency_name, employee.emergency_phone].filter(Boolean).join(' · ')],
-        ['Education', employee.education], ['Experience', employee.experience],
-        ['Monthly Salary', UI.money(employee.monthly_salary)], ['Bank Account', employee.bank_account],
-        ['IFSC', employee.ifsc], ['PAN', employee.pan], ['Aadhaar / ID', employee.aadhaar], ['Address', employee.address],
-      ];
-      empCard = `
-        <div class="card mt" style="max-width:620px">
-          <div class="section-title">Employee Details</div>
-          <table>${rows.map((r) => `<tr><td class="muted">${UI.esc(r[0])}</td><td>${UI.esc(r[1] || '-')}</td></tr>`).join('')}</table>
-          <div class="mt"><button class="btn secondary" id="docs">My Documents</button></div>
-        </div>
-        <div class="card mt" style="max-width:620px">
-          <div class="section-title">My Assets</div>
-          <div id="myassets" class="muted">Loading...</div>
-        </div>`;
+      detail = `
+        ${group('Personal', '👤', [
+          ['Full Name', e.name], ['Date of Birth', e.dob ? UI.date(e.dob) : ''], ['Gender', e.gender],
+          ['Blood Group', e.blood_group], ['Phone', e.phone], ['Address', e.address],
+          ['Emergency Contact', [e.emergency_name, e.emergency_phone].filter(Boolean).join(' · ')],
+          ['Education', e.education], ['Experience', e.experience],
+        ])}
+        ${group('Employment', '💼', [
+          ['Employee Code', e.emp_code], ['Designation', e.designation], ['Department', e.department],
+          ['Manager', e.manager_name || e.manager], ['Date of Joining', e.date_of_joining ? UI.date(e.date_of_joining) : ''],
+          ['Work Email', e.email],
+        ])}
+        ${group('Payroll & Bank', '🏦', [
+          ['Monthly Salary', e.monthly_salary != null ? UI.money(e.monthly_salary) : ''],
+          ['Bank Account', e.bank_account], ['IFSC', e.ifsc], ['PAN', e.pan], ['Aadhaar / ID', e.aadhaar],
+        ])}
+        <div class="card prof-sec"><div class="section-title">💻 My Assets</div><div id="myassets" class="muted">Loading…</div></div>`;
     }
+
     c.innerHTML = `
-      <div class="card" style="max-width:620px">
-        <div class="section-title">My Account</div>
-        <table>${account.map((r) => `<tr><td class="muted">${UI.esc(r[0])}</td><td>${UI.esc(r[1] || '-')}</td></tr>`).join('')}</table>
-        <div class="mt"><button class="btn secondary" id="pw">Change Password</button></div>
-      </div>
-      ${empCard}
-      ${employee && App.modOn('offboarding') ? '<div id="exit-card" style="max-width:620px"></div>' : ''}`;
+      <div class="prof-wrap">
+        <div class="prof-hero card">
+          <div class="prof-cover"></div>
+          <div class="prof-hero-body">
+            <div class="prof-avatar" style="background:${grad}">${UI.esc(initials)}</div>
+            <div class="prof-id">
+              <div class="prof-name">${UI.esc(e.name || App.user.email)}</div>
+              <div class="prof-sub">${UI.esc(e.designation || roleLabel)}${e.department ? ' · ' + UI.esc(e.department) : ''}</div>
+              <div class="prof-chips">${chips}</div>
+            </div>
+            <div class="prof-actions">
+              <button class="btn secondary" id="pw">🔑 Change Password</button>
+              ${employee ? '<button class="btn secondary" id="docs">📄 My Documents</button>' : ''}
+            </div>
+          </div>
+        </div>
+        ${detail}
+        ${employee && App.modOn('offboarding') ? '<div id="exit-card"></div>' : ''}
+      </div>`;
+
     document.getElementById('pw').onclick = () => App.changePasswordModal();
     if (employee) {
-      document.getElementById('docs').onclick = () => AdminViews.documentsModal(employee.id, employee.name);
+      const docsBtn = document.getElementById('docs');
+      if (docsBtn) docsBtn.onclick = () => AdminViews.documentsModal(employee.id, employee.name);
       api.get('/assets/mine').then(({ assets }) => {
-        document.getElementById('myassets').innerHTML = assets.length
+        const host = document.getElementById('myassets');
+        if (!host) return;
+        host.innerHTML = assets.length
           ? UI.table([{ key: 'name', label: 'Asset' }, { key: 'tag', label: 'Tag', render: (r) => UI.esc(r.tag || '-') }, { key: 'category', label: 'Category', render: (r) => UI.esc(r.category || '-') }], assets)
           : '<div class="empty">No assets assigned to you.</div>';
       }).catch(() => {});
