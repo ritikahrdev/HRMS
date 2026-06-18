@@ -64,24 +64,31 @@ function buildPayslipPdf(employee, slip) {
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
-  // ---- Header: company (left) + "Payslip For The Month" (right) ----
-  let cx = L;
-  if (s.logoFile) {
+  // ---- Letterhead banner (full-width company header) ----
+  const banner = path.join(__dirname, '..', 'assets', 'letterhead-header.png');
+  const hasBanner = fs.existsSync(banner);
+  if (hasBanner) {
+    try { doc.image(banner, 0, 0, { width: 595 }); } catch (e) { /* ignore bad image */ }
+  } else if (s.logoFile) {
     const logoPath = path.join(config.paths.uploads, s.logoFile);
     if (fs.existsSync(logoPath)) {
-      try { doc.image(logoPath, L, 46, { fit: [104, 46] }); cx = L + 116; } catch (e) { /* ignore */ }
+      try { doc.image(logoPath, L, 46, { fit: [104, 46] }); } catch (e) { /* ignore */ }
     }
   }
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(16).text(s.companyName || 'Company', cx, 50, { width: 300 });
-  const addr = [s.address, s.gst ? 'GSTIN: ' + s.gst : '', s.email].filter(Boolean).join('\n');
-  doc.fillColor('#6b7280').font('Helvetica').fontSize(8.5).text(addr, cx, 73, { width: 300 });
-  doc.fillColor('#6b7280').font('Helvetica-Bold').fontSize(9).text('PAYSLIP FOR THE MONTH', L, 50, { width: W, align: 'right', characterSpacing: 0.6 });
-  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14).text(monthLabel(slip.month), L, 64, { width: W, align: 'right' });
+  // Sub-header: company line (left) + "Payslip For The Month" (right), below the banner.
+  const topY = hasBanner ? 86 : 52;
+  doc.fillColor(hasBanner ? '#4b3a86' : '#111827').font('Helvetica-Bold').fontSize(hasBanner ? 11 : 16)
+    .text(s.legalName || s.companyName || 'Company', L, topY, { width: 330 });
+  const addr = [s.address, s.gst ? 'GSTIN: ' + s.gst : '', s.email].filter(Boolean).join('   ·   ');
+  doc.fillColor('#6b7280').font('Helvetica').fontSize(8.5).text(addr, L, topY + 15, { width: 340 });
+  doc.fillColor('#6b7280').font('Helvetica-Bold').fontSize(9).text('PAYSLIP FOR THE MONTH', L, topY, { width: W, align: 'right', characterSpacing: 0.6 });
+  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(14).text(monthLabel(slip.month), L, topY + 13, { width: W, align: 'right' });
 
-  doc.moveTo(L, 110).lineTo(R, 110).lineWidth(1).strokeColor('#e5e7eb').stroke();
+  const divY = topY + 34;
+  doc.moveTo(L, divY).lineTo(R, divY).lineWidth(1).strokeColor('#e5e7eb').stroke();
 
   // ---- Employee summary band + net-pay card ----
-  const bT = 124, bH = 120;
+  const bT = divY + 8, bH = 120;
   doc.roundedRect(L, bT, W, bH, 10).fill('#f8f9fc');
   doc.roundedRect(L, bT, W, bH, 10).lineWidth(1).strokeColor('#edeff5').stroke();
   doc.fillColor('#8a93a6').font('Helvetica-Bold').fontSize(8).text('EMPLOYEE SUMMARY', L + 18, bT + 16, { characterSpacing: 0.5 });
@@ -166,9 +173,12 @@ function buildPayslipPdf(employee, slip) {
   y += 28;
   doc.fillColor('#9ca3af').font('Helvetica').fontSize(8).text(s.slipFooter || '— This is a system-generated document and does not require a signature. —', L, y, { width: W, align: 'center' });
 
-  // ---- Footer: Hrika branding ----
-  doc.moveTo(L, 802).lineTo(R, 802).lineWidth(1).strokeColor('#eceef3').stroke();
-  doc.fillColor('#9ca3af').font('Helvetica').fontSize(8).text('Powered by Hrika · your people, handled', L, 810, { width: W, align: 'center' });
+  // ---- Footer: company letterhead footer (legal name · email · address) ----
+  doc.moveTo(L, 788).lineTo(R, 788).lineWidth(1.2).strokeColor('#c9b6ec').stroke();
+  doc.fillColor('#4b3a86').font('Helvetica-Bold').fontSize(9)
+    .text(s.legalName || s.companyName || 'OpenQuest Tech Pvt. Ltd.', L, 797, { width: W, align: 'center' });
+  doc.fillColor('#6b7280').font('Helvetica').fontSize(8)
+    .text(`Email : ${s.email || 'support@digistay.ai'}        Address : ${s.address || 'Dehradun, Uttarakhand, 248001'}`, L, 810, { width: W, align: 'center' });
 
   doc.end();
   return new Promise((resolve, reject) => {
