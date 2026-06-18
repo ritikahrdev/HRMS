@@ -562,6 +562,32 @@ tbody tr:not(.attx-row):nth-child(n+6){animation-delay:.15s}
 .prof-copy:hover .prof-copyico { opacity: .85; }
 .prof-copy:active .cval { color: #4f46e5; }
 
+/* ===== All-tabs component polish (lifts every tab via shared primitives) ===== */
+
+/* Tables — airy gradient header, subtle zebra, emphasised first column, calm
+   rows. Scoped to skip the interactive attendance board (.attx-row). */
+.table-wrap { background: #fff; box-shadow: var(--shadow); }
+thead th { background: linear-gradient(180deg,#f8faff,#eef1f8); color: #475467; border-bottom: 1px solid #e6e9f2; position: sticky; top: 0; z-index: 2; }
+tbody td { font-size: 13.5px; color: #344054; }
+tbody tr:not(.attx-row):nth-child(even) td { background: #fcfcff; }
+tbody tr:not(.attx-row) td:first-child { font-weight: 600; color: #1e293b; }
+tbody tr:hover td { background: #f5f7ff; }
+tbody tr:last-child td { border-bottom: none; }
+
+/* Status tags — leading dot for instant scanning */
+.tag { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .65; flex: none; }
+
+/* Empty states — friendly, softly bordered card instead of bare text */
+.empty { background: #fafbff; border: 1px dashed #e2e6f0; border-radius: 14px; font-size: 13.5px; padding: 36px 24px; }
+
+/* Form fields — tidier labels + comfier inputs across every form & modal */
+.field label { font-weight: 600; color: #475467; font-size: 12px; }
+.field input, .field select, .field textarea { padding: 10px 12px; }
+
+/* Card section headers get a hairline divider for cleaner structure on dense tabs */
+.card > .section-title:first-child { padding-bottom: 11px; margin-bottom: 13px; border-bottom: 1px solid #f1f3f9; }
+
 /* Accessibility: honour reduced-motion preference (kills animations AND sweeps) */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
