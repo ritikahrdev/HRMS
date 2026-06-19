@@ -71,22 +71,47 @@ function classifyMessage(rawText, slack) {
 }
 
 // Build a resolver mapping a Slack user id -> employee id.
+// Strongest identifiers first (slack_id -> email -> exact name), then UNIQUE
+// fuzzy name matches among ACTIVE employees only — mirroring the forgiving
+// webhook resolver (server/routes/webhook.js) so polling records the SAME people
+// the proven webhook path did. Without the users:read.email scope the Slack
+// profile email is blank, so a first-name-only or handle-style real_name (e.g.
+// "Pranshu" -> "Pranshu Dubey") still resolves by name instead of silently going
+// unmatched. Fuzzy matches resolve only when exactly one active employee fits,
+// so it can never pick the wrong person.
 async function buildResolver(slackUsers) {
-  const employees = await db.prepare('SELECT id, emp_code, email, name, slack_id FROM employees').all();
+  const employees = await db.prepare('SELECT id, emp_code, email, name, slack_id, status FROM employees').all();
   const byId = {}, byEmail = {}, byName = {};
   for (const e of employees) {
-    if (e.slack_id) byId[e.slack_id] = e.id;
+    if (e.slack_id) byId[String(e.slack_id)] = e.id;
     if (e.email) byEmail[String(e.email).toLowerCase()] = e.id;
     if (e.name) byName[String(e.name).toLowerCase()] = e.id;
   }
+  const active = employees.filter((e) => e.status === 'active');
+  // Normalise: lowercase, treat . and _ as spaces ("suraj.shukla" -> "suraj
+  // shukla"), collapse whitespace.
+  const norm = (x) => String(x == null ? '' : x).toLowerCase().replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // Unique active fuzzy match for a free-form name, else null.
+  const fuzzy = (rawName) => {
+    const n = norm(rawName);
+    if (!n) return null;
+    const toks = n.split(' ').filter(Boolean);
+    let c = active.filter((e) => { const w = norm(e.name).split(' '); return toks.every((t) => w.includes(t)); }); // all incoming tokens present
+    if (c.length === 1) return c[0].id;
+    c = active.filter((e) => norm(e.name) === n || norm(e.name).startsWith(n + ' ')); // input is a name prefix
+    if (c.length === 1) return c[0].id;
+    c = active.filter((e) => { const w = norm(e.name).split(' ').filter(Boolean); return w.length && w.every((t) => toks.includes(t)); }); // stored tokens ⊆ incoming
+    if (c.length === 1) return c[0].id;
+    if (toks.length === 1) { c = active.filter((e) => norm(e.name).split(' ')[0] === toks[0]); if (c.length === 1) return c[0].id; } // unique first name
+    return null;
+  };
   return (uid) => {
     if (byId[uid]) return byId[uid];
     const u = slackUsers[uid];
-    if (u) {
-      if (u.email && byEmail[String(u.email).toLowerCase()]) return byEmail[String(u.email).toLowerCase()];
-      if (u.real_name && byName[String(u.real_name).toLowerCase()]) return byName[String(u.real_name).toLowerCase()];
-    }
-    return null;
+    if (!u) return null;
+    if (u.email && byEmail[String(u.email).toLowerCase()]) return byEmail[String(u.email).toLowerCase()];
+    if (u.real_name && byName[String(u.real_name).toLowerCase()]) return byName[String(u.real_name).toLowerCase()];
+    return fuzzy(u.real_name); // first-name / handle / fuller-name variants, unique active only
   };
 }
 
@@ -314,7 +339,12 @@ async function postToSlack(message, opts) {
     } catch (e) { console.error('Error posting to Slack webhook:', e.message); return false; }
   }
   if (!s.enabled || !s.botToken) return false;
-  const channelId = legacyChannel || s.channelId;
+  // Route by purpose: a shoutout posts to its own channel when `shoutoutChannelId`
+  // is set, otherwise the default channel. (An incoming-webhook URL configured for
+  // the purpose above already took precedence.) This keeps HRMS-originated
+  // shoutouts (Recognition wall) out of the attendance channel.
+  const purposeChannel = purpose === 'shoutout' ? (s.shoutoutChannelId || s.channelId) : s.channelId;
+  const channelId = legacyChannel || purposeChannel;
   if (!channelId) return false;
   try {
     const data = await slackApi(s.botToken, 'chat.postMessage', { channel: channelId, text: message, mrkdwn: true });

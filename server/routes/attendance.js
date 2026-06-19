@@ -623,6 +623,34 @@ router.post('/slack-sync', requirePerm('attendance:viewAll'), async (req, res) =
   }
 });
 
+// Cron-driven Slack attendance poll — the robust, socket-free path.
+// Reading is OUTBOUND-only (Slack `conversations.history`), so it needs NEITHER
+// Socket Mode NOR an Events Request URL — nothing in the Slack app config can
+// break it. An external scheduler (e.g. cron-job.org) hits this every ~3 min
+// during the marking window (e.g. 10:00–14:00 IST). Each call re-reads the whole
+// day and upserts idempotently (reactions are de-duped in slackSync), so a
+// delayed or skipped poll self-heals on the next run.
+// Session-less by design (a cron can't log in); gated by the SAME optional
+// CRON_KEY as /api/cron/run — open when CRON_KEY is unset (the default), or pass
+// ?key=<CRON_KEY> when you choose to set one.
+router.get('/poll', async (req, res) => {
+  if (process.env.CRON_KEY && req.query.key !== process.env.CRON_KEY) {
+    return res.status(403).json({ ok: false, error: 'Invalid cron key.' });
+  }
+  // "Today" in the company timezone (default Asia/Kolkata) so a poll just after
+  // IST-midnight still targets the correct local day, not the UTC day.
+  const tz = (getSettings().timezone) || 'Asia/Kolkata';
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+  try {
+    const result = await syncFromSlack(date);
+    res.json({ ok: true, date, ...result });
+  } catch (e) {
+    // "Slack sync is off / not configured" is an expected state, not a hard
+    // failure for the scheduler — return 200 so it doesn't flag every tick.
+    res.json({ ok: false, date, error: e.message });
+  }
+});
+
 // Preview how a Slack message would be classified (for testing keywords).
 router.get('/slack-preview', requirePerm('attendance:viewAll'), (req, res) => {
   const text = String(req.query.text || '');
