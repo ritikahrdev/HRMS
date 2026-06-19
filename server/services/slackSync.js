@@ -81,13 +81,16 @@ function classifyMessage(rawText, slack) {
 // so it can never pick the wrong person.
 async function buildResolver(slackUsers) {
   const employees = await db.prepare('SELECT id, emp_code, email, name, slack_id, status FROM employees').all();
+  // Index ACTIVE employees only — archived/inactive people are ignored entirely
+  // on EVERY match type (slack_id / email / exact name / fuzzy), so a stale
+  // archived record can never capture a live person's attendance.
+  const active = employees.filter((e) => e.status === 'active');
   const byId = {}, byEmail = {}, byName = {};
-  for (const e of employees) {
+  for (const e of active) {
     if (e.slack_id) byId[String(e.slack_id)] = e.id;
     if (e.email) byEmail[String(e.email).toLowerCase()] = e.id;
     if (e.name) byName[String(e.name).toLowerCase()] = e.id;
   }
-  const active = employees.filter((e) => e.status === 'active');
   // Normalise: lowercase, treat . and _ as spaces ("suraj.shukla" -> "suraj
   // shukla"), collapse whitespace.
   const norm = (x) => String(x == null ? '' : x).toLowerCase().replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();

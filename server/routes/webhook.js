@@ -78,9 +78,12 @@ const norm = (x) => lc(x).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
 // what makes the Slack side post a warning). Fuzzy matches resolve only when
 // exactly one active employee fits, so it never picks the wrong person.
 async function resolveEmployee(body) {
-  const all = await db.prepare('SELECT id, name, email, emp_code, slack_id, status FROM employees').all();
-  const activeFirst = (rows) => rows.slice().sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1));
-  const pick = (rows, by) => (rows.length ? { emp: activeFirst(rows)[0], by } : null);
+  const everyone = await db.prepare('SELECT id, name, email, emp_code, slack_id, status FROM employees').all();
+  // Resolve ONLY to ACTIVE employees — archived/inactive people are ignored
+  // entirely (even on an exact slack_id / email / emp_code / name match), so a
+  // stale archived record can never capture a live person's attendance.
+  const all = everyone.filter((e) => e.status === 'active');
+  const pick = (rows, by) => (rows.length ? { emp: rows[0], by } : null);
 
   const slackId = body.slack_id || body.slackId || body.user_id;
   if (slackId) { const m = pick(all.filter((e) => e.slack_id && lc(e.slack_id) === lc(slackId)), 'slack_id'); if (m) return m; }
@@ -91,8 +94,8 @@ async function resolveEmployee(body) {
   if (!n) return null;
   let m = pick(all.filter((e) => norm(e.name) === n), 'name'); if (m) return m;
 
-  // Fuzzy — unique active match only.
-  const act = all.filter((e) => e.status === 'active');
+  // Fuzzy — unique active match only (all is already active-only).
+  const act = all;
   const toks = n.split(' ').filter(Boolean);
   let c = act.filter((e) => { const w = norm(e.name).split(' '); return toks.every((t) => w.includes(t)); }); // all incoming tokens present in the stored name
   if (c.length === 1) return { emp: c[0], by: 'name~tokens' };
