@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
+const XLSX = require('xlsx');
 const db = require('../db');
 const config = require('../config');
 const { requireLogin, requirePerm, requireSuperAdmin, canActOnEmployee, teamEmployeeIds } = require('../middleware/auth');
@@ -87,6 +88,68 @@ router.get('/directory', requireLogin, async (req, res) => {
        FROM employees e WHERE e.status = 'active' ORDER BY e.name`
     ).all();
     res.json({ employees: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Export the staff directory as a real Excel (.xlsx) or CSV file.
+// Reuses the already-installed `xlsx` package (the same one bulk-import and the
+// import template use), so there is no new dependency and nothing to compile.
+// Columns mirror what the user sees in the Directory — the Manager column is
+// staff-only, exactly like the on-screen table (App.isStaff()). A real .xlsx
+// opens in both Microsoft Excel and Google Sheets; CSV is offered too.
+router.get('/directory/export', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.prepare(
+      `SELECT e.name, e.emp_code, e.department, e.designation, e.email, e.phone,
+              (SELECT name FROM employees m WHERE m.id = e.manager_id) AS manager_name
+       FROM employees e WHERE e.status = 'active' ORDER BY e.name`
+    ).all();
+
+    // Mirror App.isStaff(): managers and admin-ish roles see the reporting
+    // (Manager) column; a plain employee gets the same columns they see on screen.
+    const u = req.session.user || {};
+    const perms = u.permissions || [];
+    const STAFF_PERMS = ['employees:read', 'employees:write', 'attendance:viewAll',
+      'attendance:viewTeam', 'attendance:correct', 'leave:approve', 'reimbursement:approve',
+      'payroll:view', 'reports:view', 'settings:manage'];
+    const isStaff = perms.includes('*') || STAFF_PERMS.some((p) => perms.includes(p))
+      || u.role === 'MANAGER' || u.isManager;
+
+    const headers = ['Name', 'Emp Code', 'Designation', 'Department',
+      ...(isStaff ? ['Manager'] : []), 'Email', 'Phone'];
+    const data = rows.map((r) => {
+      const o = {
+        Name: r.name || '',
+        'Emp Code': r.emp_code || '',
+        Designation: r.designation || '',
+        Department: r.department || '',
+      };
+      if (isStaff) o.Manager = r.manager_name || '';
+      o.Email = r.email || '';
+      // Keep phone as text so Excel doesn't reformat it as a number.
+      o.Phone = r.phone == null ? '' : String(r.phone);
+      return o;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Directory');
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fmt = String(req.query.format || 'xlsx').toLowerCase();
+    if (fmt === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      res.setHeader('Content-Disposition', `attachment; filename="directory-${stamp}.csv"`);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.send('﻿' + csv); // UTF-8 BOM so Excel reads Unicode names correctly
+    } else {
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Disposition', `attachment; filename="directory-${stamp}.xlsx"`);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.send(buf);
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

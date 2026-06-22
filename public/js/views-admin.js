@@ -2528,6 +2528,8 @@ const AdminViews = {
         <input id="search" placeholder="Search name / dept / designation..." />
         <div class="spacer"></div>
         ${staff ? '<button class="btn sm secondary" id="viewList">☰ List</button><button class="btn sm secondary" id="viewChart">🌳 Org Chart</button>' : ''}
+        <a class="btn sm secondary" href="/api/employees/directory/export?format=xlsx" download title="Download as Excel (.xlsx) — opens in Microsoft Excel and Google Sheets">⬇ Excel</a>
+        <a class="btn sm secondary" href="/api/employees/directory/export?format=csv" download title="Download as CSV — opens in Excel and Google Sheets">⬇ CSV</a>
         <span class="muted">${employees.length} people</span>
       </div>
       <div id="list"></div>`;
