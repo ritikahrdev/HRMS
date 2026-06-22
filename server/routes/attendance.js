@@ -206,6 +206,10 @@ router.get('/day', requireLogin, async (req, res) => {
     employees = ids.length ? await db.prepare(`SELECT * FROM employees WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY name`).all(...ids) : [];
   }
 
+  // Stamp the default clock-out + hours for this day's checked-in-but-not-out
+  // rows, so the Hours column is filled the moment the day is opened (non-fatal).
+  try { await require('../services/autoCheckout').autoCloseAttendance(date); } catch (e) { /* non-fatal */ }
+
   const att = await db.prepare('SELECT * FROM attendance WHERE date = ?').all(date);
   const attMap = {}; for (const a of att) attMap[a.employee_id] = a;
   const leaves = await db.prepare("SELECT employee_id FROM leave_requests WHERE status='approved' AND from_date <= ? AND to_date >= ?").all(date, date);

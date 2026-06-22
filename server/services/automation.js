@@ -176,6 +176,10 @@ async function runDailyAutomations(opts = {}) {
   if (auto.attendanceReminder !== false) {
     try { results.attendanceReminder = await sendUnmarkedReminders({ force: opts.force }); } catch (e) { results.attendanceReminder = { error: e.message }; }
   }
+  // Auto check-out: stamp a default clock-out + work hours for anyone who marked
+  // Present/Half but never clocked out (the Slack flow only checks people in).
+  // Backfills history on its first run, then keeps each day current. Idempotent.
+  try { const { autoCloseAttendance } = require('./autoCheckout'); results.autoCheckout = await autoCloseAttendance(); } catch (e) { results.autoCheckout = { error: e.message }; }
 
   await saveSettings({ automationState: { lastRunDate: today, lastRunAt: nowStamp(), results } }).catch(() => {});
   if (Object.keys(results).length) console.log(`⚙️  Automations ran (${today}):`, JSON.stringify(results));

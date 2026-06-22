@@ -45,7 +45,7 @@ router.put('/', requirePerm('settings:manage'), async (req, res) => {
   const allowed = [
     'companyName', 'legalName', 'address', 'gst', 'cin', 'pan', 'email', 'phone',
     'website', 'currency', 'slipFooter', 'workStart', 'workEnd', 'workingDays',
-    'weekendPolicy', 'fullDayHours', 'halfDayHours', 'graceMinutes', 'attendanceCloseTime', 'leavePolicy',
+    'weekendPolicy', 'fullDayHours', 'halfDayHours', 'graceMinutes', 'attendanceCloseTime', 'autoCheckoutTime', 'leavePolicy',
     'payrollClosingDay', 'payroll', 'statutory', 'attendanceSheetUrl',
     'leaveTypes', 'modules', 'slack', 'requiredDocs', 'uidaiCert', 'webhookSecret',
     'departmentAccounts', 'preboardLinkHours', 'onboardingCcEmail', 'leaveAccrual', 'geofence', 'noticePeriodDays',

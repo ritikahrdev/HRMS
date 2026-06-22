@@ -2002,6 +2002,7 @@ const AdminViews = {
           <div class="field"><label>Clock-in grace (minutes)</label><input type="number" id="graceMinutes" value="${s.graceMinutes != null ? s.graceMinutes : 30}" /><span class="muted" style="font-size:12px">After In&nbsp;Time + grace, marks are flagged <b>late</b> (they can still mark until the cut-off above).</span></div>
           <div class="field"><label>Full Day Hours (≥ = Present)</label><input type="number" step="0.5" id="fullDayHours" value="${s.fullDayHours}" /></div>
           <div class="field"><label>Half Day Hours (≥ = Half)</label><input type="number" step="0.5" id="halfDayHours" value="${s.halfDayHours}" /><span class="muted" style="font-size:12px">Below this many hours counts as Absent.</span></div>
+          <div class="field"><label>Auto Check-out Time</label><input type="time" id="autoCheckoutTime" value="${UI.esc(s.autoCheckoutTime || '19:30')}" /><span class="muted" style="font-size:12px">For anyone who marks Present but never clocks out, this clock-out is stamped so <b>Hours</b> are recorded. Default 7:30 PM. Clear to disable.</span></div>
           <div class="field"><label>Weekend Policy (note)</label><input id="weekendPolicy" value="${UI.esc(s.weekendPolicy)}" placeholder="e.g. sat-sun" /></div>
           <div class="field full"><label>Attendance Google Sheet (published CSV link)</label><input id="attendanceSheetUrl" value="${UI.esc(s.attendanceSheetUrl)}" placeholder="https://docs.google.com/.../pub?output=csv" /><span class="muted" style="font-size:12px">In Google Sheets: File → Share → Publish to web → CSV. Then use "Sync from Google Sheet" on the Attendance page.</span></div>
         </div>
@@ -2295,6 +2296,7 @@ const AdminViews = {
         attendanceSheetUrl: val('attendanceSheetUrl'),
         fullDayHours: Number(val('fullDayHours')), halfDayHours: Number(val('halfDayHours')), graceMinutes: Number(val('graceMinutes')),
         attendanceCloseTime: val('attendanceCloseTime'),
+        autoCheckoutTime: val('autoCheckoutTime'),
         workingDays: Array.from(document.querySelectorAll('.wd:checked')).map((x) => Number(x.value)),
         leaveTypes: ltState.filter((t) => t.code && t.name),
         payrollClosingDay: Number(val('payrollClosingDay')),
