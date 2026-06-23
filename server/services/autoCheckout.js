@@ -20,6 +20,12 @@ function parseHM(s) {
   return { h, m: min };
 }
 
+// Today's date (YYYY-MM-DD) in the company timezone.
+function companyToday(tz) {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'Asia/Kolkata' }).format(new Date()); }
+  catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+
 // "<date> HH:MM in tz" -> the matching UTC instant (ms). Mirrors the webhook's
 // wall-clock→UTC conversion so 19:30 IST is stored as 14:00Z and displays as
 // 7:30 PM in an IST browser, exactly like a real check-in.
@@ -38,10 +44,11 @@ function wallToUtcMs(date, h, m, tz) {
   return guess - (asTz - guess);
 }
 
-// Fill a default check-out + work hours. Pass a date string to limit to one day
-// (used when a Team Attendance day is opened, for instant results); omit it to
-// process every pending day (used by the daily automation, which also backfills
-// history on its first run). Returns a small summary.
+// Fill a default check-out + work hours for PAST days only (today stays live).
+// Pass a date string to limit to one day (used when a Team Attendance day is
+// opened, for instant results — a no-op if that day is today); omit it to
+// process every pending past day (used by the daily automation, which also
+// backfills history on its first run). Returns a small summary.
 async function autoCloseAttendance(onlyDate) {
   const s = getSettings();
   const raw = s.autoCheckoutTime == null ? '19:30' : String(s.autoCheckoutTime).trim();
@@ -49,10 +56,14 @@ async function autoCloseAttendance(onlyDate) {
   const hm = parseHM(raw);
   if (!hm) return { skipped: 'bad_time', value: raw };
   const tz = s.timezone || 'Asia/Kolkata';
+  // Only CLOSED (past) days get a default check-out. TODAY is left open so its
+  // hours tick LIVE (check-in → now) in the UI; it earns the 7:30 stamp only
+  // once it rolls over into a past day.
+  const today = companyToday(tz);
 
   let sql =
-    "SELECT id, date, check_in FROM attendance WHERE check_out IS NULL AND check_in IS NOT NULL AND status IN ('present','half')";
-  const params = [];
+    "SELECT id, date, check_in FROM attendance WHERE check_out IS NULL AND check_in IS NOT NULL AND status IN ('present','half') AND date < ?";
+  const params = [today];
   if (onlyDate) { sql += ' AND date = ?'; params.push(onlyDate); }
   const rows = await db.prepare(sql).all(...params);
 
