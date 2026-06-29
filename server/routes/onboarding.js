@@ -141,6 +141,27 @@ router.post('/preboard', requirePerm('employees:write'), async (req, res) => {
   const name = (b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Candidate name is required.' });
   try {
+    // Duplicate guard: if an active employee looks like the same person — same
+    // email, or a near-identical name (one name's words are a subset of the
+    // other's, e.g. "Pawan Shankhydhar" vs "Pawan Kumar Shankhydhar") — don't
+    // silently create a copy. Ask the caller to confirm; they re-send force:true.
+    if (!b.force) {
+      const norm = (x) => String(x || '').toLowerCase().replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
+      const lc = (x) => String(x || '').toLowerCase().trim();
+      const nn = norm(name);
+      const nt = nn.split(' ').filter(Boolean);
+      const pe = lc(b.personal_email);
+      const subset = (a, arr) => a.length && a.every((t) => arr.includes(t));
+      const actives = await db.prepare("SELECT id, name, email, personal_email, designation FROM employees WHERE status = 'active'").all();
+      const matches = actives.filter((e) => {
+        if (pe && (lc(e.personal_email) === pe || lc(e.email) === pe)) return true;
+        const et = norm(e.name).split(' ').filter(Boolean);
+        return norm(e.name) === nn || subset(nt, et) || subset(et, nt);
+      });
+      if (matches.length) {
+        return res.json({ needsConfirm: true, matches: matches.map((e) => ({ id: e.id, name: e.name, designation: e.designation || '' })) });
+      }
+    }
     const { employee } = await createEmployee({
       name,
       department: b.department || '',

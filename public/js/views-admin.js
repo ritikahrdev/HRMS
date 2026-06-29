@@ -3978,11 +3978,19 @@ const AdminViews = {
       if (!designation) return UI.toast('Designation is required.', 'error');
       if (!date_of_joining) return UI.toast('Date of joining is required.', 'error');
       try {
-        const r = await api.post('/onboarding/preboard', {
+        const body = {
           name, personal_email: email, designation, date_of_joining,
           department: m.root.querySelector('#pbDept').value.trim(),
           cc: m.root.querySelector('#pbCc').value.trim(),
-        });
+        };
+        let r = await api.post('/onboarding/preboard', body);
+        // Duplicate guard: server thinks this person may already exist.
+        if (r && r.needsConfirm) {
+          const list = r.matches.map((x) => `• ${x.name}${x.designation ? ` (${x.designation})` : ''}`).join('\n');
+          const ok = confirm(`⚠️ This looks like an existing employee:\n\n${list}\n\nTo send THEM the onboarding link, click Cancel and open their profile.\n\nClick OK only if this is a genuinely DIFFERENT person and you want a separate record.`);
+          if (!ok) return;
+          r = await api.post('/onboarding/preboard', { ...body, force: true });
+        }
         const when = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '';
         const mailLine = r.emailed
           ? `<p style="font-size:12px;margin:8px 0 0;color:#16a34a">✉️ Onboarding link emailed to <b>${UI.esc(r.emailedTo)}</b>${r.cc ? ` (cc <b>${UI.esc(r.cc)}</b>)` : ''}.</p>`
