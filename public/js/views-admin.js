@@ -3960,6 +3960,7 @@ const AdminViews = {
           <div class="field"><label>Department</label><input id="pbDept" /></div>
           <div class="field"><label>Designation *</label><input id="pbDesig" /></div>
           <div class="field"><label>Date of Joining *</label><input id="pbDoj" type="date" /></div>
+          <div class="field full"><label>CC this onboarding email to (optional)</label><input id="pbCc" placeholder="e.g. manager@digistay.ai, hr@digistay.ai — leave blank for none" /><p class="muted" style="font-size:11px;margin:4px 0 0">Type whoever should be CC'd on this onboarding email. Leave blank to send to the candidate only.</p></div>
         </div>
         <div id="pbResult" style="margin-top:12px"></div>`,
       footHtml: `<button class="btn secondary" data-close-btn>Close</button><button class="btn" id="pbCreate">Create & get link</button>`,
@@ -3980,6 +3981,7 @@ const AdminViews = {
         const r = await api.post('/onboarding/preboard', {
           name, personal_email: email, designation, date_of_joining,
           department: m.root.querySelector('#pbDept').value.trim(),
+          cc: m.root.querySelector('#pbCc').value.trim(),
         });
         const when = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '';
         const mailLine = r.emailed

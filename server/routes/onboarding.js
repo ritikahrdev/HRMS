@@ -40,12 +40,17 @@ async function issuePreboardToken(employeeId) {
 // Email the onboarding/pre-boarding link to the new (upcoming) employee, CC'd to
 // the onboarding coordinator (Settings → onboardingCcEmail, defaults to Abhinav).
 // Sends to the candidate's personal email (they have no company login yet).
-async function sendOnboardingEmail(req, employeeId, token) {
+async function sendOnboardingEmail(req, employeeId, token, ccOverride) {
   const emp = await db.prepare('SELECT name, email, personal_email, designation, date_of_joining FROM employees WHERE id = ?').get(employeeId);
   if (!emp) return { emailed: false, emailedTo: null, cc: null };
   const to = (emp.personal_email || emp.email || '').trim();
   const s = getSettings();
-  const cc = (s.onboardingCcEmail || 'abhinav@digistay.ai').trim();
+  // CC: when HR supplies a per-send value (typed in the form each time) use it
+  // verbatim — an empty string means "no CC". Only fall back to the configured
+  // coordinator when no override was passed at all.
+  const cc = (ccOverride !== undefined && ccOverride !== null)
+    ? String(ccOverride).trim()
+    : (s.onboardingCcEmail || 'abhinav@digistay.ai').trim();
   if (!to) return { emailed: false, emailedTo: null, cc };
   const link = preboardUrl(req, token);
   const co = s.companyName || 'the company';
@@ -153,8 +158,9 @@ router.post('/preboard', requirePerm('employees:write'), async (req, res) => {
     await buildJourney(employee.id);
     const token = await issuePreboardToken(employee.id);
     const exp = (await db.prepare('SELECT preboard_expires FROM employees WHERE id = ?').get(employee.id)).preboard_expires;
-    // Auto-email the onboarding link to the upcoming employee (CC the coordinator).
-    const mail = await sendOnboardingEmail(req, employee.id, token);
+    // Auto-email the onboarding link to the upcoming employee. CC is whatever HR
+    // typed in the form for this send (b.cc); falls back to the coordinator if absent.
+    const mail = await sendOnboardingEmail(req, employee.id, token, b.cc);
     res.json({ ok: true, employeeId: employee.id, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours(), ...mail });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -174,7 +180,7 @@ router.post('/:employeeId/preboard-link', requirePerm('employees:write'), async 
     }
     const exp = (await db.prepare('SELECT preboard_expires FROM employees WHERE id = ?').get(emp.id)).preboard_expires;
     // Optionally (re)send the onboarding email to the employee when asked.
-    const mail = (req.body && req.body.email) ? await sendOnboardingEmail(req, emp.id, token) : {};
+    const mail = (req.body && req.body.email) ? await sendOnboardingEmail(req, emp.id, token, req.body.cc) : {};
     res.json({ ok: true, token, url: preboardUrl(req, token), expiresAt: toIso(exp), hours: linkHours(), ...mail });
   } catch (e) {
     res.status(500).json({ error: e.message });
