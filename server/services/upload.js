@@ -13,12 +13,15 @@ const allowedMimes = [
 // File extensions allowed (whitelist)
 const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
 
-// MIME types allowed for document uploads (PDF, images, documents)
-const allowedDocMimes = [
-  'image/jpeg',
-  'image/png',
-  'application/pdf',
-  'text/plain',
+// Documents people actually attach for onboarding: PDFs, photos (incl. iPhone
+// HEIC), and Office files. We whitelist by FILE EXTENSION because browsers
+// report unreliable MIME types for HEIC/Office files (often
+// "application/octet-stream"), which was silently blocking valid uploads.
+const allowedDocExtensions = [
+  '.pdf',
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif',
+  '.doc', '.docx', '.xls', '.xlsx',
+  '.txt',
 ];
 
 // In-memory storage: files are kept in req.file.buffer and persisted to
@@ -42,23 +45,14 @@ const logoFileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-// Validate file type for document uploads
+// Validate document uploads by extension whitelist. The whitelist already
+// excludes executable/markup types (.exe/.html/.svg/.js …), so only safe
+// document formats get through — while accepting HEIC photos and Office files.
 const documentFileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
-
-  // Check MIME type
-  if (!allowedDocMimes.includes(file.mimetype)) {
-    return cb(new Error(`Invalid file type. Only PDF and images are allowed.`), false);
+  if (!allowedDocExtensions.includes(ext)) {
+    return cb(new Error(`"${ext || 'This file'}" isn't a supported type. Please upload a PDF, an image (JPG, PNG, HEIC, WebP), or a Word/Excel file.`), false);
   }
-
-  // Block dangerous extensions even if MIME type matches. Includes markup types
-  // (.html/.svg/.xml) that a browser could render and execute script from.
-  const dangerousExtensions = ['.exe', '.sh', '.bat', '.cmd', '.com', '.pif', '.zip', '.rar', '.7z',
-    '.html', '.htm', '.svg', '.xml', '.xhtml', '.js', '.mjs'];
-  if (dangerousExtensions.includes(ext)) {
-    return cb(new Error(`File type not allowed.`), false);
-  }
-
   cb(null, true);
 };
 
@@ -68,10 +62,10 @@ const upload = multer({
   fileFilter: logoFileFilter,
 });
 
-// For document uploads (more restrictive)
+// For document uploads (PDF/image/Office, up to 15 MB for high-res scans).
 const documentUpload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: documentFileFilter,
 });
 

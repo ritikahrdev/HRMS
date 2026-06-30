@@ -72,8 +72,22 @@ router.put('/:token', async (req, res) => {
   }
 });
 
+// Run the single-file upload but turn any rejection (unsupported type / too
+// large) into a clean 400 the candidate can read, instead of a generic error.
+function uploadOne(req, res, next) {
+  documentUpload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'That file is too large — please keep each file under 15 MB.'
+        : (err.message || 'Upload failed.');
+      return res.status(400).json({ error: msg });
+    }
+    next();
+  });
+}
+
 // Upload a document (categorised by doc_type). Stored against the candidate.
-router.post('/:token/documents', documentUpload.single('file'), async (req, res) => {
+router.post('/:token/documents', uploadOne, async (req, res) => {
   try {
     const emp = await byToken(req.params.token);
     if (!emp) return res.status(404).json(INVALID);
