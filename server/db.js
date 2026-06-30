@@ -583,8 +583,7 @@ const defaultSettings = {
     'Government-issued ID (Aadhaar & PAN, or Passport)', 'Recent passport-sized photographs',
     'Previous employment documents (offer / experience / resignation letters)',
     'Educational certificates and marksheets', 'Last 2-3 salary slips (last 2 organizations)',
-    'Cancelled cheque or bank account details', 'Two contact numbers for reference check',
-    'Emergency contact number',
+    'Cancelled cheque or bank account details',
   ],
   departmentAccounts: {
     default: ['Work email (Google Workspace)', 'Slack', 'HRMS login', 'Biometric / ID card'],
