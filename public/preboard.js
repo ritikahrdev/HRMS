@@ -114,18 +114,28 @@
     if (d.logoFile) $('logo').innerHTML = '<img src="/uploads/' + esc(d.logoFile) + '" alt="" />';
 
     const required = d.requiredDocs || [];
-    const byType = {}; (d.documents || []).forEach((x) => { if (x.doc_type) byType[x.doc_type] = x; });
-    const uploaded = required.filter((t) => byType[t]).length;
+    // A document type can hold MANY files (e.g. "Last 2-3 salary slips",
+    // educational certificates). Collect them all, not just the last one.
+    const byType = {}; (d.documents || []).forEach((x) => { if (x.doc_type) (byType[x.doc_type] = byType[x.doc_type] || []).push(x); });
+    const uploaded = required.filter((t) => (byType[t] || []).length).length;
 
     const docRows = required.map((t) => {
-      const doc = byType[t];
-      const status = !doc ? '<span class="tag miss">Not uploaded</span>'
-        : (doc.status === 'verified' ? '<span class="tag ok">✓ Verified</span>'
-          : (doc.status === 'rejected' ? '<span class="tag miss">Rejected — re-upload</span>' : '<span class="tag wait">Uploaded</span>'));
-      const act = doc
-        ? '<a class="btn sm secondary" href="/api/preboard/' + token + '/documents/' + doc.id + '/file" target="_blank">View</a> <label class="btn sm secondary">Replace<input type="file" class="up hide" data-type="' + esc(t) + '"></label>'
-        : '<label class="btn sm">Upload<input type="file" class="up hide" data-type="' + esc(t) + '"></label>';
-      return '<div class="row"><div class="name">' + esc(t) + '</div>' + status + '<div>' + act + '</div></div>';
+      const docs = byType[t] || [];
+      const status = docs.length
+        ? '<span class="tag ok">' + docs.length + ' file' + (docs.length > 1 ? 's' : '') + '</span>'
+        : '<span class="tag miss">Not uploaded</span>';
+      // List every uploaded file with View + Remove (unless HR already verified it).
+      const files = docs.map((doc) => {
+        const st = doc.status === 'verified' ? '<span class="tag ok" style="font-size:11px">✓ Verified</span>'
+          : (doc.status === 'rejected' ? '<span class="tag miss" style="font-size:11px">Rejected</span>' : '<span class="tag wait" style="font-size:11px">Uploaded</span>');
+        const rm = doc.status === 'verified' ? '' : ' <button type="button" class="btn sm secondary rmdoc" data-id="' + doc.id + '" title="Remove">✕</button>';
+        return '<div style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:13px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(doc.title || t) + '</span>' + st
+          + ' <a class="btn sm secondary" href="/api/preboard/' + token + '/documents/' + doc.id + '/file" target="_blank">View</a>' + rm + '</div>';
+      }).join('');
+      // One picker that accepts MULTIPLE files at once, plus "add another".
+      const add = '<label class="btn sm">' + (docs.length ? '➕ Add file(s)' : 'Upload') + '<input type="file" class="up hide" data-type="' + esc(t) + '" multiple></label>';
+      return '<div class="row"><div class="name">' + esc(t) + '</div>' + status
+        + '<div style="min-width:240px">' + files + add + '</div></div>';
     }).join('');
 
     const detailsGrid = FIELDS.map((f) => fieldHtml(f, d.details ? d.details[f.id] : '')).join('');
@@ -149,14 +159,23 @@
       try { await api('PUT', '', collect()); toast('Progress saved ✓'); } catch (e) { toast(e.message); }
     };
     document.querySelectorAll('.up').forEach((inp) => inp.onchange = async (e) => {
-      const file = e.target.files[0]; if (!file) return;
-      const fd = new FormData(); fd.append('file', file); fd.append('doc_type', inp.dataset.type); fd.append('title', inp.dataset.type);
-      try { await api('POST', '/documents', fd, true); toast('Uploaded ✓'); await load(); } catch (err) { toast(err.message); }
+      const files = Array.from(e.target.files || []); if (!files.length) return;
+      try {
+        for (const file of files) {
+          const fd = new FormData(); fd.append('file', file); fd.append('doc_type', inp.dataset.type); fd.append('title', file.name || inp.dataset.type);
+          await api('POST', '/documents', fd, true);
+        }
+        toast(files.length > 1 ? (files.length + ' files uploaded ✓') : 'Uploaded ✓'); await load();
+      } catch (err) { toast(err.message); }
+    });
+    document.querySelectorAll('.rmdoc').forEach((b) => b.onclick = async () => {
+      if (!confirm('Remove this file?')) return;
+      try { await api('DELETE', '/documents/' + b.dataset.id); toast('Removed'); await load(); } catch (err) { toast(err.message); }
     });
     $('submitBtn').onclick = async () => {
       clearBadMarks();
       const missing = missingFieldIds();
-      const missDocs = required.filter((t) => !byType[t]);
+      const missDocs = required.filter((t) => !(byType[t] || []).length);
       if (missing.length || missDocs.length) {
         markBad(missing);
         const first = missing.length ? $('f-' + missing[0]) : null;

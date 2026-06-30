@@ -2828,15 +2828,18 @@ const AdminViews = {
 
     const load = async () => {
       const { documents } = await api.get(`/employees/${employeeId}/documents`);
+      // A required type can hold MANY files (e.g. 2-3 salary slips). Group them.
       const byType = {};
-      documents.forEach((d) => { if (d.doc_type) byType[d.doc_type] = d; });
-      const done = required.filter((t) => byType[t]).length;
+      documents.forEach((d) => { if (d.doc_type) (byType[d.doc_type] = byType[d.doc_type] || []).push(d); });
+      const done = required.filter((t) => (byType[t] || []).length).length;
       const verified = documents.filter((d) => d.status === 'verified').length;
 
+      const docLine = (d) => `<div style="display:flex;align-items:center;gap:6px;margin:3px 0"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${UI.esc(d.title || d.doc_type || 'Document')}</span>${stChip(d)}<a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${d.id}/file" target="_blank">View</a>${vActions(d)} <button class="btn sm secondary" data-del="${d.id}">✕</button></div>`;
       const checklist = required.map((t) => {
-        const doc = byType[t];
-        if (!doc) return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div><span class="tag rejected">Missing</span></div><div class="doc-act"><label class="btn sm">Upload<input type="file" class="reqfile" data-type="${UI.esc(t)}" style="display:none"/></label></div></div>`;
-        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${stChip(doc)}</div><div class="doc-act"><a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${doc.id}/file" target="_blank">View</a>${vActions(doc)} <button class="btn sm secondary" data-del="${doc.id}">✕</button></div></div>`;
+        const docs = byType[t] || [];
+        const head = docs.length ? `<span class="tag approved">${docs.length} file${docs.length > 1 ? 's' : ''}</span>` : '<span class="tag rejected">Missing</span>';
+        const add = `<label class="btn sm">${docs.length ? '➕ Add' : 'Upload'}<input type="file" class="reqfile" data-type="${UI.esc(t)}" multiple style="display:none"/></label>`;
+        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${head}</div><div class="doc-act" style="min-width:250px">${docs.map(docLine).join('')}${add}</div></div>`;
       }).join('');
 
       const others = documents.filter((d) => !required.includes(d.doc_type));
