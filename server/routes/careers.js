@@ -60,7 +60,12 @@ router.post('/apply/:jobId', applyLimiter, documentUpload.single('resume'), asyn
     const skills = String(b.skills || '').trim().slice(0, 500);
     const note = String(b.note || '').trim().slice(0, 1000);
     const experience_years = Math.max(0, Math.min(50, Number(b.experience_years) || 0));
-    if (!name || !email) return res.status(400).json({ error: 'Name and email are required.' });
+    // Every field on the form is mandatory. (experience may legitimately be 0,
+    // so we check the field was filled in rather than that it's non-zero.)
+    const expProvided = String(b.experience_years == null ? '' : b.experience_years).trim() !== '';
+    if (!name || !email || !phone || !expProvided || !skills || !note) {
+      return res.status(400).json({ error: 'Please fill in all fields before submitting.' });
+    }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
 
     // One application per email per job.
