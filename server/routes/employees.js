@@ -306,8 +306,12 @@ router.post('/', requirePerm('employees:write'), async (req, res) => {
     // Only a Super Admin may assign a non-default role at creation time.
     const allowRole = req.session.user.role === 'SUPER_ADMIN';
     const { employee, tempPassword } = await createEmployee(req.body || {}, { allowRole });
-    if (tempPassword && employee.email) {
-      const s = getSettings();
+    const s = getSettings();
+    // During testing we don't hand out HRMS logins. The email is only sent when
+    // the admin explicitly enables it (Settings → "Email login credentials to
+    // new employees"). The login account is still created either way, so it can
+    // be shared later with a password reset.
+    if (s.sendEmployeeLoginEmail === true && tempPassword && employee.email) {
       await sendMail({
         to: employee.email,
         subject: `Welcome to ${s.companyName || 'the company'}`,
@@ -416,7 +420,9 @@ router.post('/:id/reset-password', requirePerm('employees:write'), async (req, r
       bcrypt.hashSync(temp, 10),
       emp.user_id
     );
-    if (emp.email) {
+    // Testing mode: don't email the new password to the employee unless the
+    // admin has turned on login emails. The admin still gets it in the response.
+    if (getSettings().sendEmployeeLoginEmail === true && emp.email) {
       await sendMail({
         to: emp.email,
         subject: 'Your HR portal password was reset',

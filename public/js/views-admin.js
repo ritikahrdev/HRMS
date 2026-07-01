@@ -2097,6 +2097,7 @@ const AdminViews = {
         <p class="muted" style="font-size:12px">Automatically email a warm birthday wish to each employee on their birthday — sent only to them, from your company. (Uses each employee's Date of Birth.)</p>
         <div class="checkbox-row" style="margin-bottom:8px"><label><input type="checkbox" id="birthdayEmails" ${s.birthdayEmails !== false ? 'checked' : ''}/> Send automatic birthday emails</label></div>
         <div class="checkbox-row" style="margin-bottom:8px"><label><input type="checkbox" id="shoutoutEmailBroadcast" ${s.shoutoutEmailBroadcast === true ? 'checked' : ''}/> Email all employees when a shoutout is posted <span class="muted" style="font-size:12px">(leave off during testing)</span></label></div>
+        <div class="checkbox-row" style="margin-bottom:8px"><label><input type="checkbox" id="sendEmployeeLoginEmail" ${s.sendEmployeeLoginEmail === true ? 'checked' : ''}/> Email HRMS login credentials to new employees <span class="muted" style="font-size:12px">(leave OFF during testing — no passwords are sent to employees while this is off)</span></label></div>
         <button class="btn sm secondary" id="birthdaySendNow" type="button">🎂 Send today's wishes now</button>
         <span class="muted" id="birthdayToday" style="font-size:12px;margin-left:8px"></span>
       </div>
@@ -2364,6 +2365,7 @@ const AdminViews = {
         },
         birthdayEmails: document.getElementById('birthdayEmails').checked,
         shoutoutEmailBroadcast: document.getElementById('shoutoutEmailBroadcast').checked,
+        sendEmployeeLoginEmail: document.getElementById('sendEmployeeLoginEmail').checked,
         ai: {
           enabled: document.getElementById('aiEnabled').checked,
           provider: val('aiProvider'),

@@ -123,7 +123,8 @@ router.post('/commit', requirePerm('employees:write'), async (req, res) => {
       // so a spreadsheet/JSON row can't mint an HR/Finance/Super-Admin login.
       const { employee, tempPassword } = await createEmployee(r);
       results.created++;
-      if (tempPassword && employee.email) {
+      // Testing mode: only email logins when the admin has enabled it.
+      if (s.sendEmployeeLoginEmail === true && tempPassword && employee.email) {
         await sendMail({
           to: employee.email,
           subject: `Welcome to ${s.companyName || 'the company'}`,

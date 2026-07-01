@@ -50,6 +50,7 @@ router.put('/', requirePerm('settings:manage'), async (req, res) => {
     'leaveTypes', 'modules', 'slack', 'requiredDocs', 'uidaiCert', 'webhookSecret',
     'departmentAccounts', 'preboardLinkHours', 'onboardingCcEmail', 'leaveAccrual', 'geofence', 'noticePeriodDays',
     'birthdayEmails', 'shoutoutEmailBroadcast', 'timezone', 'automation', 'ai',
+    'sendEmployeeLoginEmail',
   ];
   const partial = {};
   for (const k of allowed) if (k in req.body) partial[k] = req.body[k];
