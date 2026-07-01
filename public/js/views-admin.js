@@ -2834,12 +2834,15 @@ const AdminViews = {
       const done = required.filter((t) => (byType[t] || []).length).length;
       const verified = documents.filter((d) => d.status === 'verified').length;
 
-      const docLine = (d) => `<div style="display:flex;align-items:center;gap:6px;margin:3px 0"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${UI.esc(d.title || d.doc_type || 'Document')}</span>${stChip(d)}<a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${d.id}/file" target="_blank">View</a>${vActions(d)} <button class="btn sm secondary" data-del="${d.id}">✕</button></div>`;
+      // Each file gets its own line; buttons wrap instead of being clipped.
+      const docLine = (d) => `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:3px 0"><span style="flex:1 1 140px;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${UI.esc(d.title || d.doc_type || 'Document')}</span>${stChip(d)}<a class="btn sm secondary" href="/api/employees/${employeeId}/documents/${d.id}/file" target="_blank">View</a>${vActions(d)} <button class="btn sm secondary" data-del="${d.id}">✕</button></div>`;
       const checklist = required.map((t) => {
         const docs = byType[t] || [];
         const head = docs.length ? `<span class="tag approved">${docs.length} file${docs.length > 1 ? 's' : ''}</span>` : '<span class="tag rejected">Missing</span>';
-        const add = `<label class="btn sm">${docs.length ? '➕ Add' : 'Upload'}<input type="file" class="reqfile" data-type="${UI.esc(t)}" multiple style="display:none"/></label>`;
-        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${head}</div><div class="doc-act" style="min-width:250px">${docs.map(docLine).join('')}${add}</div></div>`;
+        const add = `<label class="btn sm">${docs.length ? '➕ Add file(s)' : 'Upload'}<input type="file" class="reqfile" data-type="${UI.esc(t)}" multiple style="display:none"/></label>`;
+        // The files list takes the full row width (its own line), so nothing
+        // gets cut off on the right and every button stays reachable.
+        return `<div class="doc-row"><div class="doc-name">${UI.esc(t)}</div><div>${head}</div><div style="flex:1 1 100%">${docs.map(docLine).join('')}<div style="margin-top:4px">${add}</div></div></div>`;
       }).join('');
 
       const others = documents.filter((d) => !required.includes(d.doc_type));
